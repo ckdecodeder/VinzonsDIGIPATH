@@ -901,6 +901,7 @@ def command_worker():
                     if cmd['command'] == 'SCAN':
                         doc_id = None
                         local_scan_id = None
+                        update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
                         try:
                             requests.put(
                                 f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
@@ -915,9 +916,11 @@ def command_worker():
                                 doc_id = result.get('documentId')
                                 mark_scan_status(local_scan_id, "uploaded")
                                 print(f"[Command] Upload success, doc: {doc_id}")
-                            update_data = {'status': 'Executed'}
-                            if doc_id:
-                                update_data['resultDocumentId'] = doc_id
+                                update_data = {'status': 'Executed'}
+                                if doc_id:
+                                    update_data['resultDocumentId'] = doc_id
+                            else:
+                                update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
                         except Exception as e:
                             print(f"[Command] Upload error: {e}")
                             if local_scan_id:

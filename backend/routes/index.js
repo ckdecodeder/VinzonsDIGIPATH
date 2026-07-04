@@ -38,9 +38,10 @@ router.use('/logs', logsRouter);
 router.use('/documents', documentsRouter);
 
 // Mount root-scoped routers in specific order so exact paths are matched
-router.use('/', notificationsRouter);
+// Devices + tracking must come before notifications (notifications applies JWT protect to all paths).
 router.use('/', devicesRouter);
 router.use('/', trackingRouter);
+router.use('/', notificationsRouter);
 
 // Universal error handling middleware
 router.use((err, req, res, next) => {
