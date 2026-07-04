@@ -1,0 +1,1141 @@
+import React, { useEffect, useRef, useState } from "react";
+import {
+  Camera as CameraIcon,
+  Scan,
+  Loader2,
+  Zap,
+  ArrowRight,
+  ArrowLeft,
+  Send,
+  FileText,
+  Building2,
+  CheckCircle2,
+  AlertCircle,
+  User,
+  Phone,
+  Mail,
+  Flag,
+  MessageSquare,
+  Eye,
+  Image,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+} from "lucide-react";
+import { Camera } from "react-camera-pro";
+import Tesseract from "tesseract.js";
+import { bridgeService, commandService } from "../api/documentService";
+import {
+  offices as defaultOffices,
+  documentTypes as defaultDocumentTypes,
+  priorityLevels,
+  getPriorityInfo,
+} from "../data/mockData";
+
+const OTHER_OFFICE_VALUE = '__external_source__';
+const PHYSICAL_CAMERA_VALUE = 'physical-scanner';
+
+const paperGuides = [
+  { id: 'letter-landscape', label: 'Letter Landscape', ratio: '11 / 8.5' },
+  { id: 'legal-landscape', label: 'Legal Landscape', ratio: '14 / 8.5' },
+  { id: 'a4-landscape', label: 'A4 Landscape', ratio: '297 / 210' },
+  { id: 'id-landscape', label: 'ID / Card', ratio: '1.586 / 1' },
+  { id: 'receipt-landscape', label: 'Receipt', ratio: '2.6 / 1' },
+];
+
+const getSubjectFromOcr = (text, fallback = '') => {
+  const lines = (text || '')
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim().replace(/^[-_:;,.]+|[-_:;,.]+$/g, ''))
+    .filter(line => line.length >= 6 && /[A-Za-z]/.test(line));
+
+  const subjectLine = lines.find(line => /^subject\s*:/i.test(line));
+  if (subjectLine) {
+    const subject = subjectLine.replace(/^subject\s*:\s*/i, '').trim();
+    if (subject) return subject.slice(0, 120);
+  }
+
+  return (lines[0] || fallback || 'Scanned Document').slice(0, 120);
+};
+
+const getBridgeBaseUrl = (device) => {
+  const reportedStreamUrl = device?.streamUrl || device?.payload?.streamUrl;
+  if (reportedStreamUrl) {
+    try {
+      return new URL(reportedStreamUrl).origin;
+    } catch {
+      const match = String(reportedStreamUrl).match(/^(https?:\/\/[^/]+)/i);
+      if (match) return match[1];
+    }
+  }
+
+  if (device?.ip && device.ip !== 'Not reported') {
+    return `http://${device.ip}:8080`;
+  }
+
+  return '';
+};
+
+const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device }) => {
+  const camera = useRef(null);
+  const commandPollRef = useRef(null);
+  const canChooseSourceOffice = currentUser?.role === 'Admin';
+  const canChooseDirection = currentUser?.role === 'Admin';
+  const canSetInitialStatus = currentUser?.role === 'Receptionist';
+  const defaultSourceOfficeId = currentUser?.officeId || offices[0]?.id || 'OFF-001';
+  const getNextOfficeId = (fromOfficeId) => offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId;
+  const isOtherDocumentType = (typeId) => {
+    const docType = documentTypes.find(item => item.id === typeId);
+    return docType?.category?.toLowerCase().includes('other');
+  };
+  // Step 1 = Scan, Step 2 = Fill Details, Step 3 = Review, Step 4 = Done
+  const [step, setStep] = useState(1);
+  const [numberOfCameras, setNumberOfCameras] = useState(0);
+  const [cameraDevices, setCameraDevices] = useState([]);
+  const [cameraSource, setCameraSource] = useState(PHYSICAL_CAMERA_VALUE);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [cameraFacingMode, setCameraFacingMode] = useState('environment');
+  const [paperGuideId, setPaperGuideId] = useState('letter-landscape');
+  const [streamReloadKey, setStreamReloadKey] = useState(0);
+  const [livePreviewUrl, setLivePreviewUrl] = useState('');
+  const [previewErrorMessage, setPreviewErrorMessage] = useState('');
+  const [streamHasError, setStreamHasError] = useState(false);
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [isDeviceScanning, setIsDeviceScanning] = useState(false);
+  const [deviceScanStatus, setDeviceScanStatus] = useState('');
+
+  // Scan results
+  const [capturedImage, setCapturedImage] = useState(null);
+  const [capturedFileType, setCapturedFileType] = useState('');
+  const [extractedText, setExtractedText] = useState('');
+  const [hardwareScannedDoc, setHardwareScannedDoc] = useState(null);
+
+  // Document form state (filled AFTER scanning)
+  const [formData, setFormData] = useState({
+    subject: '',
+    documentDirection: 'Incoming',
+    documentTypeId: 'DT-001',
+    documentTypeOther: '',
+    status: 'Received',
+    priorityLevel: 'normal',
+    fromOfficeId: defaultSourceOfficeId,
+    originOfficeOther: '',
+    toOfficeId: getNextOfficeId(defaultSourceOfficeId),
+    dateReceived: new Date().toISOString().split('T')[0],
+    senderName: '',
+    senderContact: '',
+    senderEmail: '',
+    notifySender: true,
+    senderNotificationConsent: true,
+    senderNotificationChannels: ['sms', 'email'],
+    remarks: '',
+  });
+
+  useEffect(() => {
+    refreshCameraDevices();
+
+    return () => {
+      if (commandPollRef.current) {
+        clearInterval(commandPollRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!device?.connected && cameraSource === PHYSICAL_CAMERA_VALUE) {
+      setCameraSource(selectedCameraId || 'browser-camera');
+    }
+    if (device?.connected && (!cameraSource || cameraSource === 'browser-camera')) {
+      setCameraSource(PHYSICAL_CAMERA_VALUE);
+    }
+  }, [device?.connected]);
+
+  const refreshCameraDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter(item => item.kind === 'videoinput');
+      setCameraDevices(videoInputs);
+      if (!selectedCameraId && videoInputs[0]?.deviceId) {
+        setSelectedCameraId(videoInputs[0].deviceId);
+      }
+    } catch {
+      setCameraDevices([]);
+    }
+  };
+
+  const handleFormChange = (field, value) => {
+    setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const toggleSenderChannel = (channel) => {
+    setFormData(prev => {
+      const channels = prev.senderNotificationChannels || [];
+      return {
+        ...prev,
+        senderNotificationChannels: channels.includes(channel)
+          ? channels.filter(item => item !== channel)
+          : [...channels, channel],
+      };
+    });
+  };
+
+  const bridgeBaseUrl = getBridgeBaseUrl(device);
+  const physicalStreamUrl = bridgeBaseUrl ? `${bridgeBaseUrl}/stream.mjpg` : '';
+  const physicalStatusUrl = bridgeBaseUrl ? `${bridgeBaseUrl}/status` : '';
+  const isPhysicalSource = cameraSource === PHYSICAL_CAMERA_VALUE;
+  const selectedPaperGuide = paperGuides.find(item => item.id === paperGuideId) || paperGuides[0];
+  const isCapturedPdf = capturedFileType === 'application/pdf' || /\.pdf($|\?)/i.test(capturedImage || '');
+
+  useEffect(() => {
+    if (!isPhysicalSource || !bridgeBaseUrl) {
+      setLivePreviewUrl('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    let inFlight = false;
+
+    const refreshPreview = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const blob = await bridgeService.getSnapshot({
+          deviceId: device?.id || 'DEV-001',
+          bridgeUrl: bridgeBaseUrl,
+          t: Date.now(),
+        });
+        if (cancelled) return;
+        const objectUrl = URL.createObjectURL(blob);
+        setLivePreviewUrl(prev => {
+          if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
+          return objectUrl;
+        });
+        setStreamHasError(false);
+        setPreviewErrorMessage('');
+      } catch (err) {
+        if (!cancelled) {
+          setStreamHasError(true);
+          setPreviewErrorMessage(err.message || 'Scanner preview is not ready yet.');
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    refreshPreview();
+    const interval = setInterval(refreshPreview, 1200);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isPhysicalSource, bridgeBaseUrl, device?.id, streamReloadKey]);
+
+  useEffect(() => {
+    return () => {
+      if (livePreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(livePreviewUrl);
+    };
+  }, [livePreviewUrl]);
+
+  const handleCameraSourceChange = (value) => {
+    setCameraSource(value);
+    setStreamHasError(false);
+    if (value !== PHYSICAL_CAMERA_VALUE) {
+      setSelectedCameraId(value === 'browser-camera' ? '' : value);
+    }
+  };
+
+  // STEP 1: Capture/scan the document
+  const handleCapture = async () => {
+    if (isPhysicalSource) {
+      await handlePhysicalScan();
+      return;
+    }
+
+    if (!camera.current?.takePhoto) {
+      setDeviceScanStatus('Camera is not ready yet. Please wait a moment and try again.');
+      return;
+    }
+
+    const photo = camera.current.takePhoto();
+    setCapturedImage(photo);
+    setCapturedFileType('image/jpeg');
+    setIsExtracting(true);
+    setProgress(0);
+
+    try {
+      const { data: { text } } = await Tesseract.recognize(photo, 'eng', {
+        logger: m => {
+          if (m.status === 'recognizing text') {
+            setProgress(parseInt(m.progress * 100));
+          }
+        }
+      });
+      setExtractedText(text);
+      setFormData(prev => ({
+        ...prev,
+        subject: prev.subject || getSubjectFromOcr(text),
+      }));
+    } catch (err) {
+      console.error("OCR Error:", err);
+      setExtractedText('');
+    } finally {
+      setIsExtracting(false);
+      setStep(2); // Move to details form
+    }
+  };
+
+  const handlePhysicalScan = async () => {
+    if (!device?.connected) {
+      setDeviceScanStatus('Physical scanner is offline. Wait for the device heartbeat before sending a scan command.');
+      return;
+    }
+
+    setIsDeviceScanning(true);
+    setDeviceScanStatus('Sending scan command to physical scanner...');
+    setHardwareScannedDoc(null);
+
+    try {
+      const command = await commandService.sendScan(device.id || 'DEV-001', {
+        officeId: formData.fromOfficeId === OTHER_OFFICE_VALUE ? defaultSourceOfficeId : formData.fromOfficeId,
+        originOfficeOther: formData.originOfficeOther,
+        status: canSetInitialStatus ? formData.status : 'Received',
+      });
+      setDeviceScanStatus('Waiting for the physical scanner to capture and upload the document...');
+
+      let attempts = 0;
+      commandPollRef.current = setInterval(async () => {
+        attempts += 1;
+        try {
+          const result = await commandService.checkStatus(command.id);
+          if (result.status === 'Executed') {
+            clearInterval(commandPollRef.current);
+            commandPollRef.current = null;
+            const doc = result.resultDocument;
+            setHardwareScannedDoc(doc || null);
+            if (doc) {
+              const scannedFile = doc.scannedFiles?.[0];
+              const scannedUrl = doc.scannedImageUrl || scannedFile?.url || scannedFile?.dataUrl || null;
+              const scannedType = scannedFile?.type || (/\.pdf($|\?)/i.test(scannedUrl || '') ? 'application/pdf' : '');
+              setCapturedImage(scannedUrl);
+              setCapturedFileType(scannedType);
+              setExtractedText(doc.scannedText || '');
+              setFormData(prev => ({
+                ...prev,
+                subject: getSubjectFromOcr(doc.scannedText || '', doc.subject) || prev.subject,
+                documentDirection: doc.documentDirection || prev.documentDirection,
+                documentTypeId: doc.documentTypeId || prev.documentTypeId,
+                documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
+                status: doc.status || prev.status,
+                priorityLevel: doc.priorityLevel || prev.priorityLevel,
+                fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
+                originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
+                toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
+                dateReceived: doc.dateReceived || prev.dateReceived,
+                senderName: doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : prev.senderName,
+                senderContact: doc.senderContact || prev.senderContact,
+                senderEmail: doc.senderEmail || prev.senderEmail,
+                notifySender: doc.notifySender ?? prev.notifySender,
+                senderNotificationConsent: doc.senderNotificationConsent ?? prev.senderNotificationConsent,
+                senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
+                remarks: doc.remarks || prev.remarks,
+              }));
+            }
+            setIsDeviceScanning(false);
+            setDeviceScanStatus('');
+            setStep(2);
+          } else if (result.status === 'Failed' || result.status === 'Cancelled') {
+            clearInterval(commandPollRef.current);
+            commandPollRef.current = null;
+            setIsDeviceScanning(false);
+            setDeviceScanStatus(result.errorMessage || `Physical scanner command ${result.status.toLowerCase()}.`);
+          } else if (attempts > 90) {
+            clearInterval(commandPollRef.current);
+            commandPollRef.current = null;
+            setIsDeviceScanning(false);
+            setDeviceScanStatus('Timeout waiting for the physical scanner. Please try again.');
+          }
+        } catch {
+          // Keep polling while the backend or device is busy.
+        }
+      }, 2000);
+    } catch (err) {
+      setIsDeviceScanning(false);
+      setDeviceScanStatus(err.message || 'Unable to send scan command.');
+    }
+  };
+
+  // STEP 2 → STEP 3: Proceed to review
+  const handleProceedToReview = (e) => {
+    e.preventDefault();
+    setStep(3);
+  };
+
+  // STEP 3 → STEP 4: Confirm and submit
+  const handleConfirmSubmit = async () => {
+    if (hardwareScannedDoc?.id) {
+      await onEditDocument?.({
+        ...hardwareScannedDoc,
+        subject: formData.subject,
+        documentDirection: canChooseDirection ? formData.documentDirection : 'Incoming',
+        documentTypeId: formData.documentTypeId,
+        documentTypeOther: formData.documentTypeOther,
+        priorityLevel: formData.priorityLevel,
+        status: canSetInitialStatus ? formData.status : 'Received',
+        dateReceived: formData.dateReceived,
+        senderName: formData.senderName,
+        senderContact: formData.senderContact,
+        senderEmail: formData.senderEmail,
+        notifySender: formData.notifySender,
+        senderNotificationConsent: formData.senderNotificationConsent,
+        senderNotificationChannels: formData.senderNotificationChannels,
+        remarks: formData.remarks,
+        scannedText: extractedText,
+      });
+      setStep(4);
+      return;
+    }
+
+    const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? defaultSourceOfficeId : formData.fromOfficeId;
+    const newDoc = {
+      subject: formData.subject,
+      documentDirection: canChooseDirection ? formData.documentDirection : 'Incoming',
+      documentTypeId: formData.documentTypeId,
+      documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
+      priorityLevel: formData.priorityLevel,
+      status: canSetInitialStatus ? formData.status : 'Received',
+      dateReceived: formData.dateReceived,
+      originOfficeId: sourceOfficeId,
+      originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
+      currentOfficeId: sourceOfficeId,
+      destinationOfficeId: formData.toOfficeId,
+      senderName: formData.senderName,
+      senderContact: formData.senderContact,
+      senderEmail: formData.senderEmail,
+      notifySender: formData.notifySender,
+      senderNotificationConsent: formData.senderNotificationConsent,
+      senderNotificationChannels: formData.senderNotificationChannels,
+      remarks: formData.remarks,
+      scannedText: extractedText,
+      scannedImageUrl: capturedImage,
+      scannedFiles: [],
+      intakeStatus: 'Pending Review',
+    };
+
+    const newTransmission = {
+      fromOfficeId: sourceOfficeId,
+      toOfficeId: formData.toOfficeId,
+      transmissionDate: formData.dateReceived,
+      transmissionType: formData.fromOfficeId === formData.toOfficeId ? 'Internal' : 'External',
+    };
+
+    onCapture(capturedImage, extractedText, newDoc, newTransmission);
+    setStep(4);
+  };
+
+  const handleReset = () => {
+    setStep(1);
+    setCapturedImage(null);
+    setCapturedFileType('');
+    setExtractedText('');
+    setHardwareScannedDoc(null);
+    setDeviceScanStatus('');
+    setPreviewErrorMessage('');
+    setFormData({
+      subject: '',
+      documentDirection: 'Incoming',
+      documentTypeId: 'DT-001',
+      documentTypeOther: '',
+      status: 'Received',
+      priorityLevel: 'normal',
+      fromOfficeId: defaultSourceOfficeId,
+      originOfficeOther: '',
+      toOfficeId: getNextOfficeId(defaultSourceOfficeId),
+      dateReceived: new Date().toISOString().split('T')[0],
+      senderName: '',
+      senderContact: '',
+      senderEmail: '',
+      notifySender: true,
+      senderNotificationConsent: true,
+      senderNotificationChannels: ['sms', 'email'],
+      remarks: '',
+    });
+    setProgress(0);
+  };
+
+  const getOfficeName = (id) => {
+    if (id === OTHER_OFFICE_VALUE) return formData.originOfficeOther || 'External / Other Office';
+    const o = offices.find(x => x.id === id);
+    return o ? o.name : 'Unknown';
+  };
+
+  const getDocTypeName = (id) => {
+    const dt = documentTypes.find(x => x.id === id);
+    if (dt?.category === 'Others' && formData.documentTypeOther) return formData.documentTypeOther;
+    return dt ? dt.category : 'Unknown';
+  };
+  const selectedPriority = getPriorityInfo(formData.priorityLevel);
+
+  const stepLabels = [
+    { num: 1, label: 'Scan Document' },
+    { num: 2, label: 'Fill Details' },
+    { num: 3, label: 'Review' },
+    { num: 4, label: 'Complete' },
+  ];
+
+  return (
+    <div>
+      <div className="page-header">
+        <div className="page-header-left">
+          <h1>Scan Document</h1>
+          <p>Scan first, then submit the document for intake review</p>
+        </div>
+        <div className={device?.connected ? 'status-badge status-online' : 'status-badge status-offline'}>
+          {device?.connected ? <Wifi size={12} /> : <WifiOff size={12} />}
+          {device?.connected ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
+        </div>
+      </div>
+
+      {/* Step Indicator */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        gap: '0.5rem', marginBottom: '1.5rem',
+      }}>
+        {stepLabels.map((s, i) => (
+          <React.Fragment key={s.num}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '0.5rem',
+            }}>
+              <div style={{
+                width: '32px', height: '32px', borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '0.8rem', fontWeight: 700,
+                background: step >= s.num ? 'var(--gradient-primary)' : 'var(--bg-elevated)',
+                color: step >= s.num ? 'white' : 'var(--text-muted)',
+                border: step >= s.num ? 'none' : '1px solid var(--border)',
+                transition: 'all 0.3s',
+              }}>
+                {step > s.num ? <CheckCircle2 size={16} /> : s.num}
+              </div>
+              <span style={{
+                fontSize: '0.8rem', fontWeight: 500,
+                color: step >= s.num ? 'var(--text-main)' : 'var(--text-muted)',
+              }}>
+                {s.label}
+              </span>
+            </div>
+            {i < 3 && (
+              <div style={{
+                width: '50px', height: '2px',
+                background: step > s.num ? 'var(--primary)' : 'var(--border)',
+                borderRadius: '1px', transition: 'background 0.3s',
+              }}></div>
+            )}
+          </React.Fragment>
+        ))}
+      </div>
+
+      {/* ============ STEP 1: Scan Document (FIRST!) ============ */}
+      {step === 1 && (
+        <div className="card" style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
+          <h2 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+            <Scan style={{ color: 'var(--primary-light)' }} />
+            Scan Document
+          </h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Position the document in front of the camera and capture it
+          </p>
+
+          <div className="scanner-camera-controls">
+            <div className="form-group" style={{ marginBottom: 0, textAlign: 'left' }}>
+              <label className="form-label">Camera Source</label>
+              <select
+                className="form-select"
+                value={cameraSource}
+                onChange={e => handleCameraSourceChange(e.target.value)}
+              >
+                {device?.connected && physicalStreamUrl && (
+                  <option value={PHYSICAL_CAMERA_VALUE}>Physical Scanner Live Preview</option>
+                )}
+                {cameraDevices.length ? cameraDevices.map((item, index) => (
+                  <option key={item.deviceId || index} value={item.deviceId}>
+                    {item.label || `Camera ${index + 1}`}
+                  </option>
+                )) : (
+                  <option value="browser-camera">Default browser camera</option>
+                )}
+              </select>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                if (isPhysicalSource) {
+                  setStreamHasError(false);
+                  setStreamReloadKey(value => value + 1);
+                  return;
+                }
+                if (camera.current?.switchCamera && numberOfCameras > 1) {
+                  const nextMode = camera.current.switchCamera();
+                  setCameraFacingMode(nextMode);
+                  setSelectedCameraId('');
+                  setCameraSource('browser-camera');
+                  refreshCameraDevices();
+                }
+              }}
+              disabled={!isPhysicalSource && numberOfCameras <= 1}
+            >
+              <RefreshCw size={16} />
+              {isPhysicalSource ? 'Refresh' : 'Switch'}
+            </button>
+          </div>
+
+          <div className="scanner-guide-controls">
+            <label className="form-label" htmlFor="paper-guide-size">Paper Guide</label>
+            <select
+              id="paper-guide-size"
+              className="form-select"
+              value={paperGuideId}
+              onChange={e => setPaperGuideId(e.target.value)}
+            >
+              {paperGuides.map(guide => (
+                <option key={guide.id} value={guide.id}>{guide.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="scanner-preview-shell">
+            {isPhysicalSource ? (
+              bridgeBaseUrl && livePreviewUrl ? (
+                <img
+                  key={streamReloadKey}
+                  className="scanner-live-stream"
+                  src={livePreviewUrl}
+                  alt="Physical scanner live preview"
+                  onLoad={() => setStreamHasError(false)}
+                  onError={() => setStreamHasError(true)}
+                />
+              ) : (
+                <div className="scanner-preview-empty">
+                  <CameraIcon size={34} />
+                  <span>{bridgeBaseUrl ? 'Loading physical scanner preview' : 'Waiting for physical scanner stream'}</span>
+                </div>
+              )
+            ) : (
+              <Camera
+                key={selectedCameraId || cameraFacingMode}
+                ref={camera}
+                numberOfCamerasCallback={setNumberOfCameras}
+                videoReadyCallback={refreshCameraDevices}
+                videoSourceDeviceId={selectedCameraId || undefined}
+                facingMode={cameraFacingMode}
+                aspectRatio="cover"
+              />
+            )}
+
+            <div className="scanner-paper-overlay" style={{ '--paper-ratio': selectedPaperGuide.ratio }}>
+              <div className="scanner-paper-frame">
+                <span className="scanner-paper-label">{selectedPaperGuide.label}</span>
+                <span className="scanner-corner corner-tl"></span>
+                <span className="scanner-corner corner-tr"></span>
+                <span className="scanner-corner corner-bl"></span>
+                <span className="scanner-corner corner-br"></span>
+                <span className="scanner-center-line horizontal"></span>
+                <span className="scanner-center-line vertical"></span>
+              </div>
+              <div className="scanner-scan-line"></div>
+            </div>
+
+            {isPhysicalSource && streamHasError && (
+              <div className="scanner-preview-warning">
+                <AlertCircle size={16} />
+                <span>{previewErrorMessage || `Preview is not ready. Check ${physicalStatusUrl || 'the Pi bridge status'}.`}</span>
+              </div>
+            )}
+
+            {isExtracting && (
+              <div style={{
+                position: 'absolute', inset: 0,
+                backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', color: '#fff', zIndex: 10,
+              }}>
+                <div style={{ width: '200px', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', marginBottom: '1rem', overflow: 'hidden' }}>
+                  <div style={{ height: '100%', background: 'var(--accent)', width: `${progress}%`, transition: 'width 0.3s' }}></div>
+                </div>
+                <p style={{ fontWeight: '600' }}>Extracting Text... {progress}%</p>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+            <button
+              onClick={handleCapture}
+              disabled={isExtracting || isDeviceScanning || (isPhysicalSource && !device?.connected)}
+              className="btn btn-primary"
+              style={{ padding: '0.75rem 2rem' }}>
+              {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
+              {isExtracting ? 'Processing...' : isPhysicalSource ? 'Capture with Physical Scanner' : 'Capture Document'}
+            </button>
+            {!isPhysicalSource && (
+              <button
+                onClick={handlePhysicalScan}
+                disabled={isExtracting || isDeviceScanning || !device?.connected}
+                className="btn btn-secondary"
+                style={{ padding: '0.75rem 2rem' }}
+              >
+                {isDeviceScanning ? <Loader2 className="animate-spin" /> : <Scan size={18} />}
+                {isDeviceScanning ? 'Waiting...' : 'Use Physical Scanner'}
+              </button>
+            )}
+          </div>
+          {deviceScanStatus && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--warning-bg)', borderRadius: 'var(--radius-md)', color: 'var(--warning)', fontSize: '0.85rem' }}>
+              <AlertCircle size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
+              {deviceScanStatus}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ============ STEP 2: Fill Document Details ============ */}
+      {step === 2 && (
+        <div className="scanner-wide-panel">
+          <div className="grid-2 scanner-detail-layout">
+            {/* Left: Scanned Preview */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">
+                  <Image size={18} style={{ color: 'var(--primary-light)' }} />
+                  Scanned Document
+                </h3>
+              </div>
+              {capturedImage && (
+                isCapturedPdf ? (
+                  <iframe
+                    title="Scanned document PDF"
+                    src={capturedImage}
+                    className="scanner-pdf-preview"
+                  />
+                ) : (
+                  <img src={capturedImage} alt="Scanned document" style={{
+                    width: '100%', borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-light)',
+                  }} />
+                )
+              )}
+              {extractedText && (
+                <div style={{
+                  marginTop: '0.75rem', padding: '0.75rem',
+                  background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)',
+                  fontSize: '0.75rem', color: 'var(--text-muted)',
+                  maxHeight: '150px', overflow: 'auto',
+                  border: '1px solid var(--border-light)',
+                }}>
+                  <p style={{ fontWeight: 600, marginBottom: '0.25rem', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Extracted Text</p>
+                  <p style={{ whiteSpace: 'pre-wrap' }}>{extractedText}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Right: Details Form */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">
+                  <FileText size={18} style={{ color: 'var(--primary-light)' }} />
+                  Document Details
+                </h3>
+              </div>
+
+              <form onSubmit={handleProceedToReview}>
+                <div className="form-group">
+                  <label className="form-label">Document Subject / Description *</label>
+                  <input
+                    className="form-input" type="text"
+                    value={formData.subject}
+                    onChange={e => handleFormChange('subject', e.target.value)}
+                    placeholder="e.g. Memorandum on Water Resource Management"
+                    required autoFocus
+                  />
+                </div>
+
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Document Type</label>
+                    <select className="form-select" value={formData.documentTypeId}
+                      onChange={e => handleFormChange('documentTypeId', e.target.value)}>
+                      {documentTypes.map(dt => (
+                        <option key={dt.id} value={dt.id}>{dt.category}</option>
+                      ))}
+                    </select>
+                    {isOtherDocumentType(formData.documentTypeId) && (
+                      <input
+                        className="form-input"
+                        type="text"
+                        value={formData.documentTypeOther}
+                        onChange={e => handleFormChange('documentTypeOther', e.target.value)}
+                        placeholder="Specify document type"
+                        required
+                        style={{ marginTop: '0.5rem' }}
+                      />
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Direction</label>
+                    <select className="form-select" value={formData.documentDirection}
+                      onChange={e => handleFormChange('documentDirection', e.target.value)}
+                      disabled={!canChooseDirection}>
+                      <option>Incoming</option>
+                      {canChooseDirection && <option>Outgoing</option>}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">
+                      <Flag size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                      Priority Level
+                    </label>
+                    <div className="priority-select-wrap" style={{ '--priority-color': selectedPriority.color, '--priority-bg': selectedPriority.bg }}>
+                      <span className="priority-color-preview"></span>
+                      <select className="form-select priority-select" value={formData.priorityLevel}
+                        onChange={e => handleFormChange('priorityLevel', e.target.value)}>
+                        {priorityLevels.map(p => (
+                          <option key={p.id} value={p.id} style={{ color: p.color, backgroundColor: p.bg }}>{p.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date Received</label>
+                    <input className="form-input" type="date" value={formData.dateReceived}
+                      disabled required />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Pending Workflow Status</label>
+                  <select
+                    className="form-select"
+                    value={formData.status}
+                    onChange={e => handleFormChange('status', e.target.value)}
+                    disabled={!canSetInitialStatus}
+                  >
+                    <option>Received</option>
+                    <option>For Signing</option>
+                    <option>For Filing</option>
+                  </select>
+                  <p className="field-hint">Only receptionists set the initial pending status before Mayor/Admin review.</p>
+                </div>
+
+                {/* Sender Information */}
+                <div style={{
+                  padding: '0.75rem', background: 'var(--bg-elevated)',
+                  borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)',
+                  marginBottom: '0.75rem',
+                }}>
+                  <p style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+                    <User size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                    Sender Information
+                  </p>
+                  <div className="form-group">
+                    <label className="form-label">Sender Name *</label>
+                    <input className="form-input" type="text" value={formData.senderName}
+                      onChange={e => handleFormChange('senderName', e.target.value)}
+                      placeholder="Full name of the sender" required />
+                  </div>
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">
+                        <Phone size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                        Contact Number
+                      </label>
+                      <input className="form-input" type="tel" value={formData.senderContact}
+                        onChange={e => handleFormChange('senderContact', e.target.value)}
+                        placeholder="09XX-XXX-XXXX" />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">
+                        <Mail size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                        Email
+                      </label>
+                      <input className="form-input" type="email" value={formData.senderEmail}
+                        onChange={e => handleFormChange('senderEmail', e.target.value)}
+                        placeholder="email@example.com" />
+                    </div>
+                  </div>
+                  <div className="sender-notification-options">
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={formData.notifySender}
+                        onChange={e => setFormData({ ...formData, notifySender: e.target.checked })}
+                      />
+                      Send tracking number and status updates to sender
+                    </label>
+                    <div className="sender-channel-options">
+                      <label className="checkbox-chip">
+                        <input
+                          type="checkbox"
+                          checked={(formData.senderNotificationChannels || []).includes('sms')}
+                          onChange={() => toggleSenderChannel('sms')}
+                        />
+                        SMS
+                      </label>
+                      <label className="checkbox-chip">
+                        <input
+                          type="checkbox"
+                          checked={(formData.senderNotificationChannels || []).includes('email')}
+                          onChange={() => toggleSenderChannel('email')}
+                        />
+                        Email
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Routing */}
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">
+                      <Building2 size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                      From Office
+                    </label>
+                    <select
+                      className="form-select"
+                      value={formData.fromOfficeId}
+                      onChange={e => {
+                        handleFormChange('fromOfficeId', e.target.value);
+                        if (formData.toOfficeId === e.target.value) {
+                          handleFormChange('toOfficeId', getNextOfficeId(e.target.value));
+                        }
+                      }}
+                    >
+                      <option value={OTHER_OFFICE_VALUE}>External / Other Office</option>
+                      {(canChooseSourceOffice ? offices : offices.filter(o => o.id === defaultSourceOfficeId))
+                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    {formData.fromOfficeId === OTHER_OFFICE_VALUE && (
+                      <input
+                        className="form-input"
+                        type="text"
+                        value={formData.originOfficeOther}
+                        onChange={e => handleFormChange('originOfficeOther', e.target.value)}
+                        placeholder="Name of school, agency, municipality, or external office"
+                        required
+                        style={{ marginTop: '0.5rem' }}
+                      />
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">
+                      <Building2 size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                      To Office
+                    </label>
+                    <select className="form-select" value={formData.toOfficeId}
+                      onChange={e => handleFormChange('toOfficeId', e.target.value)}>
+                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                    <label className="form-label">
+                      <MessageSquare size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                    Remarks / Notes <span className="optional-pill">Optional</span>
+                  </label>
+                  <textarea className="form-input" value={formData.remarks}
+                    onChange={e => handleFormChange('remarks', e.target.value)}
+                    placeholder="Additional notes or remarks about this document"
+                    rows={2}
+                    style={{ resize: 'vertical' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem' }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setStep(1)}>
+                    <ArrowLeft size={16} /> Re-scan
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={
+                      !formData.subject.trim() ||
+                      !formData.senderName.trim() ||
+                      (isOtherDocumentType(formData.documentTypeId) && !formData.documentTypeOther.trim()) ||
+                      (formData.fromOfficeId === OTHER_OFFICE_VALUE && !formData.originOfficeOther.trim())
+                    }
+                  >
+                    Review & Submit <ArrowRight size={16} />
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============ STEP 3: Review Before Submit ============ */}
+      {step === 3 && (
+        <div className="card scanner-review-card">
+          <div className="card-header">
+            <h3 className="card-title">
+              <Eye size={18} style={{ color: 'var(--primary-light)' }} />
+              Review Document Details
+            </h3>
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+            Please verify all information below before submitting.
+          </p>
+
+          <div className="grid-2" style={{ gap: '1.25rem', marginBottom: '1.5rem' }}>
+            {/* Scanned Preview */}
+            <div>
+              {capturedImage && (
+                isCapturedPdf ? (
+                  <iframe
+                    title="Scanned document PDF"
+                    src={capturedImage}
+                    className="scanner-pdf-preview"
+                  />
+                ) : (
+                  <img src={capturedImage} alt="Scanned" style={{
+                    width: '100%', borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-light)',
+                  }} />
+                )
+              )}
+            </div>
+
+            {/* Details Summary */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {[
+                { label: 'Subject', value: formData.subject },
+                { label: 'Type', value: getDocTypeName(formData.documentTypeId) },
+                { label: 'Direction', value: formData.documentDirection },
+                { label: 'Pending Status', value: formData.status },
+                { label: 'Priority', value: getPriorityInfo(formData.priorityLevel).label, color: getPriorityInfo(formData.priorityLevel).color },
+                { label: 'Date Received', value: formData.dateReceived },
+                { label: 'From Office', value: getOfficeName(formData.fromOfficeId) },
+                { label: 'Sender', value: formData.senderName },
+                { label: 'Contact', value: formData.senderContact || '—' },
+                { label: 'Email', value: formData.senderEmail || '—' },
+                { label: 'Sender Updates', value: formData.notifySender ? (formData.senderNotificationChannels || []).join(', ').toUpperCase() || 'Enabled' : 'Disabled' },
+                { label: 'Remarks', value: formData.remarks || '—' },
+              ].map((item, i) => (
+                <div key={i} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                  padding: '0.5rem 0.75rem',
+                  background: i % 2 === 0 ? 'var(--bg-elevated)' : 'transparent',
+                  borderRadius: 'var(--radius-sm)', fontSize: '0.82rem',
+                }}>
+                  <span style={{ color: 'var(--text-muted)', fontWeight: 500, minWidth: '90px' }}>{item.label}</span>
+                  <span style={{
+                    color: item.color || 'var(--text-main)', fontWeight: 600,
+                    textAlign: 'right', maxWidth: '250px', wordBreak: 'break-word',
+                  }}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Route Preview */}
+          <div style={{
+            padding: '1rem',
+            background: 'var(--bg-elevated)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border-light)',
+            marginBottom: '1.5rem',
+          }}>
+            <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+              Route Preview
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'center' }}>
+              <span style={{
+                padding: '0.375rem 0.75rem', borderRadius: 'var(--radius-sm)',
+                background: 'var(--primary-glow)', color: 'var(--primary-light)',
+                fontSize: '0.8rem', fontWeight: 600,
+              }}>
+                {getOfficeName(formData.fromOfficeId)}
+              </span>
+              <ArrowRight size={18} style={{ color: 'var(--primary-light)' }} />
+              <span style={{
+                padding: '0.375rem 0.75rem', borderRadius: 'var(--radius-sm)',
+                background: 'var(--success-bg)', color: 'var(--success)',
+                fontSize: '0.8rem', fontWeight: 600,
+              }}>
+                {getOfficeName(formData.toOfficeId)}
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <button className="btn btn-secondary" onClick={() => setStep(2)}>
+              <ArrowLeft size={16} /> Edit Details
+            </button>
+            <button className="btn btn-primary" onClick={handleConfirmSubmit} style={{ padding: '0.75rem 2rem' }}>
+              <Send size={16} /> Confirm & Submit
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ============ STEP 4: Complete ============ */}
+      {step === 4 && (
+        <div className="card" style={{ maxWidth: '500px', margin: '0 auto', textAlign: 'center', padding: '3rem 2rem' }}>
+          <div style={{
+            width: '64px', height: '64px', borderRadius: '50%',
+            background: 'var(--success-bg)', display: 'flex',
+            alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem',
+          }}>
+            <CheckCircle2 size={32} style={{ color: 'var(--success)' }} />
+          </div>
+
+          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--text-main)' }}>
+            Document Submitted for Review
+          </h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+            The scan was saved in the database and is waiting for intake approval before routing.
+          </p>
+
+          <div style={{
+            padding: '1rem', background: 'var(--bg-elevated)',
+            borderRadius: 'var(--radius-md)', marginBottom: '1.5rem',
+            textAlign: 'left',
+          }}>
+            {[
+              { label: 'Subject', value: formData.subject },
+              { label: 'Pending Status', value: formData.status },
+              { label: 'Priority', value: getPriorityInfo(formData.priorityLevel).label },
+              { label: 'Sender', value: formData.senderName },
+              { label: 'Planned Route', value: `${getOfficeName(formData.fromOfficeId)} -> ${getOfficeName(formData.toOfficeId)}` },
+            ].map((item, i) => (
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: i < 3 ? '0.5rem' : 0, fontSize: '0.8rem' }}>
+                <span style={{ color: 'var(--text-muted)' }}>{item.label}</span>
+                <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{item.value}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem' }}>
+            <button onClick={handleReset} className="btn btn-primary">
+              <Scan size={16} /> Scan Another
+            </button>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes scan-move {
+          0% { top: 0% }
+          100% { top: 100% }
+        }
+      `}</style>
+    </div>
+  );
+};
+
+export default Scanner;

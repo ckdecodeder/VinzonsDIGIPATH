@@ -1,0 +1,1728 @@
+import React, { useEffect, useState } from 'react';
+import {
+  Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
+  Flag, User, Phone, Mail, MessageSquare, ChevronDown, ChevronUp,
+  Paperclip, Upload, Download, MapPin, History, ArrowRightLeft,
+  CheckCircle2, Archive, Clock, CalendarDays, AlertTriangle, Maximize2, Minimize2,
+} from 'lucide-react';
+import {
+  documentTypes as defaultDocumentTypes,
+  offices as defaultOffices,
+  users as defaultUsers,
+  priorityLevels,
+  getPriorityInfo,
+} from '../data/mockData';
+import { compareNewest } from '../utils/sorting';
+
+const OTHER_OFFICE_VALUE = '__external_source__';
+
+const DocumentList = ({
+  documents,
+  transmissions = [],
+  offices = defaultOffices,
+  users = defaultUsers,
+  documentTypes = defaultDocumentTypes,
+  currentUser,
+  currentRole,
+  onDelete,
+  onEdit,
+  onAdd,
+  onRouteDocument,
+  onReceiveTransmission,
+  onVerifyDocument,
+  onResubmitDocument,
+  onProcessDocument,
+  onArchiveDocument,
+  senderNotifications = [],
+  onResendSenderNotification,
+  focusDocumentId = '',
+  initialStatusFilter = 'All',
+  autoOpenCreate = false,
+  onNotify,
+}) => {
+  const getInitialForm = () => ({
+    subject: '',
+    documentDirection: 'Incoming',
+    status: 'Received',
+    priorityLevel: 'normal',
+    dateReceived: new Date().toISOString().split('T')[0],
+    documentTypeId: documentTypes[0]?.id || 'DT-001',
+    documentTypeOther: '',
+    originOfficeId: currentUser?.officeId || offices[0]?.id || 'OFF-001',
+    originOfficeOther: '',
+    currentOfficeId: currentUser?.officeId || offices[0]?.id || 'OFF-001',
+    destinationOfficeId: '',
+    destinationOfficeOther: '',
+    senderName: '',
+    senderContact: '',
+    senderEmail: '',
+    notifySender: true,
+    senderNotificationConsent: true,
+    senderNotificationChannels: ['sms', 'email'],
+    remarks: '',
+    scannedText: '',
+  });
+
+  const notify = (message, title = 'Action needed', type = 'warning') => {
+    onNotify?.({ type, title, message });
+  };
+
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('All');
+  const [filterDirection, setFilterDirection] = useState('All');
+  const [filterPriority, setFilterPriority] = useState('All');
+  const [dateFilter, setDateFilter] = useState('All');
+  const [dateFrom, setDateFrom] = useState(new Date().toISOString().split('T')[0]);
+  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+  const [pageSize, setPageSize] = useState(20);
+  const [page, setPage] = useState(1);
+  const [showForm, setShowForm] = useState(false);
+  const [editDoc, setEditDoc] = useState(null);
+  const [expandedRow, setExpandedRow] = useState(null);
+  const [sortBy, setSortBy] = useState('dateReceived');
+  const [sortAsc, setSortAsc] = useState(false);
+  const [formData, setFormData] = useState(getInitialForm);
+  const [attachmentFile, setAttachmentFile] = useState(null);
+  const [downloadFormats, setDownloadFormats] = useState({});
+  const [routeDoc, setRouteDoc] = useState(null);
+  const [detailDoc, setDetailDoc] = useState(null);
+  const [previewFile, setPreviewFile] = useState(null);
+  const [isPreviewMaximized, setIsPreviewMaximized] = useState(false);
+  const [rejectDoc, setRejectDoc] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [processingAction, setProcessingAction] = useState(null);
+  const [processingNote, setProcessingNote] = useState('');
+  const [routeForm, setRouteForm] = useState({
+    fromOfficeId: currentUser?.officeId || offices[0]?.id || 'OFF-001',
+    toOfficeId: offices[1]?.id || offices[0]?.id || 'OFF-001',
+    transmissionDate: new Date().toISOString().split('T')[0],
+    transmissionType: 'Internal',
+  });
+
+  useEffect(() => {
+    if (!initialStatusFilter) return;
+    setFilterStatus(initialStatusFilter);
+  }, [initialStatusFilter]);
+
+  useEffect(() => {
+    if (!focusDocumentId) return;
+    const focusedDoc = documents.find(doc => doc.id === focusDocumentId);
+    if (!focusedDoc) return;
+    setFilterStatus('All');
+    setDetailDoc(focusedDoc);
+  }, [focusDocumentId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterStatus, filterDirection, filterPriority, dateFilter, dateFrom, dateTo]);
+
+  const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
+  const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
+  const transmittableStatuses = [...registrationStatuses, ...finalWorkflowStatuses];
+  const statuses = ['All', 'Received', 'In Transit', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
+  const directions = currentRole === 'receptionist' ? ['All', 'Incoming'] : ['All', 'Incoming', 'Outgoing'];
+  const priorities = ['All', ...priorityLevels.map(p => p.id)];
+
+  const getWorkflowStatus = (value) => {
+    const status = typeof value === 'string' ? value : value?.status;
+    if (status === 'For Signature') return 'For Signing';
+    if (status === 'Acknoweledged') return 'Acknowledged';
+    return status || 'Received';
+  };
+
+  const getStatusClass = (status) => getWorkflowStatus(status).toLowerCase().replace(/\s+/g, '-');
+
+  const isOtherDocumentType = (typeId) => {
+    const docType = documentTypes.find(d => d.id === typeId);
+    return docType?.category?.toLowerCase().includes('other');
+  };
+
+  const getDocTypeName = (typeId) => {
+    const docType = documentTypes.find(d => d.id === typeId);
+    return docType ? docType.category : 'Unknown';
+  };
+
+  const getDocumentTypeLabel = (doc) => {
+    const label = getDocTypeName(doc.documentTypeId);
+    return label === 'Others' && doc.documentTypeOther ? doc.documentTypeOther : label;
+  };
+
+  const getOfficeName = (officeId) => {
+    const office = offices.find(o => o.id === officeId);
+    return office ? office.name : 'Unknown Office';
+  };
+
+  const getOriginOfficeLabel = (doc) => doc.originOfficeOther || getOfficeName(doc.originOfficeId);
+  const getDestinationOfficeLabel = (doc) => doc.destinationOfficeOther || (doc.destinationOfficeId ? getOfficeName(doc.destinationOfficeId) : '-');
+
+  const getUserFullName = (userId) => {
+    const user = users.find(u => u.id === userId);
+    return user ? `${user.fname} ${user.mname || ''} ${user.lname}`.replace(/\s+/g, ' ').trim() : 'Unknown';
+  };
+
+  const getDocumentFiles = (doc) => {
+    if (doc.scannedFiles?.length) return doc.scannedFiles;
+    if (doc.scannedImageUrl) {
+      return [{
+        id: `${doc.id}-scan`,
+        name: `${doc.trackingNumber || doc.id}-scan.jpg`,
+        type: 'image/jpeg',
+        dataUrl: doc.scannedImageUrl,
+        uploadedAt: doc.dateReceived,
+        uploadedBy: null,
+        source: 'camera',
+      }];
+    }
+    return [];
+  };
+
+  const getSenderNotifications = (documentId) => {
+    return senderNotifications
+      .filter(item => item.documentId === documentId)
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+  };
+
+  const toggleSenderChannel = (channel) => {
+    setFormData(prev => {
+      const channels = prev.senderNotificationChannels || [];
+      return {
+        ...prev,
+        senderNotificationChannels: channels.includes(channel)
+          ? channels.filter(item => item !== channel)
+          : [...channels, channel],
+      };
+    });
+  };
+
+  const getLatestTransmission = (documentId) => {
+    return [...transmissions]
+      .filter(t => t.documentId === documentId)
+      .sort((a, b) => new Date(b.receivedAt || b.transmissionDate || 0) - new Date(a.receivedAt || a.transmissionDate || 0))[0];
+  };
+
+  const getPendingTransmission = (documentId) => {
+    return [...transmissions]
+      .filter(t => t.documentId === documentId && !t.receivedBy)
+      .sort((a, b) => new Date(b.transmissionDate || 0) - new Date(a.transmissionDate || 0))[0];
+  };
+
+  const getWorkflowExplanation = (doc) => {
+    const pending = getPendingTransmission(doc.id);
+    const status = getWorkflowStatus(doc);
+    if (doc.intakeStatus === 'Pending Review') {
+      return 'Waiting for Admin or Mayor intake review before the document can be routed, signed, filed, or archived.';
+    }
+    if (doc.intakeStatus === 'Rejected') {
+      return doc.rejectionReason
+        ? `Rejected for correction: ${doc.rejectionReason}`
+        : 'Rejected for correction. Resubmit after fixing the document details.';
+    }
+    if (pending) {
+      return `Waiting for ${getOfficeName(pending.toOfficeId)} to receive transmission ${pending.id}.`;
+    }
+    if (status === 'For Signing') {
+      return 'Waiting for Mayor/Admin signing action.';
+    }
+    if (status === 'For Filing') {
+      return 'Waiting for Mayor/Admin acknowledgement.';
+    }
+    if (status === 'Signed') {
+      return 'Signed and ready to route back or archive.';
+    }
+    if (status === 'Acknowledged') {
+      return 'Acknowledged and ready to route back or archive.';
+    }
+    if (status === 'Archived') {
+      return 'Archived as a final record. No routing or status actions are allowed.';
+    }
+    if (status === 'Received' && isApprovedForWorkflow(doc)) {
+      return 'Approved and ready to acknowledge or route.';
+    }
+    return '';
+  };
+
+  const getCurrentLocation = (doc) => {
+    const pending = getPendingTransmission(doc.id);
+    const latest = getLatestTransmission(doc.id);
+
+    if (doc.lastDetectedOfficeId && doc.status === 'In Transit') {
+      return `Detected at ${getOfficeName(doc.lastDetectedOfficeId)} (pending receipt)`;
+    }
+
+    if (doc.status === 'In Transit' && pending) {
+      return `In transit to ${getOfficeName(pending.toOfficeId)}`;
+    }
+
+    return getOfficeName(
+      doc.currentOfficeId ||
+      latest?.toOfficeId ||
+      doc.originOfficeId ||
+      currentUser?.officeId
+    );
+  };
+
+  const getTimeline = (doc) => {
+    if (doc.timeline?.length) {
+      return [...doc.timeline].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    }
+
+    const derived = [{
+      id: `${doc.id}-registered`,
+      label: 'Registered',
+      details: `Document registered with tracking number ${doc.trackingNumber}`,
+      officeId: doc.originOfficeId || currentUser?.officeId,
+      userId: null,
+      timestamp: doc.dateReceived,
+    }];
+
+    transmissions
+      .filter(t => t.documentId === doc.id)
+      .forEach(t => {
+        derived.push({
+          id: `${t.id}-sent`,
+          label: 'Routed to office',
+          details: `Sent from ${getOfficeName(t.fromOfficeId)} to ${getOfficeName(t.toOfficeId)}`,
+          officeId: t.fromOfficeId,
+          userId: t.sentBy,
+          referenceId: t.id,
+          timestamp: t.transmissionDate,
+        });
+
+        if (t.receivedBy) {
+          derived.push({
+            id: `${t.id}-received`,
+            label: 'Received and acknowledged',
+            details: `Received at ${getOfficeName(t.toOfficeId)}`,
+            officeId: t.toOfficeId,
+            userId: t.receivedBy,
+            referenceId: t.id,
+            timestamp: t.receivedAt || t.transmissionDate,
+          });
+        }
+      });
+
+    if (getWorkflowStatus(doc) === 'Archived') {
+      derived.push({
+        id: `${doc.id}-archived`,
+        label: 'Archived',
+        details: 'Document moved to archive records',
+        officeId: doc.currentOfficeId,
+        timestamp: doc.archivedAt || doc.dateReceived,
+      });
+    }
+
+    return derived.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  };
+
+  const filteredDocs = documents
+    .filter(d => {
+      const matchSearch = (d.subject || '').toLowerCase().includes(search.toLowerCase()) ||
+        (d.trackingNumber || '').toLowerCase().includes(search.toLowerCase()) ||
+        (d.senderName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (d.originOfficeOther || '').toLowerCase().includes(search.toLowerCase()) ||
+        (d.documentTypeOther || '').toLowerCase().includes(search.toLowerCase()) ||
+        getCurrentLocation(d).toLowerCase().includes(search.toLowerCase());
+      const matchStatus = filterStatus === 'All' || getWorkflowStatus(d) === filterStatus;
+      const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
+      const matchPriority = filterPriority === 'All' || d.priorityLevel === filterPriority;
+      const receivedDate = d.dateReceived || '';
+      const today = new Date().toISOString().split('T')[0];
+      const matchDate =
+        dateFilter === 'All' ||
+        (dateFilter === 'Today' && receivedDate === today) ||
+        (dateFilter === 'Specific' && receivedDate === dateFrom) ||
+        (dateFilter === 'Range' && (!dateFrom || receivedDate >= dateFrom) && (!dateTo || receivedDate <= dateTo));
+      return matchSearch && matchStatus && matchDir && matchPriority && matchDate;
+    })
+    .sort((a, b) => {
+      const priorityOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
+      if (sortBy === 'priority') {
+        const diff = (priorityOrder[a.priorityLevel] || 2) - (priorityOrder[b.priorityLevel] || 2);
+        if (diff !== 0) return sortAsc ? -diff : diff;
+        return compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
+      }
+      if (sortBy === 'dateReceived') {
+        const diff = compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
+        return sortAsc ? -diff : diff;
+      }
+      return compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
+    });
+
+  const totalPages = Math.max(1, Math.ceil(filteredDocs.length / pageSize));
+  const paginatedDocs = filteredDocs.slice((page - 1) * pageSize, page * pageSize);
+  const showFrom = filteredDocs.length ? (page - 1) * pageSize + 1 : 0;
+  const showTo = Math.min(filteredDocs.length, page * pageSize);
+
+  const handlePageSizeChange = (value) => {
+    setPageSize(value);
+    setPage(1);
+  };
+
+  const handlePageChange = (newPage) => {
+    setPage(Math.max(1, Math.min(totalPages, newPage)));
+  };
+
+  const fileToAttachment = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      dataUrl: reader.result,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: currentUser?.id || null,
+      source: 'upload',
+    });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const handleOpenForm = (doc = null) => {
+    setAttachmentFile(null);
+    if (doc) {
+      setEditDoc(doc);
+      setFormData({
+        subject: doc.subject,
+        documentDirection: doc.documentDirection,
+        status: getWorkflowStatus(doc),
+        priorityLevel: doc.priorityLevel || 'normal',
+        dateReceived: doc.dateReceived,
+        documentTypeId: doc.documentTypeId,
+        documentTypeOther: doc.documentTypeOther || '',
+        originOfficeId: doc.originOfficeId || doc.currentOfficeId || currentUser?.officeId || offices[0]?.id,
+        originOfficeOther: doc.originOfficeOther || '',
+        currentOfficeId: doc.currentOfficeId || doc.originOfficeId || currentUser?.officeId || offices[0]?.id,
+        destinationOfficeId: doc.destinationOfficeId || '',
+        destinationOfficeOther: doc.destinationOfficeOther || '',
+        senderName: doc.senderName || '',
+        senderContact: doc.senderContact || '',
+        senderEmail: doc.senderEmail || '',
+        notifySender: doc.notifySender ?? true,
+        senderNotificationConsent: doc.senderNotificationConsent ?? true,
+        senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : ['sms', 'email'],
+        remarks: doc.remarks || '',
+        scannedText: doc.scannedText || '',
+      });
+    } else {
+      setEditDoc(null);
+      setFormData(getInitialForm());
+    }
+    setShowForm(true);
+  };
+
+  useEffect(() => {
+    if (!autoOpenCreate) return;
+    handleOpenForm();
+  }, [autoOpenCreate]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
+    const isReceptionist = currentUser?.role === 'Receptionist';
+    const pinnedOfficeId = isReceptionist ? currentUser?.officeId : formData.currentOfficeId;
+    const normalizedFormData = {
+      ...formData,
+      documentDirection: isReceptionist ? 'Incoming' : formData.documentDirection,
+      status: editDoc ? getWorkflowStatus(formData.status) : (currentRole === 'receptionist' ? getWorkflowStatus(formData.status) : 'Received'),
+      dateReceived: editDoc ? editDoc.dateReceived : formData.dateReceived,
+      documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
+      originOfficeOther: formData.originOfficeOther.trim(),
+      originOfficeId: isReceptionist ? currentUser?.officeId : formData.originOfficeId || pinnedOfficeId,
+      currentOfficeId: pinnedOfficeId,
+    };
+
+    if (editDoc) {
+      await onEdit({
+        ...editDoc,
+        ...normalizedFormData,
+        scannedFiles: [...(editDoc.scannedFiles || []), ...newFiles],
+        scannedImageUrl: newFiles[0]?.dataUrl || editDoc.scannedImageUrl,
+      });
+    } else {
+      await onAdd({
+        ...normalizedFormData,
+        scannedFiles: newFiles,
+        scannedImageUrl: newFiles[0]?.dataUrl || '',
+      });
+    }
+
+    setShowForm(false);
+    setEditDoc(null);
+    setAttachmentFile(null);
+  };
+
+  const openRouteModal = (doc) => {
+    const fromOfficeId = doc.currentOfficeId || currentUser?.officeId || offices[0]?.id || 'OFF-001';
+    setRouteDoc(doc);
+    setRouteForm({
+      fromOfficeId,
+      toOfficeId: doc.destinationOfficeId && doc.destinationOfficeId !== fromOfficeId
+        ? doc.destinationOfficeId
+        : offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId,
+      transmissionDate: new Date().toISOString().split('T')[0],
+      transmissionType: 'Internal',
+    });
+  };
+
+  const handleRouteSubmit = async (e) => {
+    e.preventDefault();
+    if (!routeDoc) return;
+    if (routeForm.fromOfficeId === routeForm.toOfficeId) {
+      notify('Choose a different destination office before routing.');
+      return;
+    }
+
+    await onRouteDocument({
+      documentId: routeDoc.id,
+      ...routeForm,
+    });
+
+    setRouteDoc(null);
+  };
+
+  const handleReceive = async (doc) => {
+    const pending = getPendingTransmission(doc.id);
+    if (!pending) return;
+
+    try {
+      await onReceiveTransmission(pending.id, {
+        receivedBy: currentUser?.id,
+        receivedAt: new Date().toISOString(),
+      });
+    } catch {
+      // The shared save handler already shows the API error.
+    }
+  };
+
+  const handleRejectDocument = (doc) => {
+    setRejectDoc(doc);
+    setRejectReason(doc.rejectionReason || '');
+  };
+
+  const handleRejectSubmit = async (e) => {
+    e.preventDefault();
+    if (!rejectDoc || !rejectReason.trim()) return;
+    await onVerifyDocument?.(rejectDoc.id, 'Rejected', rejectReason.trim());
+    setRejectDoc(null);
+    setRejectReason('');
+  };
+
+  const processingActionLabels = {
+    action_note: {
+      title: 'Record Document Action',
+      helper: 'Add a decision, instruction, or handoff note without changing the document status.',
+      button: 'Save Action',
+      required: true,
+    },
+    sign_document: {
+      title: 'Mark Signed',
+      helper: 'Use this after the document has been signed.',
+      button: 'Mark Signed',
+      required: false,
+    },
+    acknowledge_document: {
+      title: 'Acknowledge Document',
+      helper: 'Use this after a Received or For Filing document has been reviewed and checked.',
+      button: 'Acknowledge',
+      required: false,
+    },
+  };
+
+  const openProcessingAction = (doc, action) => {
+    setProcessingAction({ doc, action });
+    setProcessingNote('');
+  };
+
+  const handleProcessingSubmit = async (e) => {
+    e.preventDefault();
+    if (!processingAction) return;
+    const config = processingActionLabels[processingAction.action];
+    if (config?.required && !processingNote.trim()) return;
+    await onProcessDocument?.(processingAction.doc.id, processingAction.action, processingNote.trim());
+    setProcessingAction(null);
+    setProcessingNote('');
+  };
+
+  const escapeSlipText = (value) => String(value || '-').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  }[char]));
+
+  const handlePrintClaimSlip = (doc) => {
+    const trackingUrl = `${window.location.origin}${window.location.pathname}?tracking=${encodeURIComponent(doc.trackingNumber || '')}`;
+    const popup = window.open('', '_blank', 'width=720,height=820');
+    if (!popup) {
+      notify('Allow popups to print the document claim slip.', 'Popup blocked');
+      return;
+    }
+
+    popup.document.write(`<!doctype html>
+      <html>
+        <head>
+          <title>DigiPath Claim Slip - ${escapeSlipText(doc.trackingNumber)}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 0; padding: 32px; color: #0f172a; }
+            .slip { border: 1px solid #cbd5e1; border-radius: 8px; padding: 28px; max-width: 640px; margin: 0 auto; }
+            .header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 1px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 20px; }
+            h1 { font-size: 22px; margin: 0 0 4px; }
+            p { margin: 0; color: #475569; font-size: 13px; line-height: 1.5; }
+            .tracking { font-size: 24px; font-weight: 800; color: #0f4c75; letter-spacing: 0.04em; margin: 18px 0; }
+            .grid { display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px; font-size: 14px; }
+            .label { color: #64748b; font-weight: 700; }
+            .value { color: #0f172a; font-weight: 600; }
+            .footer { border-top: 1px solid #e2e8f0; margin-top: 24px; padding-top: 16px; }
+            @media print { body { padding: 0; } .slip { border: 0; } }
+          </style>
+        </head>
+        <body>
+          <div class="slip">
+            <div class="header">
+              <div>
+                <h1>Vinzons DigiPath Claim Slip</h1>
+                <p>Keep this tracking number to check document status.</p>
+              </div>
+              <p>${escapeSlipText(new Date().toLocaleString())}</p>
+            </div>
+            <div class="tracking">${escapeSlipText(doc.trackingNumber)}</div>
+            <div class="grid">
+              <div class="label">Subject</div><div class="value">${escapeSlipText(doc.subject)}</div>
+              <div class="label">Type</div><div class="value">${escapeSlipText(getDocumentTypeLabel(doc))}</div>
+              <div class="label">Date received</div><div class="value">${escapeSlipText(doc.dateReceived)}</div>
+              <div class="label">Current office</div><div class="value">${escapeSlipText(getCurrentLocation(doc))}</div>
+              <div class="label">Status</div><div class="value">${escapeSlipText(getWorkflowStatus(doc))}</div>
+            </div>
+            <div class="footer">
+              <p>Track online: ${escapeSlipText(trackingUrl)}</p>
+            </div>
+          </div>
+        </body>
+      </html>`);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  };
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortBy(field);
+      setSortAsc(false);
+    }
+  };
+
+  const SortIcon = ({ field }) => {
+    if (sortBy !== field) return null;
+    return sortAsc ? <ChevronUp size={12} /> : <ChevronDown size={12} />;
+  };
+
+  const formatDateTime = (value) => {
+    if (!value) return 'Not recorded';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  };
+
+  const getAttachmentSource = (file) => file?.url || file?.dataUrl || '';
+
+  const isImageFile = (file) => {
+    const source = getAttachmentSource(file);
+    return file.type?.startsWith('image/') || source.startsWith('data:image/') || /\.(jpg|jpeg|png|webp)$/i.test(source);
+  };
+
+  const isPdfFile = (file) => {
+    const source = getAttachmentSource(file);
+    return file.type === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf') || source.startsWith('data:application/pdf') || /\.pdf$/i.test(source);
+  };
+
+  const getDownloadName = (file, extension) => {
+    const base = (file.name || 'scanned-document').replace(/\.[^.]+$/, '');
+    return `${base}.${extension}`;
+  };
+
+  const downloadUrl = (url, filename) => {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+  };
+
+  const convertImageDownload = async (file, format) => {
+    const source = getAttachmentSource(file);
+    const image = await new Promise((resolve, reject) => {
+      const img = new window.Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Unable to prepare the scanned image for conversion.'));
+      img.src = source;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth || image.width;
+    canvas.height = image.naturalHeight || image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0);
+    const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, mime, 0.92));
+    if (!blob) throw new Error('Unable to convert the scanned image.');
+    const url = URL.createObjectURL(blob);
+    downloadUrl(url, getDownloadName(file, format === 'jpeg' ? 'jpg' : 'png'));
+    URL.revokeObjectURL(url);
+  };
+
+  const printImageAsPdf = (file) => {
+    const source = getAttachmentSource(file);
+    const popup = window.open('', '_blank', 'width=900,height=1100');
+    if (!popup) {
+      notify('Allow popups to save the scanned paper as PDF.', 'Popup blocked');
+      return;
+    }
+    popup.document.write(`<!doctype html><html><head><title>${file.name || 'Scanned paper'}</title><style>
+      @page { margin: 0.4in; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fff; }
+      img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+    </style></head><body><img src="${source}" alt="Scanned paper" /></body></html>`);
+    popup.document.close();
+    popup.focus();
+    popup.print();
+  };
+
+  const handleAttachmentDownload = async (file) => {
+    const format = downloadFormats[file.id] || 'original';
+    const source = getAttachmentSource(file);
+    if (!source) return;
+
+    try {
+      if (format === 'original') {
+        downloadUrl(source, file.name || 'scanned-document');
+      } else if (format === 'pdf') {
+        if (isPdfFile(file)) {
+          downloadUrl(source, file.name || 'scanned-document.pdf');
+        } else if (isImageFile(file)) {
+          printImageAsPdf(file);
+        } else {
+          notify('PDF saving is available for image or PDF scans only.');
+        }
+      } else if (isImageFile(file)) {
+        await convertImageDownload(file, format);
+      } else {
+        notify('Image conversion is available for scanned image files only.');
+      }
+    } catch (err) {
+      notify(err.message || 'Unable to download this scanned file.', 'Download failed', 'danger');
+    }
+  };
+
+  const isApprovalUser = currentRole === 'admin' || currentRole === 'mayor';
+  const canDelete = currentRole === 'admin';
+  const canCreate = currentRole === 'admin' || currentRole === 'receptionist';
+  const canEdit = currentRole === 'admin' || currentRole === 'receptionist';
+  const canRoute = isApprovalUser || currentRole === 'receptionist';
+  const canVerify = isApprovalUser;
+  const isApprovedForWorkflow = (doc) => (doc.intakeStatus || 'Approved') === 'Approved';
+  const canResubmitDocument = (doc) => doc.intakeStatus === 'Rejected' && registrationStatuses.includes(getWorkflowStatus(doc)) && (
+    currentRole === 'admin' || doc.currentOfficeId === currentUser?.officeId
+  );
+  const canRouteDocument = (doc) => {
+    const status = getWorkflowStatus(doc);
+    const finalStatus = finalWorkflowStatuses.includes(status);
+    return canRoute && isApprovedForWorkflow(doc) && transmittableStatuses.includes(status) && (
+      isApprovalUser || (!finalStatus && doc.currentOfficeId === currentUser?.officeId)
+    );
+  };
+  const canReceiveTransmission = (transmission) => Boolean(transmission) && !transmission.receivedBy && (
+    isApprovalUser ||
+    transmission.toOfficeId === currentUser?.officeId
+  );
+  const canTakeDocumentAction = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && ['Received', 'For Signing', 'For Filing', ...finalWorkflowStatuses].includes(getWorkflowStatus(doc));
+  const canArchiveDocument = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && finalWorkflowStatuses.includes(getWorkflowStatus(doc));
+
+  const renderDocumentActions = (doc, pendingTransmission) => {
+    const status = getWorkflowStatus(doc);
+    return (
+      <div className="workflow-actions">
+        {canVerify && doc.intakeStatus === 'Pending Review' && (
+          <>
+            <button className="btn btn-sm btn-success" onClick={() => onVerifyDocument?.(doc.id, 'Approved')}>
+              <CheckCircle2 size={14} /> Approve
+            </button>
+            <button className="btn btn-sm btn-danger" onClick={() => handleRejectDocument(doc)}>
+              <X size={14} /> Reject
+            </button>
+          </>
+        )}
+        {canResubmitDocument(doc) && (
+          <button className="btn btn-sm btn-secondary" onClick={() => onResubmitDocument?.(doc.id)}>
+            <Clock size={14} /> Resubmit
+          </button>
+        )}
+        {canRouteDocument(doc) && (
+          <button className="btn btn-sm btn-primary" onClick={() => openRouteModal(doc)}>
+            <Send size={14} /> Route
+          </button>
+        )}
+        {canReceiveTransmission(pendingTransmission) && (
+          <button className="btn btn-sm btn-success" onClick={() => handleReceive(doc)}>
+            <CheckCircle2 size={14} /> Receive
+          </button>
+        )}
+        {canTakeDocumentAction(doc) && (
+          <button className="btn btn-sm btn-secondary" onClick={() => openProcessingAction(doc, 'action_note')}>
+            <MessageSquare size={14} /> Add Action
+          </button>
+        )}
+        {canTakeDocumentAction(doc) && status === 'For Signing' && (
+          <button className="btn btn-sm btn-success" onClick={() => openProcessingAction(doc, 'sign_document')}>
+            <CheckCircle2 size={14} /> Signed
+          </button>
+        )}
+        {canTakeDocumentAction(doc) && ['Received', 'For Filing'].includes(status) && (
+          <button className="btn btn-sm btn-success" onClick={() => openProcessingAction(doc, 'acknowledge_document')}>
+            <CheckCircle2 size={14} /> Acknowledge
+          </button>
+        )}
+        {canArchiveDocument(doc) && (
+          <button className="btn btn-sm btn-secondary" onClick={() => onArchiveDocument(doc.id)}>
+            <Archive size={14} /> Archive
+          </button>
+        )}
+        {!canVerify && !canResubmitDocument(doc) && !canRouteDocument(doc) && !canReceiveTransmission(pendingTransmission) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
+          <p className="detail-empty">No actions are currently available for your role and this document status.</p>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div className="page-header page-header--align-bottom">
+        <div className="page-header-left">
+          <h1>Documents</h1>
+          <p>Scan, route, acknowledge, sign, file, and archive official documents</p>
+        </div>
+        {canCreate && (
+          <div className="page-header-actions">
+            <button className="btn btn-primary" onClick={() => handleOpenForm()}>
+              <Plus size={16} /> New Document
+            </button>
+          </div>
+        )}
+      </div>
+
+      <section className="document-panel">
+        <div className="document-toolbar">
+          <div className="filter-dropdown filter-dropdown-search">
+            <label>Search</label>
+            <div className="search-bar document-search-bar">
+              <Search size={16} color="var(--text-muted)" />
+              <input
+                type="text"
+                placeholder="Search by subject, tracking, sender, or office..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="filter-dropdown filter-dropdown-date">
+            <label>Date</label>
+            <select className="form-select" value={dateFilter} onChange={e => setDateFilter(e.target.value)}>
+              <option>All</option>
+              <option>Today</option>
+              <option>Specific</option>
+              <option>Range</option>
+            </select>
+            {(dateFilter === 'Specific' || dateFilter === 'Range') && (
+              <div className="date-range-inputs">
+                <input className="form-input" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+                {dateFilter === 'Range' && (
+                  <input className="form-input" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="filter-dropdowns">
+            <div className="filter-dropdown">
+              <label>Status</label>
+              <select className="form-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                {statuses.map(status => (
+                  <option key={status} value={status}>{status}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-dropdown">
+              <label>Direction</label>
+              <select className="form-select" value={filterDirection} onChange={e => setFilterDirection(e.target.value)}>
+                {directions.map(direction => (
+                  <option key={direction} value={direction}>{direction}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-dropdown">
+              <label>Priority</label>
+              <select className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+                {priorities.map(priority => {
+                  const pInfo = priority === 'All' ? null : getPriorityInfo(priority);
+                  return (
+                    <option key={priority} value={priority}>
+                      {priority === 'All' ? 'All Priority' : pInfo?.label}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="document-panel">
+        <div className="table-container">
+          <table>
+          <thead>
+            <tr>
+              <th>Tracking #</th>
+              <th>Subject</th>
+              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('priority')}>
+                Priority <SortIcon field="priority" />
+              </th>
+              <th>Type</th>
+              <th>Current Location</th>
+              <th>Direction</th>
+              <th>Status</th>
+              <th>Files</th>
+              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('dateReceived')}>
+                Date <SortIcon field="dateReceived" />
+              </th>
+              <th style={{ textAlign: 'right' }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginatedDocs.length > 0 ? paginatedDocs.map(doc => {
+              const pInfo = getPriorityInfo(doc.priorityLevel);
+              const isExpanded = expandedRow === doc.id;
+              const pendingTransmission = getPendingTransmission(doc.id);
+              const files = getDocumentFiles(doc);
+              const timeline = getTimeline(doc);
+              const workflowExplanation = getWorkflowExplanation(doc);
+
+              return (
+                <React.Fragment key={doc.id}>
+                  <tr
+                    className="clickable-row"
+                    title="Open document details"
+                    onClick={() => setDetailDoc(doc)}
+                  >
+                    <td><span className="td-mono">{doc.trackingNumber}</span></td>
+                    <td className="td-primary">{doc.subject}</td>
+                    <td>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                        padding: '0.15rem 0.5rem', borderRadius: '9999px',
+                        fontSize: '0.7rem', fontWeight: 600,
+                        background: pInfo.bg, color: pInfo.color,
+                        border: `1px solid ${pInfo.color}22`,
+                      }}>
+                        <Flag size={10} />
+                        {pInfo.label}
+                      </span>
+                    </td>
+                    <td>{getDocumentTypeLabel(doc)}</td>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                        <MapPin size={13} />
+                        {getCurrentLocation(doc)}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`direction-badge direction-${doc.documentDirection.toLowerCase()}`}>
+                        {doc.documentDirection === 'Incoming' ? <Inbox size={12} /> : <Send size={12} />}
+                        {' '}{doc.documentDirection}
+                      </span>
+                    </td>
+                    <td>
+                      <span className={`status-badge status-${getStatusClass(doc)}`}>
+                        {getWorkflowStatus(doc)}
+                      </span>
+                      {(doc.intakeStatus || 'Approved') !== 'Approved' && (
+                        <span
+                          className={`status-badge ${doc.intakeStatus === 'Rejected' ? 'status-archived' : 'status-in-transit'}`}
+                          style={{ marginLeft: '0.35rem' }}
+                        >
+                          {doc.intakeStatus}
+                        </span>
+                      )}
+                      {workflowExplanation && (
+                        <small className="workflow-explanation">{workflowExplanation}</small>
+                      )}
+                    </td>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: files.length ? 'var(--accent)' : 'var(--text-muted)', fontSize: '0.78rem', fontWeight: 600 }}>
+                        <Paperclip size={13} /> {files.length}
+                      </span>
+                    </td>
+                    <td style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.375rem' }}>
+                        <button className="btn-icon" title="Open details" onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
+                          <Eye size={14} />
+                        </button>
+                        {canEdit && (
+                          <button className="btn-icon" title="Edit" onClick={(e) => { e.stopPropagation(); handleOpenForm(doc); }}>
+                            <Edit2 size={14} />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button className="btn-icon" title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(doc.id); }}
+                            style={{ color: 'var(--danger)' }}>
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan="10" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)' }}>
+                        <div className="document-detail-grid">
+                          <div className="document-detail-section">
+                            <h4><User size={14} /> Sender and Metadata</h4>
+                            <div className="detail-pair"><span>Sender</span><strong>{doc.senderName || '-'}</strong></div>
+                            <div className="detail-pair"><span>Contact</span><strong>{doc.senderContact || '-'}</strong></div>
+                            <div className="detail-pair"><span>Email</span><strong>{doc.senderEmail || '-'}</strong></div>
+                            <div className="detail-pair"><span>Remarks</span><strong>{doc.remarks || '-'}</strong></div>
+                          </div>
+
+                          <div className="document-detail-section">
+                            <h4><ArrowRightLeft size={14} /> Workflow Actions</h4>
+                            {renderDocumentActions(doc, pendingTransmission)}
+                            <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
+                            <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc)}</strong></div>
+                            <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
+                          </div>
+
+                          <div className="document-detail-section">
+                            <h4><Paperclip size={14} /> Scanned Files</h4>
+                            {files.length ? (
+                              <div className="attachment-list">
+                                {files.map(file => (
+                                  <div key={file.id} className="attachment-item">
+                                    <button type="button" className="attachment-link" onClick={() => setPreviewFile(file)}>
+                                      <Eye size={14} />
+                                      <span>{file.name}</span>
+                                    </button>
+                                    <select
+                                      className="attachment-format-select"
+                                      value={downloadFormats[file.id] || 'original'}
+                                      onChange={e => setDownloadFormats(prev => ({ ...prev, [file.id]: e.target.value }))}
+                                      title="Choose download format"
+                                    >
+                                      <option value="original">Original</option>
+                                      <option value="pdf">PDF</option>
+                                      <option value="png">PNG</option>
+                                      <option value="jpeg">JPG</option>
+                                    </select>
+                                    <button type="button" className="attachment-download" onClick={() => handleAttachmentDownload(file)} title="Download scanned file">
+                                      <Download size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="detail-empty">No scanned file attached yet.</p>
+                            )}
+                          </div>
+
+                          <div className="document-detail-section document-timeline-section">
+                            <h4><History size={14} /> Document Timeline</h4>
+                            <div className="timeline-compact">
+                              {timeline.map(event => (
+                                <div key={event.id} className="timeline-compact-item">
+                                  <span className="timeline-compact-dot"></span>
+                                  <div>
+                                    <strong>{event.label}</strong>
+                                    <p>{event.details}</p>
+                                    <small>
+                                      {formatDateTime(event.timestamp)}
+                                      {event.userId ? ` - ${getUserFullName(event.userId)}` : ''}
+                                      {event.officeId ? ` - ${getOfficeName(event.officeId)}` : ''}
+                                    </small>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            }) : (
+              <tr>
+                <td colSpan="10">
+                  <div className="empty-state">
+                    <div className="empty-state-icon"><FileText size={24} /></div>
+                    <h3>No documents found</h3>
+                    <p>Try adjusting your search or filters</p>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="pagination-toolbar">
+        <div className="pagination-summary">
+          Showing {showFrom}-{showTo} of {filteredDocs.length} matching documents
+        </div>
+        <div className="pagination-controls">
+          <label>
+            Rows per page
+            <input
+              type="number"
+              min="1"
+              max="100"
+              step="1"
+              value={pageSize}
+              className="form-input pagination-page-size-input"
+              onChange={e => handlePageSizeChange(Number(e.target.value) || 1)}
+            />
+          </label>
+        </div>
+        <div className="pagination-pages">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={page <= 1}
+            onClick={() => handlePageChange(page - 1)}
+          >
+            Previous
+          </button>
+          <span>Page {page} of {totalPages}</span>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={page >= totalPages}
+            onClick={() => handlePageChange(page + 1)}
+          >
+            Next
+          </button>
+        </div>
+      </div>
+      </section>
+
+      {detailDoc && (() => {
+        const doc = documents.find(item => item.id === detailDoc.id) || detailDoc;
+        const files = getDocumentFiles(doc);
+        const timeline = getTimeline(doc);
+        const pendingTransmission = getPendingTransmission(doc.id);
+        const senderOutbox = getSenderNotifications(doc.id);
+        const workflowExplanation = getWorkflowExplanation(doc);
+
+        return (
+          <div className="modal-overlay" onClick={() => setDetailDoc(null)}>
+            <div className="modal document-detail-modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <div>
+                  <h2>{doc.subject}</h2>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                    {doc.trackingNumber} - {getDocumentTypeLabel(doc)}
+                  </p>
+                </div>
+                <button className="btn-icon" onClick={() => setDetailDoc(null)}><X size={18} /></button>
+              </div>
+              <div className="modal-body">
+                <div className="document-detail-grid">
+                  <div className="document-detail-section">
+                    <h4><MapPin size={14} /> Location</h4>
+                    <div className="detail-pair"><span>Status</span><strong>{getWorkflowStatus(doc)}</strong></div>
+                    <div className="detail-pair"><span>Intake Review</span><strong>{doc.intakeStatus || 'Approved'}</strong></div>
+                    {workflowExplanation && <div className="detail-pair"><span>Workflow Note</span><strong>{workflowExplanation}</strong></div>}
+                    {doc.rejectionReason && <div className="detail-pair"><span>Rejection Reason</span><strong>{doc.rejectionReason}</strong></div>}
+                    <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc)}</strong></div>
+                    <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
+                    <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
+                    <div className="detail-pair"><span>RFID Tag</span><strong>{doc.rfidTag || '-'}</strong></div>
+                    <div className="detail-pair"><span>Last Detected</span><strong>{doc.lastDetectedOfficeId ? `${getOfficeName(doc.lastDetectedOfficeId)} - ${formatDateTime(doc.lastDetectedAt)}` : '-'}</strong></div>
+                  </div>
+
+                  <div className="document-detail-section">
+                    <h4><User size={14} /> Sender</h4>
+                    <div className="detail-pair"><span>Name</span><strong>{doc.senderName || '-'}</strong></div>
+                    <div className="detail-pair"><span>Contact</span><strong>{doc.senderContact || '-'}</strong></div>
+                    <div className="detail-pair"><span>Email</span><strong>{doc.senderEmail || '-'}</strong></div>
+                    <div className="detail-pair"><span>Priority</span><strong>{getPriorityInfo(doc.priorityLevel).label}</strong></div>
+                    <div className="detail-pair"><span>Updates</span><strong>{doc.notifySender === false ? 'Disabled' : (doc.senderNotificationChannels || []).join(', ').toUpperCase() || 'Enabled'}</strong></div>
+                  </div>
+
+                  <div className="document-detail-section">
+                    <h4><Paperclip size={14} /> Attachments</h4>
+                    {files.length ? (
+                      <div className="attachment-list">
+                        {files.map(file => (
+                          <div key={file.id} className="attachment-item">
+                            <button type="button" className="attachment-link" onClick={() => setPreviewFile(file)}>
+                              <Eye size={14} />
+                              <span>{file.name}</span>
+                            </button>
+                            <select
+                              className="attachment-format-select"
+                              value={downloadFormats[file.id] || 'original'}
+                              onChange={e => setDownloadFormats(prev => ({ ...prev, [file.id]: e.target.value }))}
+                              title="Choose download format"
+                            >
+                              <option value="original">Original</option>
+                              <option value="pdf">PDF</option>
+                              <option value="png">PNG</option>
+                              <option value="jpeg">JPG</option>
+                            </select>
+                            <button type="button" className="attachment-download" onClick={() => handleAttachmentDownload(file)} title="Download scanned file">
+                              <Download size={14} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="detail-empty">No scanned file attached yet.</p>
+                    )}
+                  </div>
+
+                  <div className="document-detail-section document-actions-section document-timeline-section">
+                    <h4><ArrowRightLeft size={14} /> Document Actions</h4>
+                    {renderDocumentActions(doc, pendingTransmission)}
+                  </div>
+
+                  <div className="document-detail-section document-timeline-section">
+                    <h4><History size={14} /> Timeline</h4>
+                    <div className="timeline-compact">
+                      {timeline.map(event => (
+                        <div key={event.id} className="timeline-compact-item">
+                          <span className="timeline-compact-dot"></span>
+                          <div>
+                            <strong>{event.label}</strong>
+                            <p>{event.details}</p>
+                            <small>
+                              {formatDateTime(event.timestamp)}
+                              {event.userId ? ` - ${getUserFullName(event.userId)}` : ''}
+                              {event.officeId ? ` - ${getOfficeName(event.officeId)}` : ''}
+                            </small>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="document-detail-section document-timeline-section">
+                    <h4><MessageSquare size={14} /> Sender Notification Outbox</h4>
+                    {senderOutbox.length ? (
+                      <div className="sender-notification-list">
+                        {senderOutbox.map(item => (
+                          <div key={item.id} className="sender-notification-item">
+                            <div>
+                              <span className={`sender-channel-badge ${item.channel}`}>{item.channel?.toUpperCase()}</span>
+                              <strong>{item.subject || item.eventType}</strong>
+                              <p>{item.message}</p>
+                              <small>{item.recipient} - {item.status} - {formatDateTime(item.createdAt)}</small>
+                            </div>
+                            <button className="btn btn-sm btn-secondary" onClick={() => onResendSenderNotification?.(item.id)}>
+                              <Send size={13} /> Requeue
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="detail-empty">No sender updates queued yet. Updates are created when the document moves through the workflow.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showForm && (
+        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+          <div className="modal document-form-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{editDoc ? 'Edit Document' : 'New Document'}</h2>
+              <button className="btn-icon" onClick={() => setShowForm(false)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleSubmit}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label className="form-label">Document Subject / Description</label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={formData.subject}
+                    onChange={e => setFormData({ ...formData, subject: e.target.value })}
+                    placeholder="Enter document subject"
+                    required
+                  />
+                  <p className="field-hint">Shortly describe the document so staff can recognize it in lists, reports, and tracking.</p>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Document Type</label>
+                    <select
+                      className="form-select"
+                      value={formData.documentTypeId}
+                      onChange={e => setFormData({ ...formData, documentTypeId: e.target.value })}
+                    >
+                      {documentTypes.map(dt => (
+                        <option key={dt.id} value={dt.id}>{dt.category}</option>
+                      ))}
+                    </select>
+                    <p className="field-hint">Classifies the record for filtering and official reports.</p>
+                    {isOtherDocumentType(formData.documentTypeId) && (
+                      <>
+                        <input
+                          className="form-input"
+                          type="text"
+                          value={formData.documentTypeOther}
+                          onChange={e => setFormData({ ...formData, documentTypeOther: e.target.value })}
+                          placeholder="Specify document type"
+                          required
+                          style={{ marginTop: '0.5rem' }}
+                        />
+                        <p className="field-hint">Names the custom document type when it is not in the list.</p>
+                      </>
+                    )}
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Direction</label>
+                    <select
+                      className="form-select"
+                      value={formData.documentDirection}
+                      onChange={e => setFormData({ ...formData, documentDirection: e.target.value })}
+                      disabled={currentRole === 'receptionist'}
+                    >
+                      <option>Incoming</option>
+                      {currentRole !== 'receptionist' && <option>Outgoing</option>}
+                    </select>
+                    <p className="field-hint">Incoming means received from a sender; outgoing means created by the office.</p>
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">
+                      <Flag size={12} style={{ marginRight: '0.25rem' }} />
+                      Priority Level
+                    </label>
+                    <div
+                      className="priority-select-wrap"
+                      style={{
+                        '--priority-color': getPriorityInfo(formData.priorityLevel).color,
+                        '--priority-bg': getPriorityInfo(formData.priorityLevel).bg,
+                      }}
+                    >
+                      <span className="priority-color-preview"></span>
+                      <select
+                        className="form-select priority-select"
+                        value={formData.priorityLevel}
+                        onChange={e => setFormData({ ...formData, priorityLevel: e.target.value })}
+                      >
+                        {priorityLevels.map(p => (
+                          <option key={p.id} value={p.id} style={{ color: p.color, backgroundColor: p.bg }}>{p.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="field-hint">Controls queue urgency and highlights items that need faster attention.</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Pending Workflow Status</label>
+                    <select
+                      className="form-select"
+                      value={formData.status}
+                      onChange={e => setFormData({ ...formData, status: e.target.value })}
+                      disabled={Boolean(editDoc) || currentRole !== 'receptionist'}
+                    >
+                      {registrationStatuses.map(status => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                    <p className="field-hint">Only receptionists set the starting status. Mayor/Admin actions finish it after approval.</p>
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Date Received</label>
+                    <input
+                      className="form-input"
+                      type="date"
+                      value={formData.dateReceived}
+                      disabled
+                      required
+                    />
+                    <p className="field-hint">Locked to the registration date.</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Receiving Office</label>
+                    <select
+                      className="form-select"
+                      value={formData.currentOfficeId}
+                      onChange={e => setFormData({ ...formData, currentOfficeId: e.target.value, originOfficeId: formData.originOfficeId || e.target.value })}
+                      disabled={Boolean(editDoc) || currentRole === 'receptionist'}
+                    >
+                      {(Boolean(editDoc) || currentRole === 'receptionist'
+                        ? offices.filter(o => o.id === formData.currentOfficeId)
+                        : offices
+                      ).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    <p className="field-hint">The office currently responsible for the document after registration.</p>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">External / Other Source Office</label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={formData.originOfficeOther}
+                    onChange={e => setFormData({ ...formData, originOfficeOther: e.target.value })}
+                    placeholder="School, agency, municipality, barangay, or other sender office"
+                  />
+                  <p className="field-hint">Use this when the document came from outside the municipal office list.</p>
+                </div>
+
+                <div style={{
+                  padding: '0.75rem', background: 'var(--bg-elevated)',
+                  borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)',
+                  marginTop: '0.5rem',
+                }}>
+                  <p style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
+                    <User size={12} style={{ marginRight: '0.25rem' }} />
+                    Sender Information
+                  </p>
+                  <div className="form-group">
+                    <label className="form-label">Sender Name</label>
+                    <input className="form-input" type="text" value={formData.senderName}
+                      onChange={e => setFormData({ ...formData, senderName: e.target.value })}
+                      placeholder="Full name of the sender" />
+                    <p className="field-hint">Appears in tracking and helps staff identify who submitted the document.</p>
+                  </div>
+                  <div className="form-grid">
+                    <div className="form-group">
+                      <label className="form-label">
+                        <Phone size={12} style={{ marginRight: '0.25rem' }} />Contact Number
+                      </label>
+                      <input className="form-input" type="tel" value={formData.senderContact}
+                        onChange={e => setFormData({ ...formData, senderContact: e.target.value })}
+                        placeholder="09XX-XXX-XXXX" />
+                      <p className="field-hint">Used for SMS tracking updates when sender notifications are enabled.</p>
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">
+                        <Mail size={12} style={{ marginRight: '0.25rem' }} />Email
+                      </label>
+                      <input className="form-input" type="email" value={formData.senderEmail}
+                        onChange={e => setFormData({ ...formData, senderEmail: e.target.value })}
+                        placeholder="email@example.com" />
+                      <p className="field-hint">Used for email tracking updates and status notices.</p>
+                    </div>
+                  </div>
+                  <div className="sender-notification-options">
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={formData.notifySender}
+                        onChange={e => setFormData({ ...formData, notifySender: e.target.checked })}
+                      />
+                      Send tracking number and status updates to sender
+                    </label>
+                    <div className="sender-channel-options">
+                      <label className="checkbox-chip">
+                        <input
+                          type="checkbox"
+                          checked={(formData.senderNotificationChannels || []).includes('sms')}
+                          onChange={() => toggleSenderChannel('sms')}
+                        />
+                        SMS
+                      </label>
+                      <label className="checkbox-chip">
+                        <input
+                          type="checkbox"
+                          checked={(formData.senderNotificationChannels || []).includes('email')}
+                          onChange={() => toggleSenderChannel('email')}
+                        />
+                        Email
+                      </label>
+                    </div>
+                    <p className="field-hint">Choose how the sender receives the tracking number and workflow updates.</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">
+                      <MessageSquare size={12} style={{ marginRight: '0.25rem' }} />Remarks
+                    </label>
+                    <textarea className="form-input" value={formData.remarks}
+                      onChange={e => setFormData({ ...formData, remarks: e.target.value })}
+                      placeholder="Additional notes" rows={2} style={{ resize: 'vertical' }} />
+                    <p className="field-hint">Optional internal note for context, instructions, or special handling.</p>
+                  </div>
+                </div>
+
+                <div className="form-group" style={{ marginTop: '1rem' }}>
+                  <label className="form-label">
+                    <Upload size={12} style={{ marginRight: '0.25rem' }} />
+                    Scanned File Attachment
+                  </label>
+                  <input
+                    className="form-input"
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={e => setAttachmentFile(e.target.files?.[0] || null)}
+                  />
+                  <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                    Attach a scanned image or PDF. Camera scans are added automatically from the Scan Documents screen.
+                  </p>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary">
+                  {editDoc ? 'Update' : 'Create Document'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {rejectDoc && (
+        <div className="modal-overlay" onClick={() => setRejectDoc(null)}>
+          <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Reject Document</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                  {rejectDoc.trackingNumber} - {rejectDoc.subject}
+                </p>
+              </div>
+              <button className="btn-icon" onClick={() => setRejectDoc(null)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleRejectSubmit}>
+              <div className="modal-body">
+                <div className="reject-warning">
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>Reason is required</strong>
+                    <span>The receptionist will see this reason before correcting and resubmitting the document.</span>
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Rejection Reason</label>
+                  <textarea
+                    className="form-input"
+                    value={rejectReason}
+                    onChange={e => setRejectReason(e.target.value)}
+                    placeholder="Explain what needs to be corrected before approval"
+                    rows={5}
+                    required
+                    autoFocus
+                    style={{ resize: 'vertical' }}
+                  />
+                  <p className="field-hint">This is shown to the office that must correct and resubmit the document.</p>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setRejectDoc(null)}>Cancel</button>
+                <button type="submit" className="btn btn-danger" disabled={!rejectReason.trim()}>
+                  <X size={16} /> Reject Document
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {processingAction && (() => {
+        const config = processingActionLabels[processingAction.action];
+        const doc = processingAction.doc;
+        return (
+          <div className="modal-overlay" onClick={() => setProcessingAction(null)}>
+            <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <div>
+                  <h2>{config?.title || 'Document Action'}</h2>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                    {doc.trackingNumber} - {doc.subject}
+                  </p>
+                </div>
+                <button className="btn-icon" onClick={() => setProcessingAction(null)}><X size={18} /></button>
+              </div>
+              <form onSubmit={handleProcessingSubmit}>
+                <div className="modal-body">
+                  <div className="reject-warning">
+                    <Clock size={18} />
+                    <div>
+                      <strong>{getWorkflowStatus(doc)} document</strong>
+                      <span>{config?.helper}</span>
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">{config?.required ? 'Action Note' : 'Remarks'}</label>
+                    <textarea
+                      className="form-input"
+                      value={processingNote}
+                      onChange={e => setProcessingNote(e.target.value)}
+                      placeholder={config?.required ? 'Enter the action taken or instruction' : 'Optional remarks for the timeline'}
+                      rows={4}
+                      required={config?.required}
+                      autoFocus
+                      style={{ resize: 'vertical' }}
+                    />
+                    <p className="field-hint">Records the action on the document timeline for audit and tracking.</p>
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => setProcessingAction(null)}>Cancel</button>
+                  <button type="submit" className="btn btn-primary" disabled={config?.required && !processingNote.trim()}>
+                    <CheckCircle2 size={16} /> {config?.button || 'Save Update'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
+
+      {previewFile && (
+        <div className="modal-overlay scanned-preview-overlay" onClick={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}>
+          <div className={`modal scanned-preview-modal ${isPreviewMaximized ? 'maximized' : ''}`} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Scanned Paper Preview</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                  {previewFile.name}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <button
+                  className="btn-icon"
+                  onClick={() => setIsPreviewMaximized(prev => !prev)}
+                  title={isPreviewMaximized ? 'Restore preview' : 'Maximize preview'}
+                >
+                  {isPreviewMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                </button>
+                <button className="btn-icon" onClick={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}><X size={18} /></button>
+              </div>
+            </div>
+            <div className="modal-body">
+              <div className="scanned-preview-surface">
+                {isImageFile(previewFile) ? (
+                  <img src={getAttachmentSource(previewFile)} alt={previewFile.name} className="scanned-preview-image" />
+                ) : isPdfFile(previewFile) ? (
+                  <iframe src={getAttachmentSource(previewFile)} title={previewFile.name} className="scanned-preview-frame" />
+                ) : (
+                  <div className="empty-state" style={{ padding: '2rem' }}>
+                    <FileText size={28} />
+                    <h3>Preview unavailable</h3>
+                    <p>This file type can be downloaded but cannot be previewed in the browser.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <select
+                className="form-select preview-format-select"
+                value={downloadFormats[previewFile.id] || 'original'}
+                onChange={e => setDownloadFormats(prev => ({ ...prev, [previewFile.id]: e.target.value }))}
+              >
+                <option value="original">Original</option>
+                <option value="pdf">PDF</option>
+                <option value="png">PNG</option>
+                <option value="jpeg">JPG</option>
+              </select>
+              <button type="button" onClick={() => handleAttachmentDownload(previewFile)} className="btn btn-secondary">
+                <Download size={16} /> Download
+              </button>
+              <button className="btn btn-secondary" onClick={() => setIsPreviewMaximized(prev => !prev)}>
+                {isPreviewMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                {isPreviewMaximized ? 'Restore' : 'Maximize'}
+              </button>
+              <button className="btn btn-primary" onClick={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {routeDoc && (
+        <div className="modal-overlay" onClick={() => setRouteDoc(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Route Document</h2>
+              <button className="btn-icon" onClick={() => setRouteDoc(null)}><X size={18} /></button>
+            </div>
+            <form onSubmit={handleRouteSubmit}>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label className="form-label">Document</label>
+                  <input className="form-input" value={`${routeDoc.trackingNumber} - ${routeDoc.subject}`} readOnly />
+                  <p className="field-hint">The selected document that will be transmitted to another office.</p>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">From Office</label>
+                    <select
+                      className="form-select"
+                      value={routeForm.fromOfficeId}
+                      onChange={e => setRouteForm({ ...routeForm, fromOfficeId: e.target.value })}
+                      disabled={!isApprovalUser}
+                    >
+                      {(isApprovalUser ? offices : offices.filter(o => o.id === routeForm.fromOfficeId))
+                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    <p className="field-hint">The office currently holding and sending the document.</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">To Office</label>
+                    <select className="form-select" value={routeForm.toOfficeId}
+                      onChange={e => setRouteForm({ ...routeForm, toOfficeId: e.target.value })}>
+                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    <p className="field-hint">The destination office that must receive the transmission.</p>
+                  </div>
+                </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label className="form-label">Transmission Type</label>
+                    <select className="form-select" value={routeForm.transmissionType}
+                      onChange={e => setRouteForm({ ...routeForm, transmissionType: e.target.value })}>
+                      <option>Internal</option>
+                      <option>External</option>
+                    </select>
+                    <p className="field-hint">Marks whether the route stays inside the municipality or goes outside.</p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Date</label>
+                    <input className="form-input" type="date" value={routeForm.transmissionDate}
+                      onChange={e => setRouteForm({ ...routeForm, transmissionDate: e.target.value })} required />
+                    <p className="field-hint">The official sending date recorded in the transmission history.</p>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setRouteDoc(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary"><Send size={16} /> Route Document</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default DocumentList;

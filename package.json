@@ -1,0 +1,15 @@
+{
+  "name": "vinzons-digipath",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix dashboard install",
+    "dev": "node scripts/dev.js",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:dashboard": "npm --prefix dashboard run dev",
+    "build": "npm --prefix dashboard run build",
+    "seed": "npm --prefix backend run seed",
+    "migrate": "npm --prefix backend run migrate",
+    "smoke": "npm --prefix backend run smoke",
+    "audit:roles": "npm --prefix backend run audit:roles"
+  }
+}

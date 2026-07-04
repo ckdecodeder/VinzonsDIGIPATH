@@ -1,0 +1,16 @@
+node_modules/
+backend/node_modules/
+dashboard/node_modules/
+
+.env
+backend/.env
+dashboard/.env
+
+dashboard/dist/
+backend/uploads/
+
+*.log
+.DS_Store
+__pycache__/
+local_scans.db
+scanned_files/

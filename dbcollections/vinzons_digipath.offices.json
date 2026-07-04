@@ -1,0 +1,88 @@
+[{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d66"
+  },
+  "id": "OFF-001",
+  "__v": 0,
+  "name": "Mayor's Office"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d67"
+  },
+  "id": "OFF-002",
+  "__v": 0,
+  "name": "Municipal Planning & Development"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d68"
+  },
+  "id": "OFF-003",
+  "__v": 0,
+  "name": "Municipal Engineering"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d69"
+  },
+  "id": "OFF-004",
+  "__v": 0,
+  "name": "Municipal Treasurer"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d6a"
+  },
+  "id": "OFF-005",
+  "__v": 0,
+  "name": "Municipal Assessor"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d6b"
+  },
+  "id": "OFF-006",
+  "__v": 0,
+  "name": "Municipal Health Office"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d6c"
+  },
+  "id": "OFF-007",
+  "__v": 0,
+  "name": "Municipal Social Welfare & Development"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d6d"
+  },
+  "id": "OFF-008",
+  "__v": 0,
+  "name": "Municipal Agriculture"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d6e"
+  },
+  "id": "OFF-009",
+  "__v": 0,
+  "name": "Human Resources"
+},
+{
+  "_id": {
+    "$oid": "69ef67920fb1bf500fd58d6f"
+  },
+  "id": "OFF-010",
+  "__v": 0,
+  "name": "Municipal Budget Office"
+},
+{
+  "_id": {
+    "$oid": "69fd58c2d9b7ebd01a9665a2"
+  },
+  "id": "OFF-010716-463",
+  "name": "DSWD - Provincial Office",
+  "__v": 0
+}]

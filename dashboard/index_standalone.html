@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vinzons DigiPath - OCR Scanning</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src='https://unpkg.com/tesseract.js@v5.0.3/dist/tesseract.min.js'></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        @keyframes scan { 0% { top: 0%; } 100% { top: 100%; } }
+        .scanning-line { animation: scan 2s linear infinite; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        const Icon = ({ name, size = 20, className = "" }) => {
+            const [svg, setSvg] = useState("");
+            useEffect(() => {
+                if (window.lucide) {
+                    const icon = window.lucide.icons[name];
+                    if (icon) {
+                        setSvg(icon.toSvg({ width: size, height: size, class: className }));
+                    }
+                }
+            }, [name, size, className]);
+            return <span dangerouslySetInnerHTML={{ __html: svg }} />;
+        };
+
+        const Layout = ({ children, currentPage, onNavigate }) => {
+            const navItems = [
+                { id: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard' },
+                { id: 'memorandum', label: 'Memorandums', icon: 'ScrollText', category: 'Memorandum' },
+                { id: 'executive-order', label: 'Executive Orders', icon: 'Files', category: 'Executive Order' },
+                { id: 'communication-letter', label: 'Communication Letters', icon: 'Mail', category: 'Communication Letter' },
+                { id: 'proposals', label: 'Proposals', icon: 'ClipboardList', category: 'Proposal' },
+                { id: 'scan-documents', label: 'Scan & Extract', icon: 'Scan' },
+            ];
+
+            return (
+                <div className="flex min-h-screen">
+                    <aside className="w-64 bg-white border-r border-slate-200 flex flex-col p-6 sticky top-0 h-screen">
+                        <div className="flex items-center gap-2 text-blue-600 font-bold text-xl mb-10">
+                            <Icon name="FileText" size={28} />
+                            <span>Vinzons DigiPath</span>
+                        </div>
+                        <div className="space-y-1 overflow-y-auto">
+                            <p className="text-[10px] uppercase font-semibold text-slate-400 tracking-wider mb-4 px-2">Menu</p>
+                            {navItems.map((item) => (
+                                <div 
+                                    key={item.id}
+                                    onClick={() => onNavigate(item.id === 'dashboard' ? 'dashboard' : item.id === 'scan-documents' ? 'scan-documents' : 'documents', item.category)}
+                                    className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                                        (currentPage === 'dashboard' && item.id === 'dashboard') || 
+                                        (currentPage === 'scan-documents' && item.id === 'scan-documents') || 
+                                        (currentPage === 'documents' && item.category === window.currentCategory) ? 'bg-blue-50 text-blue-600 font-medium' : 'text-slate-500 hover:bg-slate-50'
+                                    }`}
+                                >
+                                    <Icon name={item.icon} size={20} />
+                                    <span className="text-sm">{item.label}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </aside>
+                    <main className="flex-1 p-8 overflow-y-auto">
+                        {children}
+                    </main>
+                </div>
+            );
+        };
+
+        const DashboardHome = ({ onNavigate, stats }) => {
+            const statCards = [
+                { label: 'Total Documents', value: stats.total, icon: 'Files', color: 'bg-blue-50 text-blue-600' },
+                { label: 'Pending Approval', value: stats.pending, icon: 'Clock', color: 'bg-amber-50 text-amber-600' },
+                { label: 'Approved Today', value: stats.approved, icon: 'CheckCircle', color: 'bg-emerald-50 text-emerald-600' },
+                { label: 'Extraction Logs', value: stats.extractions || '0', icon: 'Type', color: 'bg-indigo-50 text-indigo-600' },
+            ];
+
+            return (
+                <div>
+                    <div className="flex justify-between items-center mb-8">
+                        <h1 className="text-3xl font-bold tracking-tight">Welcome, Admin</h1>
+                        <div className="flex gap-2">
+                            <button onClick={() => onNavigate('scan-documents')} className="bg-white border border-slate-200 px-4 py-2 rounded-lg font-semibold text-sm hover:bg-slate-50 transition-colors">Scan & Extract</button>
+                            <button onClick={() => onNavigate('add-document')} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold text-sm hover:bg-blue-700 transition-colors">+ Create New</button>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        {statCards.map((stat, i) => (
+                            <div key={i} className="bg-white border border-slate-200 p-6 rounded-xl flex items-center gap-4 shadow-sm">
+                                <div className={`p-3 rounded-lg ${stat.color}`}>
+                                    <Icon name={stat.icon} />
+                                </div>
+                                <div>
+                                    <p className="text-xs text-slate-500 font-medium">{stat.label}</p>
+                                    <p className="text-2xl font-bold">{stat.value}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="bg-white border border-slate-200 p-6 rounded-xl shadow-sm">
+                        <h3 className="font-semibold mb-4 text-slate-700">Quick Access</h3>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                            {['Memorandum', 'Executive Order', 'Communication Letter', 'Proposal'].map(cat => (
+                                <button key={cat} onClick={() => onNavigate('documents', cat)} className="p-4 border border-slate-100 rounded-lg hover:bg-slate-50 text-sm font-medium text-slate-600 transition-all text-center">
+                                    {cat}s
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Scanner = ({ onCapture }) => {
+            const videoRef = useRef(null);
+            const [stream, setStream] = useState(null);
+            const [error, setError] = useState(null);
+            const [ocrProgress, setOcrProgress] = useState(0);
+            const [isExtracting, setIsExtracting] = useState(false);
+
+            useEffect(() => {
+                const startCamera = async () => {
+                    try {
+                        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                        setStream(s);
+                        if (videoRef.current) videoRef.current.srcObject = s;
+                    } catch (err) {
+                        setError("Camera access denied. Please ensure your browser has camera permissions.");
+                    }
+                };
+                startCamera();
+                return () => {
+                    if (stream) stream.getTracks().forEach(track => track.stop());
+                };
+            }, []);
+
+            const captureAndExtract = async () => {
+                setIsExtracting(true);
+                const canvas = document.createElement('canvas');
+                canvas.width = videoRef.current.videoWidth;
+                canvas.height = videoRef.current.videoHeight;
+                canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+                const imageData = canvas.toDataURL('image/jpeg');
+
+                try {
+                    const { data: { text } } = await Tesseract.recognize(imageData, 'eng', {
+                        logger: m => {
+                            if (m.status === 'recognizing text') setOcrProgress(parseInt(m.progress * 100));
+                        }
+                    });
+                    onCapture(imageData, text);
+                } catch (err) {
+                    alert("Extraction failed. Please try again with better lighting.");
+                    setIsExtracting(false);
+                }
+            };
+
+            return (
+                <div className="bg-white border border-slate-200 p-6 rounded-xl max-w-2xl mx-auto shadow-lg text-center">
+                    <h2 className="text-2xl font-bold mb-4 flex items-center justify-center gap-2">
+                        <Icon name="Scan" className="text-blue-600" />
+                        Scan & Extract Text
+                    </h2>
+                    
+                    {error ? (
+                        <div className="bg-red-50 text-red-600 p-6 rounded-lg text-sm mb-4">{error}</div>
+                    ) : (
+                        <div className="relative rounded-lg overflow-hidden bg-black aspect-video mb-6 ring-4 ring-slate-100 shadow-inner">
+                            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 border-2 border-dashed border-white/30 pointer-events-none m-8 flex items-center justify-center">
+                                <div className="w-full h-0.5 bg-blue-400 absolute scanning-line opacity-50"></div>
+                            </div>
+                            {isExtracting && (
+                                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-white backdrop-blur-sm transition-all">
+                                    <div className="w-48 h-2 bg-white/20 rounded-full mb-4 overflow-hidden">
+                                        <div className="h-full bg-blue-500 transition-all duration-300" style={{width: `${ocrProgress}%`}}></div>
+                                    </div>
+                                    <p className="font-semibold">{ocrProgress === 100 ? 'Finishing up...' : `Extracting Text... ${ocrProgress}%`}</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <button onClick={captureAndExtract} disabled={!stream || isExtracting} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 flex items-center gap-2 disabled:opacity-50 mx-auto transition-all active:scale-95">
+                        {isExtracting ? <Icon name="Loader2" className="animate-spin" /> : <Icon name="Zap" />}
+                        {isExtracting ? 'Processing...' : 'Capture & Extract Text'}
+                    </button>
+                    <p className="mt-4 text-xs text-slate-400">Powered by Vinzons DigiPath OCR Engine</p>
+                </div>
+            );
+        };
+
+        const DocumentList = ({ category, documents, onDelete, onEdit, onAdd }) => {
+            const filteredDocs = category ? documents.filter(d => d.category === category) : documents;
+
+            return (
+                <div>
+                    <div className="flex justify-between items-center mb-8">
+                        <h1 className="text-3xl font-bold tracking-tight">{category || 'All Documents'}</h1>
+                        <button onClick={onAdd} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold text-sm hover:bg-blue-700 transition-colors">+ Add Document</button>
+                    </div>
+
+                    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                        <table className="w-full text-left">
+                            <thead className="bg-slate-50 border-b border-slate-200">
+                                <tr>
+                                    <th className="px-6 py-4 text-[10px] uppercase font-bold text-slate-400 tracking-wider">Title</th>
+                                    <th className="px-6 py-4 text-[10px] uppercase font-bold text-slate-400 tracking-wider">Date</th>
+                                    <th className="px-6 py-4 text-[10px] uppercase font-bold text-slate-400 tracking-wider">Status</th>
+                                    <th className="px-6 py-4 text-[10px] uppercase font-bold text-slate-400 tracking-wider">Category</th>
+                                    <th className="px-6 py-4"></th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {filteredDocs.length > 0 ? filteredDocs.map((doc) => (
+                                    <tr key={doc.id} className="hover:bg-slate-50 transition-colors">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                {doc.thumbnail ? (
+                                                    <img src={doc.thumbnail} className="w-10 h-10 rounded object-cover shadow-sm border border-slate-200" />
+                                                ) : <div className="w-10 h-10 rounded bg-slate-100 flex items-center justify-center text-slate-400"><Icon name="File" size={18}/></div>}
+                                                <span className="text-sm font-semibold">{doc.title}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm text-slate-500">{doc.date}</td>
+                                        <td className="px-6 py-4">
+                                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                                doc.status === 'Approved' ? 'bg-green-100 text-green-700' : 
+                                                doc.status === 'Pending' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
+                                            }`}>
+                                                {doc.status}
+                                            </span>
+                                        </td>
+                                        <td className="px-6 py-4 text-sm text-slate-500">{doc.category}</td>
+                                        <td className="px-6 py-4 text-right">
+                                            <div className="flex justify-end gap-2">
+                                                <button onClick={() => onEdit(doc)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-all"><Icon name="Edit2" size={16}/></button>
+                                                <button onClick={() => onDelete(doc.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-all"><Icon name="Trash2" size={16}/></button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )) : (
+                                    <tr>
+                                        <td colSpan="5" className="px-6 py-10 text-center text-slate-400 italic text-sm">No documents found.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
+
+        const DocumentForm = ({ onSubmit, onCancel, editDoc }) => {
+            const [formData, setFormData] = useState(editDoc || {
+                title: '',
+                category: 'Memorandum',
+                date: new Date().toISOString().split('T')[0],
+                status: 'Draft',
+                author: 'Admin',
+                text: ''
+            });
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSubmit(formData);
+            };
+
+            return (
+                <div className="bg-white border border-slate-200 p-8 rounded-xl max-w-4xl mx-auto shadow-lg animate-in fade-in duration-300">
+                    <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+                        {editDoc ? <Icon name="Edit" /> : <Icon name="PlusCircle" />}
+                        {editDoc ? 'Edit Document' : 'Create New Document'}
+                    </h2>
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div>
+                            {formData.thumbnail && (
+                                <div className="mb-6">
+                                    <label className="block text-sm font-medium text-slate-700 mb-2">Original Scan</label>
+                                    <img src={formData.thumbnail} className="w-full h-64 object-cover rounded-lg border border-slate-200 shadow-sm" />
+                                </div>
+                            )}
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Document Title</label>
+                                    <input type="text" value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} required className="w-full border border-slate-200 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500" />
+                                </div>
+                                <div className="flex gap-4">
+                                    <div className="flex-1">
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+                                        <select value={formData.category} onChange={(e) => setFormData({...formData, category: e.target.value})} className="w-full border border-slate-200 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500">
+                                            <option>Memorandum</option>
+                                            <option>Executive Order</option>
+                                            <option>Communication Letter</option>
+                                            <option>Proposal</option>
+                                        </select>
+                                    </div>
+                                    <div className="flex-1">
+                                        <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
+                                        <input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} required className="w-full border border-slate-200 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col">
+                            <label className="flex items-center justify-between text-sm font-medium text-slate-700 mb-1">
+                                <span>Extracted Text Content</span>
+                                {formData.text && (
+                                    <button type="button" onClick={() => navigator.clipboard.writeText(formData.text)} className="text-[10px] text-blue-600 hover:underline flex items-center gap-1">
+                                        <Icon name="Copy" size={10} /> Copy Text
+                                    </button>
+                                )}
+                            </label>
+                            <textarea 
+                                value={formData.text} 
+                                onChange={(e) => setFormData({...formData, text: e.target.value})} 
+                                className="flex-1 w-full border border-slate-200 rounded-lg px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono leading-relaxed bg-slate-50"
+                                placeholder={formData.thumbnail ? "Extracted text will appear here..." : "Add text content or notes..."}
+                                rows="12"
+                            ></textarea>
+                            <p className="mt-2 text-[10px] text-slate-400">OCR content is editable for corrections.</p>
+                        </div>
+                    </div>
+
+                    <div className="flex justify-end gap-3 mt-8 pt-6 border-t border-slate-100">
+                        <button type="button" onClick={onCancel} className="px-5 py-2 border border-slate-200 rounded-lg font-medium text-sm hover:bg-slate-50">Cancel</button>
+                        <button onClick={handleSubmit} className="px-8 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700 shadow-lg shadow-blue-100 transition-all active:scale-95">
+                            {editDoc ? 'Update Document' : 'Save Document'}
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        function App() {
+            const [currentPage, setCurrentPage] = useState('dashboard');
+            const [selectedCategory, setSelectedCategory] = useState(null);
+            const [editDoc, setEditDoc] = useState(null);
+            const [documents, setDocuments] = useState(() => {
+                const saved = localStorage.getItem('vinzons_docs');
+                return saved ? JSON.parse(saved) : [
+                    { id: '1', title: 'Memorandum on Water Management', date: '2024-03-20', status: 'Approved', category: 'Memorandum', author: 'Admin', text: 'Official Water Management Protocol...' },
+                ];
+            });
+
+            useEffect(() => {
+                localStorage.setItem('vinzons_docs', JSON.stringify(documents));
+                window.currentCategory = selectedCategory;
+            }, [documents, selectedCategory]);
+
+            const handleDelete = (id) => {
+                if (confirm('Are you sure you want to delete this document?')) {
+                    setDocuments(documents.filter(d => d.id !== id));
+                }
+            }
+
+            const handleSubmit = (docData) => {
+                if (editDoc && editDoc.id) {
+                    setDocuments(documents.map(d => d.id === editDoc.id ? { ...docData, id: d.id } : d));
+                } else {
+                    setDocuments([{ ...docData, id: Date.now().toString() }, ...documents]);
+                }
+                setCurrentPage('documents');
+                setEditDoc(null);
+            }
+
+            const onCapture = (imageData, extractedText) => {
+                setEditDoc({
+                    title: `Scanned Doc - ${new Date().toLocaleTimeString()}`,
+                    category: 'Memorandum',
+                    date: new Date().toISOString().split('T')[0],
+                    status: 'Draft',
+                    author: 'Admin',
+                    thumbnail: imageData,
+                    text: extractedText
+                });
+                setCurrentPage('add-document');
+            }
+
+            return (
+                <Layout currentPage={currentPage} onNavigate={(page, category) => {
+                    setCurrentPage(page);
+                    setSelectedCategory(category);
+                    setEditDoc(null);
+                }}>
+                    {currentPage === 'dashboard' && (
+                        <DashboardHome 
+                            onNavigate={(p, c) => { setCurrentPage(p); setSelectedCategory(c); }} 
+                            stats={{ 
+                                total: documents.length, 
+                                approved: documents.filter(d => d.status === 'Approved').length, 
+                                pending: documents.filter(d => d.status === 'Pending').length,
+                                extractions: documents.filter(d => d.thumbnail).length
+                            }}
+                        />
+                    )}
+                    {currentPage === 'documents' && (
+                        <DocumentList category={selectedCategory} documents={documents} onDelete={handleDelete} onEdit={(doc) => { setEditDoc(doc); setCurrentPage('add-document'); }} onAdd={() => { setEditDoc(null); setCurrentPage('add-document'); }} />
+                    )}
+                    {currentPage === 'add-document' && (
+                        <DocumentForm editDoc={editDoc} onSubmit={handleSubmit} onCancel={() => { setCurrentPage('documents'); setEditDoc(null); }} />
+                    )}
+                    {currentPage === 'scan-documents' && (
+                        <Scanner onCapture={onCapture} />
+                    )}
+                </Layout>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
