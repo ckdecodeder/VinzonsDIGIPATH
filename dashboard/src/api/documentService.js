@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { getApiBase } from './apiBase';
+
 const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 6000);
 
 const STORAGE_KEYS = {
@@ -85,7 +86,7 @@ const apiRequest = async (path, options = {}) => {
   const { headers = {}, ...fetchOptions } = options;
 
   try {
-    const res = await fetch(`${API_BASE_URL}${path}`, {
+    const res = await fetch(`${getApiBase()}${path}`, {
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -121,7 +122,7 @@ const apiBlobRequest = async (path, options = {}) => {
   const { headers = {}, timeoutMs: _timeoutMs, ...fetchOptions } = options;
 
   try {
-    const res = await fetch(`${API_BASE_URL}${path}`, {
+    const res = await fetch(`${getApiBase()}${path}`, {
       headers: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers,

@@ -23,7 +23,7 @@ import {
 import { bridgeService } from '../api/documentService';
 import { users as defaultUsers } from '../data/mockData';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+import { getApiBase } from '../api/apiBase';
 const DEFAULT_BRIDGE_PORT = import.meta.env.VITE_SCANNER_BRIDGE_PORT || '8080';
 
 const normalizeBridgeUrl = (value) => {
@@ -138,10 +138,10 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
   );
 
   const endpointRows = [
-    { label: 'Connect', method: 'POST', url: `${API_BASE_URL}/devices/connect` },
-    { label: 'Heartbeat', method: 'POST', url: `${API_BASE_URL}/devices/heartbeat` },
-    { label: 'Disconnect', method: 'POST', url: `${API_BASE_URL}/devices/disconnect` },
-    { label: 'Hardware Event', method: 'POST', url: `${API_BASE_URL}/devices/events` },
+    { label: 'Connect', method: 'POST', url: `${getApiBase()}/devices/connect` },
+    { label: 'Heartbeat', method: 'POST', url: `${getApiBase()}/devices/heartbeat` },
+    { label: 'Disconnect', method: 'POST', url: `${getApiBase()}/devices/disconnect` },
+    { label: 'Hardware Event', method: 'POST', url: `${getApiBase()}/devices/events` },
   ];
 
   const getBridgePayload = () => {
