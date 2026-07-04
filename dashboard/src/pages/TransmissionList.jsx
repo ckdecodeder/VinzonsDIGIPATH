@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from "react";
 import {
   ArrowRightLeft,
   Search,
@@ -12,12 +12,12 @@ import {
   Building2,
   FileText,
   History,
-} from 'lucide-react';
+} from "lucide-react";
 import {
   offices as defaultOffices,
   users as defaultUsers,
-} from '../data/mockData';
-import { compareNewest } from '../utils/sorting';
+} from "../data/mockData";
+import { compareNewest } from "../utils/sorting";
 
 const TransmissionList = ({
   transmissions,
@@ -29,94 +29,118 @@ const TransmissionList = ({
   onUpdate,
   onNotify,
 }) => {
-  const [search, setSearch] = useState('');
-  const [filterType, setFilterType] = useState('All');
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("All");
   const [showForm, setShowForm] = useState(false);
   const [detailTransmission, setDetailTransmission] = useState(null);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
 
   const [formData, setFormData] = useState({
-    documentId: '',
-    fromOfficeId: currentUser?.officeId || 'OFF-001',
-    toOfficeId: 'OFF-002',
-    transmissionDate: new Date().toISOString().split('T')[0],
-    transmissionType: 'Internal',
+    documentId: "",
+    fromOfficeId: currentUser?.officeId || "OFF-001",
+    toOfficeId: "OFF-002",
+    transmissionDate: new Date().toISOString().split("T")[0],
+    transmissionType: "Internal",
   });
 
-  const notify = (message, title = 'Action needed', type = 'warning') => {
+  const notify = (message, title = "Action needed", type = "warning") => {
     onNotify?.({ type, title, message });
   };
 
-  const types = ['All', 'Internal', 'External'];
-  const isApprovalUser = currentUser?.role === 'Admin' || currentUser?.role === 'Mayor';
+  const types = ["All", "Internal", "External"];
+  const isApprovalUser =
+    currentUser?.role === "Admin" || currentUser?.role === "Mayor";
 
   const getOfficeName = (officeId) => {
-    const office = offices.find(o => o.id === officeId);
-    return office ? office.name : 'Unknown Office';
+    const office = offices.find((o) => o.id === officeId);
+    return office ? office.name : "Unknown Office";
   };
 
   const getUserFullName = (userId) => {
-    const user = users.find(u => u.id === userId);
-    return user ? `${user.fname} ${user.mname || ''} ${user.lname}`.replace(/\s+/g, ' ').trim() : 'Unknown';
+    const user = users.find((u) => u.id === userId);
+    return user
+      ? `${user.fname} ${user.mname || ""} ${user.lname}`
+          .replace(/\s+/g, " ")
+          .trim()
+      : "Unknown";
   };
 
-  const getDocument = (documentId) => documents.find(d => d.id === documentId);
+  const getDocument = (documentId) =>
+    documents.find((d) => d.id === documentId);
   const getWorkflowStatus = (doc) => {
-    if (doc?.status === 'For Signature') return 'For Signing';
-    if (doc?.status === 'Acknoweledged') return 'Acknowledged';
-    return doc?.status || 'Received';
+    if (doc?.status === "For Signature") return "For Signing";
+    if (doc?.status === "Acknoweledged") return "Acknowledged";
+    return doc?.status || "Received";
   };
-  const isApprovedForWorkflow = (doc) => (doc?.intakeStatus || 'Approved') === 'Approved';
-  const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
-  const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
-  const transmittableStatuses = [...registrationStatuses, ...finalWorkflowStatuses];
+  const isApprovedForWorkflow = (doc) =>
+    (doc?.intakeStatus || "Approved") === "Approved";
+  const registrationStatuses = ["Received", "For Signing", "For Filing"];
+  const finalWorkflowStatuses = ["Signed", "Acknowledged"];
+  const transmittableStatuses = [
+    ...registrationStatuses,
+    ...finalWorkflowStatuses,
+  ];
   const canRouteDocument = (doc) => {
     const status = getWorkflowStatus(doc);
     const finalStatus = finalWorkflowStatuses.includes(status);
-    return Boolean(doc) && isApprovedForWorkflow(doc) && transmittableStatuses.includes(status) && (
-      isApprovalUser || (!finalStatus && doc.currentOfficeId === currentUser?.officeId)
+    return (
+      Boolean(doc) &&
+      isApprovedForWorkflow(doc) &&
+      transmittableStatuses.includes(status) &&
+      (isApprovalUser ||
+        (!finalStatus && doc.currentOfficeId === currentUser?.officeId))
     );
   };
   const getRouteBlockReason = (doc) => {
-    if (!doc) return 'Document not found';
+    if (!doc) return "Document not found";
     const status = getWorkflowStatus(doc);
-    if (!isApprovedForWorkflow(doc)) return `Needs approval first (${doc.intakeStatus || 'Pending Review'})`;
-    if (status === 'In Transit') return 'Already in transit';
-    if (status === 'Signed') return isApprovalUser ? 'Signed documents can be returned or archived' : 'Signed documents are handled by Admin/Mayor';
-    if (status === 'Acknowledged') return isApprovalUser ? 'Acknowledged documents can be returned or archived' : 'Acknowledged documents are handled by Admin/Mayor';
-    if (status === 'Archived') return 'Archived documents are locked';
-    if (!isApprovalUser && doc.currentOfficeId !== currentUser?.officeId) return 'Not in your assigned office';
-    return 'Not eligible for routing';
+    if (!isApprovedForWorkflow(doc))
+      return `Needs approval first (${doc.intakeStatus || "Pending Review"})`;
+    if (status === "In Transit") return "Already in transit";
+    if (status === "Signed")
+      return isApprovalUser
+        ? "Signed documents can be returned or archived"
+        : "Signed documents are handled by Admin/Mayor";
+    if (status === "Acknowledged")
+      return isApprovalUser
+        ? "Acknowledged documents can be returned or archived"
+        : "Acknowledged documents are handled by Admin/Mayor";
+    if (status === "Archived") return "Archived documents are locked";
+    if (!isApprovalUser && doc.currentOfficeId !== currentUser?.officeId)
+      return "Not in your assigned office";
+    return "Not eligible for routing";
   };
   const getTransmissionPendingReason = (transmission) => {
     const doc = getDocument(transmission.documentId);
     if (transmission.receivedBy) {
-      return 'Completed: destination office already acknowledged receipt.';
+      return "Completed: destination office already acknowledged receipt.";
     }
-    return `Pending because ${getOfficeName(transmission.toOfficeId)} must receive ${doc?.trackingNumber || 'the document'} before the workflow can continue.`;
+    return `Pending because ${getOfficeName(transmission.toOfficeId)} must receive ${doc?.trackingNumber || "the document"} before the workflow can continue.`;
   };
 
   const formatDateTime = (value) => {
-    if (!value) return 'Not recorded';
+    if (!value) return "Not recorded";
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleString();
   };
 
   const getTransmissionTimeline = (transmission) => {
-    const timeline = [{
-      id: `${transmission.id}-sent`,
-      label: 'Transmission sent',
-      details: `Sent from ${getOfficeName(transmission.fromOfficeId)} to ${getOfficeName(transmission.toOfficeId)}`,
-      userId: transmission.sentBy,
-      timestamp: transmission.transmissionDate,
-    }];
+    const timeline = [
+      {
+        id: `${transmission.id}-sent`,
+        label: "Transmission sent",
+        details: `Sent from ${getOfficeName(transmission.fromOfficeId)} to ${getOfficeName(transmission.toOfficeId)}`,
+        userId: transmission.sentBy,
+        timestamp: transmission.transmissionDate,
+      },
+    ];
 
     if (transmission.receivedBy) {
       timeline.push({
         id: `${transmission.id}-received`,
-        label: 'Received and acknowledged',
+        label: "Received and acknowledged",
         details: `Received at ${getOfficeName(transmission.toOfficeId)}`,
         userId: transmission.receivedBy,
         timestamp: transmission.receivedAt || transmission.transmissionDate,
@@ -126,15 +150,32 @@ const TransmissionList = ({
     return timeline;
   };
 
-  const filteredTrans = transmissions.filter(t => {
-    const doc = documents.find(d => d.id === t.documentId);
-    const matchSearch = (doc?.subject || '').toLowerCase().includes(search.toLowerCase()) ||
-      (doc?.trackingNumber || '').toLowerCase().includes(search.toLowerCase()) ||
-      getOfficeName(t.fromOfficeId).toLowerCase().includes(search.toLowerCase()) ||
-      getOfficeName(t.toOfficeId).toLowerCase().includes(search.toLowerCase());
-    const matchType = filterType === 'All' || t.transmissionType === filterType;
-    return matchSearch && matchType;
-  }).sort((a, b) => compareNewest(a, b, ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']));
+  const filteredTrans = transmissions
+    .filter((t) => {
+      const doc = documents.find((d) => d.id === t.documentId);
+      const matchSearch =
+        (doc?.subject || "").toLowerCase().includes(search.toLowerCase()) ||
+        (doc?.trackingNumber || "")
+          .toLowerCase()
+          .includes(search.toLowerCase()) ||
+        getOfficeName(t.fromOfficeId)
+          .toLowerCase()
+          .includes(search.toLowerCase()) ||
+        getOfficeName(t.toOfficeId)
+          .toLowerCase()
+          .includes(search.toLowerCase());
+      const matchType =
+        filterType === "All" || t.transmissionType === filterType;
+      return matchSearch && matchType;
+    })
+    .sort((a, b) =>
+      compareNewest(a, b, [
+        "createdAt",
+        "updatedAt",
+        "receivedAt",
+        "transmissionDate",
+      ]),
+    );
   const routableDocuments = documents.filter(canRouteDocument);
 
   useEffect(() => {
@@ -142,7 +183,10 @@ const TransmissionList = ({
   }, [search, filterType]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTrans.length / pageSize));
-  const paginatedTransmissions = filteredTrans.slice((page - 1) * pageSize, page * pageSize);
+  const paginatedTransmissions = filteredTrans.slice(
+    (page - 1) * pageSize,
+    page * pageSize,
+  );
   const showFrom = filteredTrans.length ? (page - 1) * pageSize + 1 : 0;
   const showTo = Math.min(filteredTrans.length, page * pageSize);
 
@@ -154,13 +198,13 @@ const TransmissionList = ({
   const handlePageChange = (newPage) => {
     setPage(Math.max(1, Math.min(totalPages, newPage)));
   };
-  const visibleRouteDocuments = routableDocuments
-    .sort((a, b) => compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']));
+  const visibleRouteDocuments = routableDocuments.sort((a, b) =>
+    compareNewest(a, b, ["createdAt", "updatedAt", "dateReceived"]),
+  );
   const selectedFormDocument = getDocument(formData.documentId);
 
-  const getNextOfficeId = (fromOfficeId) => (
-    offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId
-  );
+  const getNextOfficeId = (fromOfficeId) =>
+    offices.find((o) => o.id !== fromOfficeId)?.id || fromOfficeId;
 
   const selectRouteDocument = (doc) => {
     if (!canRouteDocument(doc)) return;
@@ -171,22 +215,31 @@ const TransmissionList = ({
       ...formData,
       documentId: doc.id,
       fromOfficeId,
-      toOfficeId: formData.toOfficeId === fromOfficeId ? getNextOfficeId(fromOfficeId) : formData.toOfficeId,
+      toOfficeId:
+        formData.toOfficeId === fromOfficeId
+          ? getNextOfficeId(fromOfficeId)
+          : formData.toOfficeId,
     });
   };
 
   const openCreateForm = () => {
     const firstDocument = routableDocuments[0];
     const fromOfficeId = isApprovalUser
-      ? firstDocument?.currentOfficeId || currentUser?.officeId || offices[0]?.id || 'OFF-001'
-      : currentUser?.officeId || firstDocument?.currentOfficeId || offices[0]?.id || 'OFF-001';
+      ? firstDocument?.currentOfficeId ||
+        currentUser?.officeId ||
+        offices[0]?.id ||
+        "OFF-001"
+      : currentUser?.officeId ||
+        firstDocument?.currentOfficeId ||
+        offices[0]?.id ||
+        "OFF-001";
 
     setFormData({
-      documentId: firstDocument?.id || '',
+      documentId: firstDocument?.id || "",
       fromOfficeId,
       toOfficeId: getNextOfficeId(fromOfficeId),
-      transmissionDate: new Date().toISOString().split('T')[0],
-      transmissionType: 'Internal',
+      transmissionDate: new Date().toISOString().split("T")[0],
+      transmissionType: "Internal",
     });
     setShowForm(true);
   };
@@ -195,30 +248,35 @@ const TransmissionList = ({
     e.preventDefault();
     const selectedDoc = getDocument(formData.documentId);
     if (!canRouteDocument(selectedDoc)) {
-      notify('Choose an approved document that can be routed from your office.');
+      notify(
+        "Choose an approved document that can be routed from your office.",
+      );
       return;
     }
     if (formData.fromOfficeId === formData.toOfficeId) {
-      notify('Choose a different destination office before routing.');
+      notify("Choose a different destination office before routing.");
       return;
     }
 
     onAdd({
       ...formData,
-      fromOfficeId: isApprovalUser ? formData.fromOfficeId : currentUser?.officeId,
+      fromOfficeId: isApprovalUser
+        ? formData.fromOfficeId
+        : currentUser?.officeId,
     });
     setShowForm(false);
   };
 
-  const canReceiveTransmission = (transmission) => Boolean(transmission) && !transmission.receivedBy && (
-    currentUser?.role === 'Admin' ||
-    currentUser?.role === 'Mayor' ||
-    transmission.toOfficeId === currentUser?.officeId
-  );
+  const canReceiveTransmission = (transmission) =>
+    Boolean(transmission) &&
+    !transmission.receivedBy &&
+    (currentUser?.role === "Admin" ||
+      currentUser?.role === "Mayor" ||
+      transmission.toOfficeId === currentUser?.officeId);
 
   const handleReceive = async (id) => {
     await onUpdate(id, {
-      receivedBy: currentUser?.id || 'USR-001',
+      receivedBy: currentUser?.id || "USR-001",
       receivedAt: new Date().toISOString(),
     });
   };
@@ -233,20 +291,29 @@ const TransmissionList = ({
       </div>
 
       <div className="page-toolbar-row">
-        <div className="search-bar">
-          <Search size={16} color="var(--text-muted)" />
-          <input
-            type="text"
-            placeholder="Search transmissions..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+        <div className="filter-dropdown-inline">
+          <label>Search</label>
+          <div className="search-bar">
+            <Search size={16} color="var(--text-muted)" />
+            <input
+              type="text"
+              placeholder="Search transmissions..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </div>
         <div className="filter-dropdown filter-dropdown-inline">
           <label>Type</label>
-          <select className="form-select" value={filterType} onChange={e => setFilterType(e.target.value)}>
-            {types.map(type => (
-              <option key={type} value={type}>{type}</option>
+          <select
+            className="form-select"
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+          >
+            {types.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
             ))}
           </select>
         </div>
@@ -270,76 +337,108 @@ const TransmissionList = ({
               <th>Date</th>
               <th>Type</th>
               <th>Status</th>
-              <th style={{ textAlign: 'right' }}>Actions</th>
+              <th style={{ textAlign: "right" }}>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {paginatedTransmissions.length > 0 ? paginatedTransmissions.map(t => {
-              const doc = documents.find(d => d.id === t.documentId);
-              return (
-                <tr
-                  key={t.id}
-                  className="clickable-row"
-                  onClick={() => setDetailTransmission(t)}
-                  title="View transmission details"
-                >
-                  <td><span className="td-mono">{t.id}</span></td>
-                  <td className="td-primary" style={{ maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {doc?.subject || 'Unknown Document'}
-                  </td>
-                  <td>
-                    <div className="transfer-visual">
-                      <span className="transfer-office">{getOfficeName(t.fromOfficeId)}</span>
-                      <ArrowRight size={14} className="transfer-arrow" />
-                      <span className="transfer-office">{getOfficeName(t.toOfficeId)}</span>
-                    </div>
-                  </td>
-                  <td>{getUserFullName(t.sentBy)}</td>
-                  <td>
-                    {t.receivedBy ? getUserFullName(t.receivedBy) : (
-                      <span style={{ color: 'var(--warning)', fontStyle: 'italic' }}>
-                        Pending: awaiting {getOfficeName(t.toOfficeId)}
-                      </span>
-                    )}
-                  </td>
-                  <td style={{ color: 'var(--text-muted)' }}>{t.receivedAt || t.transmissionDate}</td>
-                  <td>
-                    <span className={`filter-chip active`} style={{ cursor: 'default', fontSize: '0.7rem' }}>
-                      {t.transmissionType}
-                    </span>
-                  </td>
-                  <td>
-                    {t.receivedBy ? (
-                      <span className="status-badge status-archived">
-                        <CheckCircle2 size={12} /> Completed
-                      </span>
-                    ) : (
-                      <span className="status-badge status-in-transit">
-                        <Clock size={12} /> In Transit
-                      </span>
-                    )}
-                    <small className="workflow-explanation">{getTransmissionPendingReason(t)}</small>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    {canReceiveTransmission(t) && (
-                      <button
-                        className="btn btn-sm btn-success"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleReceive(t.id).catch(() => {});
-                        }}
+            {paginatedTransmissions.length > 0 ? (
+              paginatedTransmissions.map((t) => {
+                const doc = documents.find((d) => d.id === t.documentId);
+                return (
+                  <tr
+                    key={t.id}
+                    className="clickable-row"
+                    onClick={() => setDetailTransmission(t)}
+                    title="View transmission details"
+                  >
+                    <td>
+                      <span className="td-mono">{t.id}</span>
+                    </td>
+                    <td
+                      className="td-primary"
+                      style={{
+                        maxWidth: "200px",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {doc?.subject || "Unknown Document"}
+                    </td>
+                    <td>
+                      <div className="transfer-visual">
+                        <span className="transfer-office">
+                          {getOfficeName(t.fromOfficeId)}
+                        </span>
+                        <ArrowRight size={14} className="transfer-arrow" />
+                        <span className="transfer-office">
+                          {getOfficeName(t.toOfficeId)}
+                        </span>
+                      </div>
+                    </td>
+                    <td>{getUserFullName(t.sentBy)}</td>
+                    <td>
+                      {t.receivedBy ? (
+                        getUserFullName(t.receivedBy)
+                      ) : (
+                        <span
+                          style={{
+                            color: "var(--warning)",
+                            fontStyle: "italic",
+                          }}
+                        >
+                          Pending: awaiting {getOfficeName(t.toOfficeId)}
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ color: "var(--text-muted)" }}>
+                      {t.receivedAt || t.transmissionDate}
+                    </td>
+                    <td>
+                      <span
+                        className={`filter-chip active`}
+                        style={{ cursor: "default", fontSize: "0.7rem" }}
                       >
-                        <CheckCircle2 size={14} /> Receive
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            }) : (
+                        {t.transmissionType}
+                      </span>
+                    </td>
+                    <td>
+                      {t.receivedBy ? (
+                        <span className="status-badge status-archived">
+                          <CheckCircle2 size={12} /> Completed
+                        </span>
+                      ) : (
+                        <span className="status-badge status-in-transit">
+                          <Clock size={12} /> In Transit
+                        </span>
+                      )}
+                      <small className="workflow-explanation">
+                        {getTransmissionPendingReason(t)}
+                      </small>
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      {canReceiveTransmission(t) && (
+                        <button
+                          className="btn btn-sm btn-success"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleReceive(t.id).catch(() => {});
+                          }}
+                        >
+                          <CheckCircle2 size={14} /> Receive
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })
+            ) : (
               <tr>
                 <td colSpan="9">
                   <div className="empty-state">
-                    <div className="empty-state-icon"><ArrowRightLeft size={24} /></div>
+                    <div className="empty-state-icon">
+                      <ArrowRightLeft size={24} />
+                    </div>
                     <h3>No transmissions found</h3>
                     <p>Create a new transmission to route a document</p>
                   </div>
@@ -352,7 +451,8 @@ const TransmissionList = ({
 
       <div className="pagination-toolbar">
         <div className="pagination-summary">
-          Showing {showFrom}-{showTo} of {filteredTrans.length} matching transmissions
+          Showing {showFrom}-{showTo} of {filteredTrans.length} matching
+          transmissions
         </div>
         <div className="pagination-controls">
           <label>
@@ -364,7 +464,9 @@ const TransmissionList = ({
               step="1"
               value={pageSize}
               className="form-input pagination-page-size-input"
-              onChange={e => handlePageSizeChange(Number(e.target.value) || 1)}
+              onChange={(e) =>
+                handlePageSizeChange(Number(e.target.value) || 1)
+              }
             />
           </label>
         </div>
@@ -377,7 +479,9 @@ const TransmissionList = ({
           >
             Previous
           </button>
-          <span>Page {page} of {totalPages}</span>
+          <span>
+            Page {page} of {totalPages}
+          </span>
           <button
             type="button"
             className="btn btn-secondary btn-sm"
@@ -389,112 +493,224 @@ const TransmissionList = ({
         </div>
       </div>
 
-      {detailTransmission && (() => {
-        const transmission = transmissions.find(item => item.id === detailTransmission.id) || detailTransmission;
-        const doc = getDocument(transmission.documentId);
-        const timeline = getTransmissionTimeline(transmission);
+      {detailTransmission &&
+        (() => {
+          const transmission =
+            transmissions.find((item) => item.id === detailTransmission.id) ||
+            detailTransmission;
+          const doc = getDocument(transmission.documentId);
+          const timeline = getTransmissionTimeline(transmission);
 
-        return (
-          <div className="modal-overlay" onClick={() => setDetailTransmission(null)}>
-            <div className="modal document-detail-modal" onClick={e => e.stopPropagation()}>
-              <div className="modal-header">
-                <div>
-                  <h2>Transmission Details</h2>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
-                    {transmission.id}
-                  </p>
+          return (
+            <div
+              className="modal-overlay"
+              onClick={() => setDetailTransmission(null)}
+            >
+              <div
+                className="modal document-detail-modal"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="modal-header">
+                  <div>
+                    <h2>Transmission Details</h2>
+                    <p
+                      style={{
+                        color: "var(--text-muted)",
+                        fontSize: "0.8rem",
+                        marginTop: "0.2rem",
+                      }}
+                    >
+                      {transmission.id}
+                    </p>
+                  </div>
+                  <button
+                    className="btn-icon"
+                    onClick={() => setDetailTransmission(null)}
+                  >
+                    <X size={18} />
+                  </button>
                 </div>
-                <button className="btn-icon" onClick={() => setDetailTransmission(null)}><X size={18} /></button>
-              </div>
-              <div className="modal-body">
-                <div className="document-detail-grid">
-                  <div className="document-detail-section">
-                    <h4><FileText size={14} /> Document</h4>
-                    <div className="detail-pair"><span>Tracking #</span><strong>{doc?.trackingNumber || '-'}</strong></div>
-                    <div className="detail-pair"><span>Subject</span><strong>{doc?.subject || 'Unknown Document'}</strong></div>
-                    <div className="detail-pair"><span>Document Status</span><strong>{doc ? getWorkflowStatus(doc) : '-'}</strong></div>
-                    <div className="detail-pair"><span>Priority</span><strong>{doc?.priorityLevel || '-'}</strong></div>
-                  </div>
-
-                  <div className="document-detail-section">
-                    <h4><Building2 size={14} /> Route</h4>
-                    <div className="detail-pair"><span>From</span><strong>{getOfficeName(transmission.fromOfficeId)}</strong></div>
-                    <div className="detail-pair"><span>To</span><strong>{getOfficeName(transmission.toOfficeId)}</strong></div>
-                    <div className="detail-pair"><span>Type</span><strong>{transmission.transmissionType}</strong></div>
-                    <div className="detail-pair"><span>Status</span><strong>{transmission.receivedBy ? 'Completed' : 'In Transit'}</strong></div>
-                    <div className="detail-pair"><span>Pending Reason</span><strong>{getTransmissionPendingReason(transmission)}</strong></div>
-                  </div>
-
-                  <div className="document-detail-section">
-                    <h4><User size={14} /> People</h4>
-                    <div className="detail-pair"><span>Sent By</span><strong>{getUserFullName(transmission.sentBy)}</strong></div>
-                    <div className="detail-pair"><span>Received By</span><strong>{transmission.receivedBy ? getUserFullName(transmission.receivedBy) : 'Pending'}</strong></div>
-                    <div className="detail-pair"><span>Remarks</span><strong>{transmission.acknowledgementRemarks || '-'}</strong></div>
-                  </div>
-
-                  <div className="document-detail-section">
-                    <h4><Calendar size={14} /> Dates</h4>
-                    <div className="detail-pair"><span>Sent</span><strong>{formatDateTime(transmission.transmissionDate)}</strong></div>
-                    <div className="detail-pair"><span>Received</span><strong>{formatDateTime(transmission.receivedAt)}</strong></div>
-                  </div>
-
-                  <div className="document-detail-section">
-                    <h4><CheckCircle2 size={14} /> Actions</h4>
-                    <div className="workflow-actions">
-                      {canReceiveTransmission(transmission) ? (
-                        <button
-                          className="btn btn-success"
-                          onClick={async () => {
-                            try {
-                              await handleReceive(transmission.id);
-                              setDetailTransmission({ ...transmission, receivedBy: currentUser?.id });
-                            } catch {
-                              // The shared save handler already shows the API error.
-                            }
-                          }}
-                        >
-                          <CheckCircle2 size={14} /> Receive Transmission
-                        </button>
-                      ) : (
-                        <p className="detail-empty">
-                          {transmission.receivedBy ? 'This transmission has already been received.' : 'Only the destination office or an approval user can receive this transmission.'}
-                        </p>
-                      )}
+                <div className="modal-body">
+                  <div className="document-detail-grid">
+                    <div className="document-detail-section">
+                      <h4>
+                        <FileText size={14} /> Document
+                      </h4>
+                      <div className="detail-pair">
+                        <span>Tracking #</span>
+                        <strong>{doc?.trackingNumber || "-"}</strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Subject</span>
+                        <strong>{doc?.subject || "Unknown Document"}</strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Document Status</span>
+                        <strong>{doc ? getWorkflowStatus(doc) : "-"}</strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Priority</span>
+                        <strong>{doc?.priorityLevel || "-"}</strong>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="document-detail-section document-timeline-section">
-                    <h4><History size={14} /> Timeline</h4>
-                    <div className="timeline-compact">
-                      {timeline.map(event => (
-                        <div key={event.id} className="timeline-compact-item">
-                          <span className="timeline-compact-dot" />
-                          <div>
-                            <strong>{event.label}</strong>
-                            <p>{event.details}</p>
-                            <small>{formatDateTime(event.timestamp)} {event.userId ? `by ${getUserFullName(event.userId)}` : ''}</small>
+                    <div className="document-detail-section">
+                      <h4>
+                        <Building2 size={14} /> Route
+                      </h4>
+                      <div className="detail-pair">
+                        <span>From</span>
+                        <strong>
+                          {getOfficeName(transmission.fromOfficeId)}
+                        </strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>To</span>
+                        <strong>
+                          {getOfficeName(transmission.toOfficeId)}
+                        </strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Type</span>
+                        <strong>{transmission.transmissionType}</strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Status</span>
+                        <strong>
+                          {transmission.receivedBy ? "Completed" : "In Transit"}
+                        </strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Pending Reason</span>
+                        <strong>
+                          {getTransmissionPendingReason(transmission)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="document-detail-section">
+                      <h4>
+                        <User size={14} /> People
+                      </h4>
+                      <div className="detail-pair">
+                        <span>Sent By</span>
+                        <strong>{getUserFullName(transmission.sentBy)}</strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Received By</span>
+                        <strong>
+                          {transmission.receivedBy
+                            ? getUserFullName(transmission.receivedBy)
+                            : "Pending"}
+                        </strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Remarks</span>
+                        <strong>
+                          {transmission.acknowledgementRemarks || "-"}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="document-detail-section">
+                      <h4>
+                        <Calendar size={14} /> Dates
+                      </h4>
+                      <div className="detail-pair">
+                        <span>Sent</span>
+                        <strong>
+                          {formatDateTime(transmission.transmissionDate)}
+                        </strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Received</span>
+                        <strong>
+                          {formatDateTime(transmission.receivedAt)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="document-detail-section">
+                      <h4>
+                        <CheckCircle2 size={14} /> Actions
+                      </h4>
+                      <div className="workflow-actions">
+                        {canReceiveTransmission(transmission) ? (
+                          <button
+                            className="btn btn-success"
+                            onClick={async () => {
+                              try {
+                                await handleReceive(transmission.id);
+                                setDetailTransmission({
+                                  ...transmission,
+                                  receivedBy: currentUser?.id,
+                                });
+                              } catch {
+                                // The shared save handler already shows the API error.
+                              }
+                            }}
+                          >
+                            <CheckCircle2 size={14} /> Receive Transmission
+                          </button>
+                        ) : (
+                          <p className="detail-empty">
+                            {transmission.receivedBy
+                              ? "This transmission has already been received."
+                              : "Only the destination office or an approval user can receive this transmission."}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="document-detail-section document-timeline-section">
+                      <h4>
+                        <History size={14} /> Timeline
+                      </h4>
+                      <div className="timeline-compact">
+                        {timeline.map((event) => (
+                          <div key={event.id} className="timeline-compact-item">
+                            <span className="timeline-compact-dot" />
+                            <div>
+                              <strong>{event.label}</strong>
+                              <p>{event.details}</p>
+                              <small>
+                                {formatDateTime(event.timestamp)}{" "}
+                                {event.userId
+                                  ? `by ${getUserFullName(event.userId)}`
+                                  : ""}
+                              </small>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-primary" onClick={() => setDetailTransmission(null)}>Done</button>
+                <div className="modal-footer">
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => setDetailTransmission(null)}
+                  >
+                    Done
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })()}
+          );
+        })()}
 
       {/* Form Modal */}
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
-          <div className="modal document-form-modal" onClick={e => e.stopPropagation()}>
+          <div
+            className="modal document-form-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
               <h2>New Transmission</h2>
-              <button className="btn-icon" onClick={() => setShowForm(false)}><X size={18} /></button>
+              <button className="btn-icon" onClick={() => setShowForm(false)}>
+                <X size={18} />
+              </button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
@@ -513,7 +729,8 @@ const TransmissionList = ({
                         </tr>
                       </thead>
                       <tbody>
-                        {visibleRouteDocuments.length ? visibleRouteDocuments.map(doc => (
+                        {visibleRouteDocuments.length ? (
+                          visibleRouteDocuments.map((doc) => (
                             <tr
                               key={doc.id}
                               className="clickable-row"
@@ -526,24 +743,41 @@ const TransmissionList = ({
                                   onChange={() => selectRouteDocument(doc)}
                                 />
                               </td>
-                              <td><span className="td-mono">{doc.trackingNumber}</span></td>
-                              <td className="td-primary">{doc.subject || 'Untitled document'}</td>
+                              <td>
+                                <span className="td-mono">
+                                  {doc.trackingNumber}
+                                </span>
+                              </td>
+                              <td className="td-primary">
+                                {doc.subject || "Untitled document"}
+                              </td>
                               <td>{getOfficeName(doc.currentOfficeId)}</td>
                               <td>
-                                <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`}>
+                                <span
+                                  className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, "-")}`}
+                                >
                                   {getWorkflowStatus(doc)}
                                 </span>
                               </td>
                               <td>
-                                <span className="route-check-ok">Ready to route</span>
+                                <span className="route-check-ok">
+                                  Ready to route
+                                </span>
                               </td>
                             </tr>
-                        )) : (
+                          ))
+                        ) : (
                           <tr>
                             <td colSpan="6">
-                              <div className="empty-state" style={{ padding: '1rem' }}>
+                              <div
+                                className="empty-state"
+                                style={{ padding: "1rem" }}
+                              >
                                 <h3>No documents available</h3>
-                                <p>No approved documents are available for transmission.</p>
+                                <p>
+                                  No approved documents are available for
+                                  transmission.
+                                </p>
                               </div>
                             </td>
                           </tr>
@@ -551,14 +785,23 @@ const TransmissionList = ({
                       </tbody>
                     </table>
                   </div>
-                  <input type="hidden" value={formData.documentId} required readOnly />
+                  <input
+                    type="hidden"
+                    value={formData.documentId}
+                    required
+                    readOnly
+                  />
                   <p className="field-hint">
-                    Only approved routable documents are shown here. Admin/Mayor can also return Signed and Acknowledged documents; In Transit and Archived records are hidden from transmission.
+                    Only approved routable documents are shown here. Admin/Mayor
+                    can also return Signed and Acknowledged documents; In
+                    Transit and Archived records are hidden from transmission.
                   </p>
                   {selectedFormDocument && (
                     <div className="selected-route-summary">
                       <strong>{selectedFormDocument.trackingNumber}</strong>
-                      <span>{selectedFormDocument.subject || 'Untitled document'}</span>
+                      <span>
+                        {selectedFormDocument.subject || "Untitled document"}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -568,50 +811,125 @@ const TransmissionList = ({
                     <select
                       className="form-select"
                       value={formData.fromOfficeId}
-                      onChange={e => setFormData({
-                        ...formData,
-                        fromOfficeId: e.target.value,
-                        toOfficeId: formData.toOfficeId === e.target.value ? getNextOfficeId(e.target.value) : formData.toOfficeId,
-                      })}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          fromOfficeId: e.target.value,
+                          toOfficeId:
+                            formData.toOfficeId === e.target.value
+                              ? getNextOfficeId(e.target.value)
+                              : formData.toOfficeId,
+                        })
+                      }
                       disabled={!isApprovalUser}
                     >
-                      {(isApprovalUser ? offices : offices.filter(o => o.id === currentUser?.officeId || o.id === formData.fromOfficeId))
-                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      {(isApprovalUser
+                        ? offices
+                        : offices.filter(
+                            (o) =>
+                              o.id === currentUser?.officeId ||
+                              o.id === formData.fromOfficeId,
+                          )
+                      ).map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
                     </select>
-                    <p className="field-hint">The office currently holding and sending the selected document.</p>
+                    <p className="field-hint">
+                      The office currently holding and sending the selected
+                      document.
+                    </p>
                   </div>
                   <div className="form-group">
                     <label className="form-label">To Office</label>
-                    <select className="form-select" value={formData.toOfficeId} onChange={e => setFormData({ ...formData, toOfficeId: e.target.value })}>
-                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    <select
+                      className="form-select"
+                      value={formData.toOfficeId}
+                      onChange={(e) =>
+                        setFormData({ ...formData, toOfficeId: e.target.value })
+                      }
+                    >
+                      {offices.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
                     </select>
-                    <p className="field-hint">The office that must receive and acknowledge the transmission.</p>
+                    <p className="field-hint">
+                      The office that must receive and acknowledge the
+                      transmission.
+                    </p>
                   </div>
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Sent By</label>
-                    <input className="form-input" value={currentUser ? `${currentUser.fname} ${currentUser.lname}` : 'Current user'} readOnly />
-                    <p className="field-hint">Automatically records the signed-in user creating the route.</p>
+                    <input
+                      className="form-input"
+                      value={
+                        currentUser
+                          ? `${currentUser.fname} ${currentUser.lname}`
+                          : "Current user"
+                      }
+                      readOnly
+                    />
+                    <p className="field-hint">
+                      Automatically records the signed-in user creating the
+                      route.
+                    </p>
                   </div>
                   <div className="form-group">
                     <label className="form-label">Type</label>
-                    <select className="form-select" value={formData.transmissionType} onChange={e => setFormData({ ...formData, transmissionType: e.target.value })}>
+                    <select
+                      className="form-select"
+                      value={formData.transmissionType}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          transmissionType: e.target.value,
+                        })
+                      }
+                    >
                       <option>Internal</option>
                       <option>External</option>
                     </select>
-                    <p className="field-hint">Marks whether the movement is inside the municipality or external.</p>
+                    <p className="field-hint">
+                      Marks whether the movement is inside the municipality or
+                      external.
+                    </p>
                   </div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Transmission Date</label>
-                  <input className="form-input" type="date" value={formData.transmissionDate} onChange={e => setFormData({ ...formData, transmissionDate: e.target.value })} required />
-                  <p className="field-hint">The official date saved in the routing history and reports.</p>
+                  <input
+                    className="form-input"
+                    type="date"
+                    value={formData.transmissionDate}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        transmissionDate: e.target.value,
+                      })
+                    }
+                    required
+                  />
+                  <p className="field-hint">
+                    The official date saved in the routing history and reports.
+                  </p>
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">Create Transmission</button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowForm(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  Create Transmission
+                </button>
               </div>
             </form>
           </div>
