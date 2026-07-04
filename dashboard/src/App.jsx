@@ -29,22 +29,58 @@ import {
 } from './api/documentService';
 import { sortNewest } from './utils/sorting';
 
+const PAGE_STORAGE_KEY = 'dp_currentPage';
+
+const ROLE_PAGES = {
+  admin: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents'],
+  mayor: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'reports', 'logs'],
+  receptionist: ['dashboard', 'scan-documents', 'documents', 'reports', 'logs'],
+};
+
+const getRoleKey = (user) => {
+  if (!user?.role) return null;
+  switch (user.role) {
+    case 'Admin': return 'admin';
+    case 'Mayor': return 'mayor';
+    case 'Receptionist': return 'receptionist';
+    default: return 'receptionist';
+  }
+};
+
+const resolvePageForRole = (page, role) => {
+  const allowed = ROLE_PAGES[role] || ROLE_PAGES.receptionist;
+  return allowed.includes(page) ? page : 'dashboard';
+};
+
+const getSavedPage = (user) => {
+  const role = getRoleKey(user);
+  if (!role) return 'dashboard';
+
+  try {
+    const saved = localStorage.getItem(PAGE_STORAGE_KEY);
+    return resolvePageForRole(saved || 'dashboard', role);
+  } catch {
+    return 'dashboard';
+  }
+};
+
 function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('dp_currentUser');
     return saved ? JSON.parse(saved) : null;
   });
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [currentPage, setCurrentPage] = useState(() => getSavedPage(
+    (() => {
+      try {
+        const saved = localStorage.getItem('dp_currentUser');
+        return saved ? JSON.parse(saved) : null;
+      } catch {
+        return null;
+      }
+    })(),
+  ));
 
-  const getCurrentRole = () => {
-    if (!currentUser) return null;
-    switch (currentUser.role) {
-      case 'Admin': return 'admin';
-      case 'Mayor': return 'mayor';
-      case 'Receptionist': return 'receptionist';
-      default: return 'receptionist';
-    }
-  };
+  const getCurrentRole = () => getRoleKey(currentUser);
 
   const currentRole = getCurrentRole();
 
@@ -70,6 +106,8 @@ function App() {
   const [dataError, setDataError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [isRefreshingContent, setIsRefreshingContent] = useState(false);
+  const [hasLoadedData, setHasLoadedData] = useState(false);
   const [documentFocusId, setDocumentFocusId] = useState('');
   const [documentStatusFocus, setDocumentStatusFocus] = useState('All');
   const [dismissedNotifications, setDismissedNotifications] = useState(() => {
@@ -77,9 +115,15 @@ function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const loadData = async () => {
-    setIsLoadingData(true);
-    setDataError('');
+  const loadData = async ({ silent = hasLoadedData } = {}) => {
+    if (silent) {
+      setIsRefreshingContent(true);
+    } else {
+      setIsLoadingData(true);
+    }
+    if (!silent) {
+      setDataError('');
+    }
 
     try {
       const data = await appDataService.loadAll();
@@ -94,10 +138,14 @@ function App() {
       setDeviceEvents(data.deviceEvents);
       setServerNotifications(data.notifications || []);
       setSenderNotifications(data.senderNotifications || []);
+      setHasLoadedData(true);
     } catch (err) {
-      setDataError(err.message || 'Unable to load database data. Check that the backend and MongoDB are running.');
+      if (!silent || !hasLoadedData) {
+        setDataError(err.message || 'Unable to load database data. Check that the backend and MongoDB are running.');
+      }
     } finally {
       setIsLoadingData(false);
+      setIsRefreshingContent(false);
     }
   };
 
@@ -181,13 +229,18 @@ function App() {
     const refreshMs = currentPage === 'device-panel' ? 5000 : 15000;
     const interval = setInterval(() => {
       refreshSystemStatus();
-      loadData();
+      loadData({ silent: true });
     }, refreshMs);
 
     return () => clearInterval(interval);
   }, [currentUser?.id, currentPage]);
 
   useEffect(() => { localStorage.setItem('dp_dismissedNotifications', JSON.stringify(dismissedNotifications)); }, [dismissedNotifications]);
+  useEffect(() => {
+    if (currentUser && currentPage) {
+      localStorage.setItem(PAGE_STORAGE_KEY, currentPage);
+    }
+  }, [currentPage, currentUser]);
   useEffect(() => {
     if (currentUser) {
       localStorage.setItem('dp_currentUser', JSON.stringify(currentUser));
@@ -200,6 +253,8 @@ function App() {
     const handleAuthExpired = () => {
       setCurrentUser(null);
       setCurrentPage('dashboard');
+      setHasLoadedData(false);
+      localStorage.removeItem(PAGE_STORAGE_KEY);
       setDataError('Your session expired. Please sign in again.');
     };
 
@@ -226,21 +281,24 @@ function App() {
     if (!confirmed) return;
 
     authService.logout();
+    localStorage.removeItem(PAGE_STORAGE_KEY);
     setCurrentUser(null);
     setCurrentPage('dashboard');
+    setHasLoadedData(false);
     setDocumentFocusId('');
     setDocumentStatusFocus('All');
   };
 
   const handleNavigate = (page) => {
-    if (page !== 'documents') {
+    const nextPage = resolvePageForRole(page, currentRole);
+    if (nextPage !== 'documents') {
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
     } else {
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
     }
-    setCurrentPage(page);
+    setCurrentPage(nextPage);
   };
 
   const handleOpenDocument = (documentId) => {
@@ -666,7 +724,7 @@ function App() {
       return (
         <DeviceControlPanel
           device={device}
-          onRefresh={loadData}
+          onRefresh={() => loadData({ silent: true })}
           logs={visibleLogs}
           users={users}
           deviceEvents={deviceEvents}
@@ -983,10 +1041,10 @@ function App() {
         onNavigate={handleNavigate}
         onLogout={handleLogout}
         pendingTransmissions={pendingTransmissions}
-        systemStatus={systemStatus}
         dataError={dataError}
         saveError={saveError}
-        isLoadingData={isLoadingData}
+        isLoadingContent={isLoadingData && !hasLoadedData}
+        isRefreshingContent={isRefreshingContent}
         notifications={notifications}
         onDismissNotification={handleDismissNotification}
         onNotificationSelect={handleNotificationSelect}

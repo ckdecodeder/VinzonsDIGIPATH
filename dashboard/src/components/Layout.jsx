@@ -16,6 +16,7 @@ import {
   BarChart3,
   AlertCircle,
   Bell,
+  Loader2,
   X,
   Clock,
   AlertTriangle,
@@ -34,6 +35,8 @@ const Layout = ({
   pendingTransmissions,
   dataError,
   saveError,
+  isLoadingContent = false,
+  isRefreshingContent = false,
   notifications = [],
   onDismissNotification,
   onNotificationSelect,
@@ -205,7 +208,24 @@ const Layout = ({
               {saveError || dataError}
             </div>
           )}
-          {children}
+
+          {isRefreshingContent && (
+            <div className="page-content-refresh-bar" aria-live="polite">
+              <Loader2 size={14} className="animate-spin" />
+              <span>Refreshing content...</span>
+            </div>
+          )}
+
+          <div className={`page-content-shell ${isRefreshingContent ? 'is-refreshing' : ''}`}>
+            {isLoadingContent ? (
+              <div className="page-content-loading">
+                <Loader2 size={28} className="animate-spin" />
+                <span>Loading page content...</span>
+              </div>
+            ) : (
+              children
+            )}
+          </div>
         </div>
       </main>
 
