@@ -71,9 +71,7 @@ const DocumentList = ({
   const [filterStatus, setFilterStatus] = useState('All');
   const [filterDirection, setFilterDirection] = useState('All');
   const [filterPriority, setFilterPriority] = useState('All');
-  const [dateFilter, setDateFilter] = useState('All');
-  const [dateFrom, setDateFrom] = useState(new Date().toISOString().split('T')[0]);
-  const [dateTo, setDateTo] = useState(new Date().toISOString().split('T')[0]);
+  const [filterDate, setFilterDate] = useState('');
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
@@ -114,7 +112,7 @@ const DocumentList = ({
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterStatus, filterDirection, filterPriority, dateFilter, dateFrom, dateTo]);
+  }, [search, filterStatus, filterDirection, filterPriority, filterDate]);
 
   const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
   const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
@@ -326,12 +324,7 @@ const DocumentList = ({
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
       const matchPriority = filterPriority === 'All' || d.priorityLevel === filterPriority;
       const receivedDate = d.dateReceived || '';
-      const today = new Date().toISOString().split('T')[0];
-      const matchDate =
-        dateFilter === 'All' ||
-        (dateFilter === 'Today' && receivedDate === today) ||
-        (dateFilter === 'Specific' && receivedDate === dateFrom) ||
-        (dateFilter === 'Range' && (!dateFrom || receivedDate >= dateFrom) && (!dateTo || receivedDate <= dateTo));
+      const matchDate = !filterDate || receivedDate === filterDate;
       return matchSearch && matchStatus && matchDir && matchPriority && matchDate;
     })
     .sort((a, b) => {
@@ -831,21 +824,14 @@ const DocumentList = ({
           </div>
 
           <div className="filter-dropdown filter-dropdown-date">
-            <label>Date</label>
-            <select className="form-select" value={dateFilter} onChange={e => setDateFilter(e.target.value)}>
-              <option>All</option>
-              <option>Today</option>
-              <option>Specific</option>
-              <option>Range</option>
-            </select>
-            {(dateFilter === 'Specific' || dateFilter === 'Range') && (
-              <div className="date-range-inputs">
-                <input className="form-input" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-                {dateFilter === 'Range' && (
-                  <input className="form-input" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-                )}
-              </div>
-            )}
+            <label htmlFor="document-date-filter">Date</label>
+            <input
+              id="document-date-filter"
+              className="form-input"
+              type="date"
+              value={filterDate}
+              onChange={e => setFilterDate(e.target.value)}
+            />
           </div>
 
           <div className="filter-dropdowns">

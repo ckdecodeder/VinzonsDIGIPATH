@@ -37,10 +37,11 @@ router.use('/transmissions', transmissionsRouter);
 router.use('/logs', logsRouter);
 router.use('/documents', documentsRouter);
 
-// Mount root-scoped routers in specific order so exact paths are matched
-// Devices + tracking must come before notifications (notifications applies JWT protect to all paths).
-router.use('/', devicesRouter);
+// Mount root-scoped routers in specific order so exact paths are matched.
+// Public tracking first, then hardware device routes, then notifications.
+// Do not mount the tracking catch-all before named API routes like /notifications.
 router.use('/', trackingRouter);
+router.use('/', devicesRouter);
 router.use('/', notificationsRouter);
 
 // Universal error handling middleware

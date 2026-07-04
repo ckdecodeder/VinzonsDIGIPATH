@@ -58,6 +58,8 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 html,
@@ -1594,6 +1596,23 @@ tbody tr:hover {
   font-size: 0.78rem;
   color: var(--text-muted);
   font-weight: 600;
+}
+
+.document-toolbar .filter-dropdown-date .form-input {
+  min-height: 38px;
+  width: 100%;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  color: var(--text-main);
+  background: var(--bg-card);
+}
+
+.document-toolbar .filter-dropdown-date .form-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 .filter-chip {
@@ -3410,23 +3429,16 @@ tbody tr:hover {
   animation: spin 1s linear infinite;
 }
 
-/* ==================== SCROLLBAR ==================== */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ==================== SCROLLBAR (hidden, scroll still works) ==================== */
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-thumb {
+  display: none;
 }
 
 /* ==================== RESPONSIVE ==================== */

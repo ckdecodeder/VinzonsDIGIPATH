@@ -17,20 +17,28 @@ const OfficeList = ({
   const [formData, setFormData] = useState({
     name: "",
   });
+  const [isSaving, setIsSaving] = useState(false);
 
   const filteredOffices = offices.filter((o) =>
     o.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (editOffice) {
-      onUpdateOffice(editOffice.id, formData);
-    } else {
-      onAddOffice(formData);
+    setIsSaving(true);
+
+    try {
+      const saved = editOffice
+        ? await onUpdateOffice(editOffice.id, formData)
+        : await onAddOffice(formData);
+
+      if (!saved) return;
+
+      setShowForm(false);
+      setEditOffice(null);
+    } finally {
+      setIsSaving(false);
     }
-    setShowForm(false);
-    setEditOffice(null);
   };
 
   const openForm = (office = null) => {
@@ -239,8 +247,8 @@ const OfficeList = ({
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  {editOffice ? "Update Office" : "Create Office"}
+                <button type="submit" className="btn btn-primary" disabled={isSaving}>
+                  {isSaving ? 'Saving...' : editOffice ? 'Update Office' : 'Create Office'}
                 </button>
               </div>
             </form>

@@ -11,14 +11,9 @@ import {
   Inbox,
   ArrowRightLeft,
   LogOut,
-  Settings,
   ClipboardList,
   History,
-  Shield,
-  ShieldCheck,
   BarChart3,
-  Database,
-  Loader2,
   AlertCircle,
   Bell,
   X,
@@ -37,10 +32,8 @@ const Layout = ({
   onNavigate,
   onLogout,
   pendingTransmissions,
-  systemStatus,
   dataError,
   saveError,
-  isLoadingData,
   notifications = [],
   onDismissNotification,
   onNotificationSelect,
@@ -115,35 +108,6 @@ const Layout = ({
   const userInitials = currentUser ? `${currentUser.fname[0]}${currentUser.lname[0]}` : 'U';
   const userRole = currentUser ? currentUser.role : currentRole;
 
-  const getRoleIcon = () => {
-    switch (currentRole) {
-      case 'admin': return <ShieldCheck size={14} />;
-      case 'mayor': return <Shield size={14} />;
-      case 'receptionist': return <ScanLine size={14} />;
-      default: return <Settings size={14} />;
-    }
-  };
-
-  const getRoleLabel = () => {
-    switch (currentRole) {
-      case 'admin': return 'Administrator';
-      case 'mayor': return 'Mayor';
-      case 'receptionist': return 'Receptionist Mode';
-      default: return 'User';
-    }
-  };
-
-  const getRoleColor = () => {
-    switch (currentRole) {
-      case 'admin': return { bg: 'rgba(239, 68, 68, 0.1)', border: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' };
-      case 'mayor': return { bg: 'var(--primary-glow)', border: 'rgba(8, 145, 178, 0.24)', color: 'var(--primary-light)' };
-      case 'receptionist': return { bg: 'rgba(6, 182, 212, 0.1)', border: 'rgba(6, 182, 212, 0.2)', color: 'var(--accent)' };
-      default: return { bg: 'var(--primary-glow)', border: 'rgba(8, 145, 178, 0.24)', color: 'var(--primary-light)' };
-    }
-  };
-
-  const roleStyle = getRoleColor();
-  const isDatabaseConnected = systemStatus?.database === 'connected';
   const getNotificationIcon = (item) => {
     const text = `${item.status || ''} ${item.text || ''}`.toLowerCase();
     if (text.includes('approved')) return <CheckCircle2 size={15} />;
@@ -182,41 +146,6 @@ const Layout = ({
           </div>
         </div>
 
-        {/* Role indicator */}
-        <div style={{
-          margin: '0.75rem 1.25rem',
-          padding: '0.5rem 0.75rem',
-          background: roleStyle.bg,
-          border: `1px solid ${roleStyle.border}`,
-          borderRadius: 'var(--radius-md)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          fontSize: '0.75rem',
-          fontWeight: 600,
-          color: roleStyle.color,
-        }}>
-          {getRoleIcon()}
-          {getRoleLabel()}
-        </div>
-
-        <div style={{
-          margin: '0 1.25rem 0.75rem',
-          padding: '0.5rem 0.75rem',
-          background: isDatabaseConnected ? 'var(--success-bg)' : 'var(--warning-bg)',
-          border: `1px solid ${isDatabaseConnected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
-          borderRadius: 'var(--radius-md)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          fontSize: '0.72rem',
-          fontWeight: 600,
-          color: isDatabaseConnected ? 'var(--success)' : 'var(--warning)',
-        }}>
-          {isLoadingData ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-          {isDatabaseConnected ? 'Database Connected' : 'Database Offline'}
-        </div>
-
         {/* Navigation */}
         <nav className="sidebar-nav">
           {navGroups.map((group, gi) => (
@@ -249,7 +178,8 @@ const Layout = ({
               size={16}
               style={{ color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}
               onClick={onLogout}
-              title="Logout"
+              title="Log out"
+              aria-label="Log out"
             />
           </div>
         </div>

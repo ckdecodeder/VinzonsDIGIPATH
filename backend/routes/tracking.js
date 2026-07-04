@@ -9,7 +9,7 @@ const getOfficeMap = (offices) => offices.reduce((map, office) => {
   return map;
 }, {});
 
-router.get('/:trackingNumber', trackingLimiter, asyncHandler(async (req, res) => {
+router.get('/public/track/:trackingNumber', trackingLimiter, asyncHandler(async (req, res) => {
   const trackingNumber = normalizeText(req.params.trackingNumber);
   const doc = await Document.findOne({
     trackingNumber: new RegExp(`^${escapeRegExp(trackingNumber)}$`, 'i'),

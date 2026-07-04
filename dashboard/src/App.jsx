@@ -215,7 +215,16 @@ function App() {
     await loadData();
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const confirmed = await confirmUser({
+      type: 'warning',
+      title: 'Log out?',
+      message: 'You will be signed out of DigiPath and need to sign in again to continue.',
+      confirmLabel: 'Log out',
+      cancelLabel: 'Stay signed in',
+    });
+    if (!confirmed) return;
+
     authService.logout();
     setCurrentUser(null);
     setCurrentPage('dashboard');
@@ -371,23 +380,44 @@ function App() {
   };
 
   const handleAddUser = async (user) => {
+    const fullName = `${user.fname || ''} ${user.lname || ''}`.trim() || user.username;
+    const confirmed = await confirmUser({
+      type: 'warning',
+      title: 'Create new user?',
+      message: `Add ${fullName} as ${user.role}? This account will be able to sign in to DigiPath.`,
+      confirmLabel: 'Create user',
+    });
+    if (!confirmed) return null;
+
     const savedUser = await runMutation(() => userService.create(user));
     await loadData();
     return savedUser;
   };
 
   const handleUpdateUser = async (id, updates) => {
+    const existing = users.find((item) => item.id === id);
+    const fullName = existing ? `${existing.fname || ''} ${existing.lname || ''}`.trim() : 'this user';
+    const confirmed = await confirmUser({
+      type: 'warning',
+      title: 'Save user changes?',
+      message: `Update the account details for ${fullName}?`,
+      confirmLabel: 'Save changes',
+    });
+    if (!confirmed) return null;
+
     const savedUser = await runMutation(() => userService.update(id, updates));
     await loadData();
     return savedUser;
   };
 
   const handleDeleteUser = async (id) => {
+    const existing = users.find((item) => item.id === id);
+    const fullName = existing ? `${existing.fname || ''} ${existing.lname || ''}`.trim() : 'this user';
     const confirmed = await confirmUser({
       type: 'danger',
       title: 'Delete user?',
-      message: 'This removes the user account and prevents future sign-ins with it.',
-      confirmLabel: 'Delete',
+      message: `Remove ${fullName}'s account? They will no longer be able to sign in.`,
+      confirmLabel: 'Delete user',
     });
     if (!confirmed) return;
 
@@ -396,23 +426,41 @@ function App() {
   };
 
   const handleAddOffice = async (office) => {
+    const confirmed = await confirmUser({
+      type: 'warning',
+      title: 'Create new office?',
+      message: `Add "${office.name}" to the office list? It will appear in routing, reports, and user assignments.`,
+      confirmLabel: 'Create office',
+    });
+    if (!confirmed) return null;
+
     const savedOffice = await runMutation(() => officeService.create(office));
     await loadData();
     return savedOffice;
   };
 
   const handleUpdateOffice = async (id, updates) => {
+    const existing = offices.find((item) => item.id === id);
+    const confirmed = await confirmUser({
+      type: 'warning',
+      title: 'Save office changes?',
+      message: `Update "${existing?.name || 'this office'}" in the office list?`,
+      confirmLabel: 'Save changes',
+    });
+    if (!confirmed) return null;
+
     const savedOffice = await runMutation(() => officeService.update(id, updates));
     await loadData();
     return savedOffice;
   };
 
   const handleDeleteOffice = async (id) => {
+    const existing = offices.find((item) => item.id === id);
     const confirmed = await confirmUser({
       type: 'danger',
       title: 'Delete office?',
-      message: 'This removes the office from office lists. Documents already tied to it may keep their historical reference.',
-      confirmLabel: 'Delete',
+      message: `Remove "${existing?.name || 'this office'}" from the office list? Documents already tied to it may keep their historical reference.`,
+      confirmLabel: 'Delete office',
     });
     if (!confirmed) return;
 

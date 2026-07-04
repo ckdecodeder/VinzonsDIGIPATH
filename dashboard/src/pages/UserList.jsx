@@ -148,15 +148,18 @@ const UserList = ({
     setIsSaving(true);
 
     try {
+      let saved;
       if (editUser) {
         const updatePayload = { ...payload };
         if (!updatePayload.password) {
           delete updatePayload.password;
         }
-        await onUpdateUser(editUser.id, updatePayload);
+        saved = await onUpdateUser(editUser.id, updatePayload);
       } else {
-        await onAddUser(payload);
+        saved = await onAddUser(payload);
       }
+
+      if (!saved) return;
 
       setShowForm(false);
       setEditUser(null);
@@ -321,6 +324,7 @@ const UserList = ({
                         title="Delete"
                         onClick={() => onDeleteUser(u.id)}
                         style={{ color: "var(--danger)" }}
+                        aria-label={`Delete ${u.fname} ${u.lname}`}
                       >
                         <Trash2 size={14} />
                       </button>

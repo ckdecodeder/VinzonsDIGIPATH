@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
 
 const modalIcons = {
@@ -18,6 +18,19 @@ const AppModal = ({
   onConfirm,
   onCancel,
 }) => {
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        (onCancel || onConfirm)?.();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onCancel, onConfirm]);
+
   if (!open) return null;
 
   const variant = modalIcons[type] ? type : 'info';
