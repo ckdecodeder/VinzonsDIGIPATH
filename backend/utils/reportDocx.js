@@ -22,6 +22,86 @@ const scaleWidths = (ratios) => {
 
 const summaryColumnWidths = () => scaleWidths([18, 30, 12, 40]);
 
+const metadataColumnWidths = () => scaleWidths([1, 1, 1, 1]);
+
+const computeReportTypography = (summaryRowCount = 0, detailRowCount = 0) => {
+  const totalRows = summaryRowCount + detailRowCount;
+  if (totalRows <= 12) {
+    return {
+      headerLine: 22,
+      headerTitle: 32,
+      headerSub: 22,
+      reportTitle: 32,
+      reportSubtitle: 22,
+      metaLabel: 16,
+      metaValue: 18,
+      metaPadX: 160,
+      metaPadY: 200,
+      sectionTitle: 22,
+      tableHeader: 20,
+      tableBody: 20,
+      signoffLabel: 18,
+      signoffName: 22,
+      cellPadding: 100,
+    };
+  }
+  if (totalRows <= 24) {
+    return {
+      headerLine: 20,
+      headerTitle: 28,
+      headerSub: 20,
+      reportTitle: 28,
+      reportSubtitle: 20,
+      metaLabel: 16,
+      metaValue: 18,
+      metaPadX: 150,
+      metaPadY: 180,
+      sectionTitle: 20,
+      tableHeader: 18,
+      tableBody: 18,
+      signoffLabel: 18,
+      signoffName: 20,
+      cellPadding: 85,
+    };
+  }
+  if (totalRows <= 40) {
+    return {
+      headerLine: 18,
+      headerTitle: 26,
+      headerSub: 18,
+      reportTitle: 26,
+      reportSubtitle: 18,
+      metaLabel: 14,
+      metaValue: 16,
+      metaPadX: 140,
+      metaPadY: 160,
+      sectionTitle: 18,
+      tableHeader: 16,
+      tableBody: 16,
+      signoffLabel: 16,
+      signoffName: 18,
+      cellPadding: 70,
+    };
+  }
+  return {
+    headerLine: 18,
+    headerTitle: 24,
+    headerSub: 18,
+    reportTitle: 24,
+    reportSubtitle: 18,
+    metaLabel: 14,
+    metaValue: 16,
+    metaPadX: 130,
+    metaPadY: 150,
+    sectionTitle: 16,
+    tableHeader: 14,
+    tableBody: 14,
+    signoffLabel: 14,
+    signoffName: 16,
+    cellPadding: 60,
+  };
+};
+
 const detailColumnWidths = (category, columnCount) => {
   const presets = {
     documents: [13, 30, 12, 14, 11, 20],
@@ -94,13 +174,13 @@ const paragraph = (text, {
 
 const emptyParagraph = (height = 120) => paragraph('', { before: height, after: 0 });
 
-const sectionTitle = (text) => [
+const sectionTitle = (text, typography) => [
   '<w:p>',
   '<w:pPr>',
   '<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="E5E7EB"/></w:pBdr>',
   '<w:spacing w:before="200" w:after="80"/>',
   '</w:pPr>',
-  textRun(String(text || '').toUpperCase(), { bold: true, size: 16, color: '374151' }),
+  textRun(String(text || '').toUpperCase(), { bold: true, size: typography.sectionTitle, color: '374151' }),
   '</w:p>',
 ].join('');
 
@@ -122,13 +202,14 @@ const tableCell = (cell, defaults = {}) => {
   const spec = { ...defaults, ...normalizeCell(cell) };
   const fill = spec.fill || defaults.fill || '';
   const color = spec.color || defaults.color || '000000';
-  const size = spec.size || defaults.size || 18;
+  const size = spec.size || defaults.size || 20;
   const align = spec.align || defaults.align || 'left';
   const bold = Boolean(spec.bold ?? defaults.bold);
   const caps = Boolean(spec.caps ?? defaults.caps);
   const vertical = spec.vertical || 'center';
   const colSpan = Number(spec.colSpan || 1);
   const width = spec.width || defaults.width || 1728;
+  const padding = spec.cellPadding || defaults.cellPadding || 85;
   const paragraphs = Array.isArray(spec.paragraphs)
     ? spec.paragraphs
     : [paragraph(spec.text ?? '', { align, bold, size, color, caps })];
@@ -141,10 +222,10 @@ const tableCell = (cell, defaults = {}) => {
     `<w:vAlign w:val="${vertical}"/>`,
     fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : '',
     '<w:tcMar>',
-    '<w:top w:w="70" w:type="dxa"/>',
-    '<w:left w:w="80" w:type="dxa"/>',
-    '<w:bottom w:w="70" w:type="dxa"/>',
-    '<w:right w:w="80" w:type="dxa"/>',
+    `<w:top w:w="${spec.padTop ?? padding}" w:type="dxa"/>`,
+    `<w:left w:w="${spec.padLeft ?? padding}" w:type="dxa"/>`,
+    `<w:bottom w:w="${spec.padBottom ?? padding}" w:type="dxa"/>`,
+    `<w:right w:w="${spec.padRight ?? padding}" w:type="dxa"/>`,
     '</w:tcMar>',
     '</w:tcPr>',
     paragraphs.join(''),
@@ -156,8 +237,9 @@ const tableRow = (cells, widths, {
   header = false,
   fill = '',
   bold = false,
-  size = 18,
+  size = 20,
   color = '000000',
+  cellPadding = 85,
 } = {}) => {
   let widthIndex = 0;
   const renderedCells = cells.map((cell) => {
@@ -165,7 +247,7 @@ const tableRow = (cells, widths, {
     const colSpan = Number(spec.colSpan || 1);
     const width = widths.slice(widthIndex, widthIndex + colSpan).reduce((sum, item) => sum + item, 0) || widths[widthIndex] || 1728;
     widthIndex += colSpan;
-    return tableCell(spec, { fill, bold, size, color, width });
+    return tableCell(spec, { fill, bold, size, color, width, cellPadding });
   });
 
   return [
@@ -205,6 +287,9 @@ const table = (rows, widths, {
   borderColor = 'D1D5DB',
   borderSize = 4,
   headerFill = 'F3F4F6',
+  headerSize = 20,
+  bodySize = 20,
+  cellPadding = 85,
 } = {}) => [
   '<w:tbl>',
   '<w:tblPr>',
@@ -230,89 +315,81 @@ const table = (rows, widths, {
     fill: index < headerRows ? headerFill : '',
     bold: index < headerRows,
     color: index < headerRows ? '4B5563' : '111827',
-    size: index < headerRows ? 13 : 14,
+    size: index < headerRows ? headerSize : bodySize,
+    cellPadding,
   })).join(''),
   '</w:tbl>',
 ].join('');
 
-const metaLabelParagraph = (text) => paragraph(text, {
+const metaLabelParagraph = (text, size = 16) => paragraph(String(text || '').toUpperCase(), {
+  align: 'left',
   bold: true,
-  size: 12,
+  size,
   color: '6B7280',
-  caps: true,
-  after: 20,
+  after: 50,
 });
 
-const metaValueParagraph = (text, { bold = false } = {}) => paragraph(text, {
-  bold,
-  size: 14,
+const metaValueParagraph = (text, size = 18) => paragraph(text, {
+  align: 'left',
+  bold: true,
+  size,
   color: '111827',
   after: 0,
+  before: 0,
 });
 
-const buildMetadataRow = (report) => [[
-  {
-    fill: 'FAFAFA',
-    paragraphs: [
-      metaLabelParagraph('Prepared By'),
-      metaValueParagraph(report.preparedBy),
-    ],
-  },
-  {
-    fill: 'FAFAFA',
-    paragraphs: [
-      metaLabelParagraph('Coverage'),
-      metaValueParagraph(report.coverage),
-    ],
-  },
-  {
-    fill: 'FAFAFA',
-    paragraphs: [
-      metaLabelParagraph('Generated'),
-      metaValueParagraph(report.generatedAt),
-    ],
-  },
-  {
-    fill: 'FAFAFA',
-    paragraphs: [
-      metaLabelParagraph('Record Count'),
-      metaValueParagraph(String(report.recordCount), { bold: true }),
-    ],
-  },
+const metaCell = (label, value, typography) => ({
+  fill: 'FAFAFA',
+  vertical: 'top',
+  padLeft: typography.metaPadX,
+  padRight: typography.metaPadX,
+  padTop: typography.metaPadY,
+  padBottom: typography.metaPadY,
+  paragraphs: [
+    metaLabelParagraph(label, typography.metaLabel),
+    metaValueParagraph(value, typography.metaValue),
+  ],
+});
+
+const buildMetadataRow = (report, typography) => [[
+  metaCell('Prepared By', report.preparedBy, typography),
+  metaCell('Coverage', report.coverage, typography),
+  metaCell('Generated', report.generatedAt, typography),
+  metaCell('Record Count', String(report.recordCount), typography),
 ]];
 
-const signoffNameParagraph = (text) => [
+const signoffNameParagraph = (text, size = 22) => [
   '<w:p>',
   '<w:pPr>',
   '<w:jc w:val="center"/>',
   '<w:pBdr><w:top w:val="single" w:sz="6" w:space="4" w:color="1F2937"/></w:pBdr>',
   '<w:spacing w:before="480" w:after="0"/>',
   '</w:pPr>',
-  textRun(text || '____________________________', { bold: Boolean(text), size: 14, color: text ? '111827' : '9CA3AF' }),
+  textRun(text || '____________________________', { bold: Boolean(text), size, color: text ? '111827' : '9CA3AF' }),
   '</w:p>',
 ].join('');
 
-const buildSignoffBlock = (report) => {
+const buildSignoffBlock = (report, typography) => {
   const half = Math.floor(REPORT_WIDTH / 2);
   const widths = [half, REPORT_WIDTH - half];
   return table([
     [
       {
-        paragraphs: [paragraph('Prepared by', { size: 12, color: '6B7280', caps: true })],
+        paragraphs: [paragraph('Prepared by', { size: typography.signoffLabel, color: '6B7280', caps: true })],
       },
       {
-        paragraphs: [paragraph('Verified / Noted by', { size: 12, color: '6B7280', caps: true })],
+        paragraphs: [paragraph('Verified / Noted by', { size: typography.signoffLabel, color: '6B7280', caps: true })],
       },
     ],
     [
       {
-        paragraphs: [signoffNameParagraph(report.preparedBy)],
+        paragraphs: [signoffNameParagraph(report.preparedBy, typography.signoffName)],
       },
       {
-        paragraphs: [signoffNameParagraph(report.reviewedBy || '')],
+        paragraphs: [signoffNameParagraph(report.reviewedBy || '', typography.signoffName)],
       },
     ],
-  ], widths, { headerRows: 0, bordered: false });
+  ], widths, { headerRows: 0, bordered: false, cellPadding: typography.cellPadding });
 };
 
 const noRows = (columnCount) => [[{
@@ -327,12 +404,99 @@ const getNextRelId = (relsXml) => {
   return `rId${Math.max(0, ...ids) + 1}`;
 };
 
+const DOCUMENT_NAMESPACES = [
+  'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"',
+  'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+  'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"',
+  'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"',
+  'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"',
+].join(' ');
+
+const DEFAULT_SECTION = '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr>';
+
+const createBaseDocxZip = () => {
+  const zip = new AdmZip();
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+<Default Extension="xml" ContentType="application/xml"/>
+<Default Extension="png" ContentType="image/png"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-officedocument.core-properties+xml"/>
+<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`;
+  const packageRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`;
+  const docRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:docDefaults>
+<w:rPrDefault><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial" w:cs="Arial"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault>
+<w:pPrDefault><w:pPr/></w:pPrDefault>
+</w:docDefaults>
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>
+</w:styles>`;
+  const core = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<dc:title>DigiPath Report</dc:title>
+<dc:creator>DigiPath</dc:creator>
+<cp:lastModifiedBy>DigiPath</cp:lastModifiedBy>
+</cp:coreProperties>`;
+  const app = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+<Application>DigiPath</Application>
+</Properties>`;
+  const shellDocument = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document ${DOCUMENT_NAMESPACES}>
+<w:body><w:p><w:r><w:t></w:t></w:r></w:p>${DEFAULT_SECTION}</w:body>
+</w:document>`;
+
+  zip.addFile('[Content_Types].xml', Buffer.from(contentTypes, 'utf8'));
+  zip.addFile('_rels/.rels', Buffer.from(packageRels, 'utf8'));
+  zip.addFile('word/_rels/document.xml.rels', Buffer.from(docRels, 'utf8'));
+  zip.addFile('word/document.xml', Buffer.from(shellDocument, 'utf8'));
+  zip.addFile('word/styles.xml', Buffer.from(styles, 'utf8'));
+  zip.addFile('docProps/core.xml', Buffer.from(core, 'utf8'));
+  zip.addFile('docProps/app.xml', Buffer.from(app, 'utf8'));
+  return zip;
+};
+
+const extractSectionProperties = (templatePath) => {
+  if (!templatePath || !fs.existsSync(templatePath)) return DEFAULT_SECTION;
+  try {
+    const templateZip = new AdmZip(templatePath);
+    const templateDoc = templateZip.readAsText('word/document.xml');
+    const sectMatch = templateDoc.match(/<w:sectPr[\s\S]*?<\/w:sectPr>/);
+    return sectMatch ? removeDocumentHeaders(sectMatch[0]) : DEFAULT_SECTION;
+  } catch {
+    return DEFAULT_SECTION;
+  }
+};
+
 const ensurePngContentType = (contentTypesXml) => {
-  if (contentTypesXml.includes('Extension="png"')) return contentTypesXml;
-  return contentTypesXml.replace(
-    '</Types>',
-    '<Default Extension="png" ContentType="image/png"/></Types>',
-  );
+  let next = contentTypesXml;
+  if (!next.includes('Extension="png"')) {
+    next = next.replace(
+      '</Types>',
+      '<Default Extension="png" ContentType="image/png"/></Types>',
+    );
+  }
+  const partName = `/word/media/${SEAL_IMAGE_NAME}`;
+  if (!next.includes(partName)) {
+    next = next.replace(
+      '</Types>',
+      `<Override PartName="${partName}" ContentType="image/png"/></Types>`,
+    );
+  }
+  return next;
 };
 
 const addImageToZip = (zip, imagePath) => {
@@ -368,12 +532,12 @@ const imageParagraph = (relId, cx = 647700, cy = 647700) => [
   '<wp:inline distT="0" distB="0" distL="0" distR="0">',
   `<wp:extent cx="${cx}" cy="${cy}"/>`,
   '<wp:effectExtent l="0" t="0" r="0" b="0"/>',
-  '<wp:docPr id="1" name="Seal of Vinzons"/>',
+  '<wp:docPr id="100" name="Seal of Vinzons"/>',
   '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>',
   '<a:graphic>',
   '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
   '<pic:pic>',
-  '<pic:nvPicPr><pic:cNvPr id="0" name="Seal"/><pic:cNvPicPr/></pic:nvPicPr>',
+  '<pic:nvPicPr><pic:cNvPr id="101" name="Seal"/><pic:cNvPicPr/></pic:nvPicPr>',
   '<pic:blipFill>',
   `<a:blip r:embed="${relId}"/>`,
   '<a:stretch><a:fillRect/></a:stretch>',
@@ -392,25 +556,46 @@ const imageParagraph = (relId, cx = 647700, cy = 647700) => [
   '</w:p>',
 ].join('');
 
-const officialReportHeader = (imageRelId) => {
-  const logoWidth = 1700;
-  const textWidth = REPORT_WIDTH - logoWidth;
+const HEADER_TABLE_WIDTH = 5800;
+const HEADER_LOGO_COL = 1320;
+const HEADER_TEXT_COL = HEADER_TABLE_WIDTH - HEADER_LOGO_COL;
+const SEAL_SIZE_EMU = 590000;
+
+const officialReportHeader = (imageRelId, typography) => {
   const logoCell = imageRelId
-    ? { paragraphs: [imageParagraph(imageRelId)], vertical: 'center', width: logoWidth }
-    : { text: '', vertical: 'center', width: logoWidth };
+    ? {
+      paragraphs: [imageParagraph(imageRelId, SEAL_SIZE_EMU, SEAL_SIZE_EMU)],
+      vertical: 'center',
+      width: HEADER_LOGO_COL,
+      padRight: 40,
+      cellPadding: 40,
+    }
+    : {
+      text: '',
+      vertical: 'center',
+      width: HEADER_LOGO_COL,
+      padRight: 40,
+      cellPadding: 40,
+    };
   const textCell = {
-    width: textWidth,
+    width: HEADER_TEXT_COL,
     vertical: 'center',
+    padLeft: 60,
+    cellPadding: 40,
     paragraphs: [
-      paragraph('Republic of the Philippines', { align: 'center', size: 15, color: '374151' }),
-      paragraph('Province of Camarines Norte', { align: 'center', size: 15, color: '374151' }),
-      paragraph('Municipality of Vinzons', { align: 'center', bold: true, size: 22, color: '111827', caps: true }),
-      paragraph('DigiPath Document Tracking System', { align: 'center', size: 14, color: '4B5563' }),
+      paragraph('Republic of the Philippines', { align: 'center', size: typography.headerLine, color: '374151' }),
+      paragraph('Province of Camarines Norte', { align: 'center', size: typography.headerLine, color: '374151' }),
+      paragraph('Municipality of Vinzons', { align: 'center', bold: true, size: typography.headerTitle, color: '111827', caps: true }),
+      paragraph('DigiPath Document Tracking System', { align: 'center', size: typography.headerSub, color: '4B5563' }),
     ],
   };
 
   return [
-    table([[logoCell, textCell]], [logoWidth, textWidth], { headerRows: 0, bordered: false }),
+    table([[logoCell, textCell]], [HEADER_LOGO_COL, HEADER_TEXT_COL], {
+      headerRows: 0,
+      bordered: false,
+      cellPadding: 40,
+    }),
     headerDivider(),
   ].join('');
 };
@@ -445,31 +630,11 @@ const buildOfficialReportDocx = ({
   headers = [],
   rows = [],
 }) => {
-  if (!fs.existsSync(templatePath)) {
-    throw new Error(`Report template not found at ${templatePath}`);
-  }
-
-  const zip = new AdmZip(templatePath);
-  const entry = zip.getEntry('word/document.xml');
-  if (!entry) {
-    throw new Error('Report template is missing word/document.xml');
-  }
-
+  const zip = createBaseDocxZip();
+  const sectionProperties = extractSectionProperties(templatePath);
   const sealPath = resolveSealPath();
   const imageRelId = sealPath ? addImageToZip(zip, sealPath) : null;
-
-  const originalDocument = entry.getData().toString('utf8');
-  const bodyOpen = '<w:body>';
-  const bodyStart = originalDocument.indexOf(bodyOpen);
-  const bodyEnd = originalDocument.lastIndexOf('</w:body>');
-  if (bodyStart < 0 || bodyEnd < 0) {
-    throw new Error('Report template has an unsupported Word document structure');
-  }
-
-  const originalBody = originalDocument.slice(bodyStart + bodyOpen.length, bodyEnd);
-  const sectionMatch = originalBody.match(/<w:sectPr[\s\S]*?<\/w:sectPr>/);
-  const sectionProperties = removeDocumentHeaders(sectionMatch ? sectionMatch[0] : '');
-  const metadataWidths = summaryColumnWidths();
+  const metadataWidths = metadataColumnWidths();
   const summaryWidths = summaryColumnWidths();
   const hasDetailTable = headers.length > 0;
   const detailWidths = hasDetailTable ? detailColumnWidths(category, headers.length) : [];
@@ -481,6 +646,7 @@ const buildOfficialReportDocx = ({
   const normalizedSummaryRows = summaryRows.length
     ? [['Section', 'Metric', 'Value', 'Notes'], ...summaryRows]
     : [['Section', 'Metric', 'Value', 'Notes'], ...noRows(4)];
+  const typography = computeReportTypography(summaryRows.length, rows.length);
 
   const report = {
     title,
@@ -496,38 +662,52 @@ const buildOfficialReportDocx = ({
   };
 
   const bodyContent = [
-    officialReportHeader(imageRelId),
+    officialReportHeader(imageRelId, typography),
     paragraph(`${categoryLabel} Report`.toUpperCase(), {
       align: 'center',
       bold: true,
-      size: 20,
+      size: typography.reportTitle,
       color: '111827',
       after: 30,
     }),
     paragraph('Official generated report from DigiPath records', {
       align: 'center',
-      size: 14,
+      size: typography.reportSubtitle,
       color: '6B7280',
-      after: 140,
+      after: 220,
     }),
-    table(buildMetadataRow(report), metadataWidths, { headerRows: 0, bordered: true }),
-    emptyParagraph(80),
-    sectionTitle('Summary'),
-    table(normalizedSummaryRows, summaryWidths, { headerRows: 1, bordered: true }),
-    hasDetailTable ? sectionTitle(tableTitle || `${categoryLabel} Details`) : '',
-    hasDetailTable ? table(detailRows, detailWidths, { headerRows: 1, bordered: true }) : '',
+    table(buildMetadataRow(report, typography), metadataWidths, {
+      headerRows: 0,
+      bordered: true,
+    }),
     emptyParagraph(120),
-    buildSignoffBlock(report),
+    sectionTitle('Summary', typography),
+    table(normalizedSummaryRows, summaryWidths, {
+      headerRows: 1,
+      bordered: true,
+      headerSize: typography.tableHeader,
+      bodySize: typography.tableBody,
+      cellPadding: typography.cellPadding,
+    }),
+    hasDetailTable ? sectionTitle(tableTitle || `${categoryLabel} Details`, typography) : '',
+    hasDetailTable ? table(detailRows, detailWidths, {
+      headerRows: 1,
+      bordered: true,
+      headerSize: typography.tableHeader,
+      bodySize: typography.tableBody,
+      cellPadding: typography.cellPadding,
+    }) : '',
+    emptyParagraph(120),
+    buildSignoffBlock(report, typography),
     sectionProperties,
   ].join('');
 
-  const nextDocument = [
-    originalDocument.slice(0, bodyStart + bodyOpen.length),
-    bodyContent,
-    originalDocument.slice(bodyEnd),
-  ].join('');
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document ${DOCUMENT_NAMESPACES}>
+<w:body>${bodyContent}</w:body>
+</w:document>`;
 
-  zip.updateFile('word/document.xml', Buffer.from(nextDocument, 'utf8'));
+  zip.updateFile('word/document.xml', Buffer.from(documentXml, 'utf8'));
   return zip.toBuffer();
 };
 

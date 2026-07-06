@@ -40,12 +40,23 @@ const formatReportDate = (value, withTime = false) => {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
+  if (withTime) {
+    return date.toLocaleString('en-PH', {
+      timeZone: 'Asia/Manila',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    });
+  }
   return date.toLocaleString('en-PH', {
     timeZone: 'Asia/Manila',
     year: 'numeric',
     month: 'short',
     day: '2-digit',
-    ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}),
   });
 };
 
