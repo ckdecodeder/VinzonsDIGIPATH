@@ -96,10 +96,10 @@ const ReceptionistDashboard = ({
     });
 
   const statCards = [
-    { label: 'Received Today', value: todayDocs.length, icon: <Inbox size={22} />, color: 'blue' },
-    { label: 'Urgent Items', value: urgentDocs.length, icon: <Flag size={22} />, color: 'red' },
-    { label: 'Pending', value: pendingDocuments.length, icon: <Clock size={22} />, color: 'amber' },
-    { label: 'Total In System', value: documents.length, icon: <FileText size={22} />, color: 'purple' },
+    { label: 'Received Today', value: todayDocs.length, icon: <Inbox size={26} />, color: 'blue' },
+    { label: 'Urgent Items', value: urgentDocs.length, icon: <Flag size={26} />, color: 'red' },
+    { label: 'Pending', value: pendingDocuments.length, icon: <Clock size={26} />, color: 'amber' },
+    { label: 'Total In System', value: documents.length, icon: <FileText size={26} />, color: 'purple' },
   ];
 
   const getOfficeName = (officeId) => {
@@ -274,91 +274,72 @@ const ReceptionistDashboard = ({
       if (pDiff !== 0) return pDiff;
       return compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
     })
-    .slice(0, 8);
+    .slice(0, 4);
 
   return (
-    <div>
-      {/* Header with Scan-First Priority */}
-      <div className="page-header">
+    <div className="receptionist-dashboard">
+      <div className="page-header page-header--align-bottom">
         <div className="page-header-left">
           <h1>Receptionist Dashboard</h1>
           <p>Scan, receive, route, and track documents efficiently</p>
         </div>
         <div className="page-header-actions">
           <button className="btn btn-secondary" onClick={() => { setAttachmentFile(null); setShowReceiveForm(true); }}>
-            <Inbox size={16} /> Register
+            <Inbox size={18} /> Register
           </button>
           {routableDocuments.length > 0 && (
             <button className="btn btn-primary" onClick={openRouteForm}>
-              <Send size={16} /> Route
+              <Send size={18} /> Route
             </button>
           )}
         </div>
       </div>
 
-      {/* Quick Scan CTA Card */}
-      <div
-        onClick={() => onNavigate('scan-documents')}
-        style={{
-          background: 'var(--gradient-primary)',
-          borderRadius: 'var(--radius-lg)',
-          padding: '1.25rem 1.5rem',
-          marginBottom: '1.5rem',
-          cursor: 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          color: 'white',
-          transition: 'transform 0.2s, box-shadow 0.2s',
-          boxShadow: '0 4px 15px rgba(8, 145, 178, 0.28)',
-        }}
-        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 25px rgba(8, 145, 178, 0.34)'; }}
-        onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 4px 15px rgba(8, 145, 178, 0.28)'; }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <div style={{
-            width: '48px', height: '48px', borderRadius: '12px',
-            background: 'rgba(255,255,255,0.2)', display: 'flex',
-            alignItems: 'center', justifyContent: 'center',
-          }}>
-            <ScanLine size={24} />
-          </div>
-          <div>
-            <h3 style={{ fontWeight: 700, fontSize: '1rem', margin: 0 }}>Quick Scan Intake</h3>
-            <p style={{ opacity: 0.8, fontSize: '0.82rem', margin: 0 }}>
-              Scan a document, save it to MongoDB, then wait for intake review
-            </p>
-          </div>
-        </div>
-        <ArrowRight size={20} style={{ opacity: 0.7 }} />
-      </div>
-
-      {/* Stats */}
-      <div className="stats-grid">
-        {statCards.map((stat, i) => (
-          <div key={i} className={`stat-card ${stat.color}`}>
-            <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
-            <div className="stat-info">
-              <p className="stat-label">{stat.label}</p>
-              <p className="stat-value">{stat.value}</p>
+      <div className="receptionist-hero">
+        <button
+          type="button"
+          className="receptionist-scan-cta"
+          onClick={() => onNavigate('scan-documents')}
+        >
+          <div className="receptionist-scan-cta-content">
+            <div className="receptionist-scan-cta-icon">
+              <ScanLine size={28} />
+            </div>
+            <div>
+              <h3>Quick Scan Intake</h3>
+              <p>Scan a document, save it, then wait for intake review</p>
             </div>
           </div>
-        ))}
+          <ArrowRight size={22} className="receptionist-scan-cta-arrow" />
+        </button>
+
+        <div className="stats-grid receptionist-stats">
+          {statCards.map((stat, i) => (
+            <div key={i} className={`stat-card ${stat.color}`}>
+              <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
+              <div className="stat-info">
+                <p className="stat-label">{stat.label}</p>
+                <p className="stat-value">{stat.value}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Tabs */}
-      <div className="tab-bar">
+      <div className="tab-bar receptionist-tabs">
         <button className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
         <button className={`tab-btn ${activeTab === 'incoming' ? 'active' : ''}`} onClick={() => setActiveTab('incoming')}>Incoming Docs</button>
         <button className={`tab-btn ${activeTab === 'routing' ? 'active' : ''}`} onClick={() => setActiveTab('routing')}>Pending</button>
       </div>
 
+      <div className="receptionist-dashboard-body">
       {activeTab === 'overview' && (
-        <div className="grid-2">
+        <div className="grid-2 receptionist-overview">
           {/* Recent Incoming */}
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">Recent Incoming Documents</h3>
+              <span className="card-header-spacer" aria-hidden="true" />
             </div>
             <div className="activity-list">
               {recentIncoming.map(doc => {
@@ -374,28 +355,27 @@ const ReceptionistDashboard = ({
                     title="Open document details"
                   >
                     <div className={`activity-dot ${doc.priorityLevel === 'urgent' ? 'red' : getWorkflowStatus(doc) === 'Received' ? 'blue' : getWorkflowStatus(doc) === 'In Transit' ? 'amber' : 'green'}`}></div>
-                    <div style={{ flex: 1 }}>
+                    <div className="activity-item-body">
                       <p className="activity-text"><strong>{doc.subject}</strong></p>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.25rem', flexWrap: 'wrap', gap: '0.25rem' }}>
-                        <span className="td-mono" style={{ fontSize: '0.7rem' }}>{doc.trackingNumber}</span>
-                        <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center' }}>
-                          <span style={{
-                            padding: '0.1rem 0.375rem', borderRadius: '9999px',
-                            fontSize: '0.6rem', fontWeight: 600,
-                            background: pInfo.bg, color: pInfo.color,
-                          }}>
-                            {pInfo.label}
-                          </span>
-                          <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`} style={{ fontSize: '0.65rem' }}>
-                            {getWorkflowStatus(doc)}
-                          </span>
-                        </div>
+                      <div className="activity-badges">
+                        <span
+                          className="activity-tag"
+                          style={{ background: pInfo.bg, color: pInfo.color }}
+                        >
+                          {pInfo.label}
+                        </span>
+                        <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`}>
+                          {getWorkflowStatus(doc)}
+                        </span>
                       </div>
-                      {doc.senderName && (
-                        <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                          <User size={10} style={{ marginRight: '0.2rem' }} />{doc.senderName}
-                        </p>
-                      )}
+                      <div className="activity-subline">
+                        <span className="activity-tracking">{doc.trackingNumber}</span>
+                        {doc.senderName && (
+                          <span className="activity-sender">
+                            <User size={10} />{doc.senderName}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -411,7 +391,7 @@ const ReceptionistDashboard = ({
             </div>
             {pendingDocuments.length > 0 ? (
               <div className="activity-list">
-                {pendingDocuments.slice(0, 8).map(doc => {
+                {pendingDocuments.slice(0, 4).map(doc => {
                   const pInfo = getPriorityInfo(doc.priorityLevel);
                   return (
                     <div
@@ -424,37 +404,36 @@ const ReceptionistDashboard = ({
                       title="Open document details"
                     >
                       <div className="activity-dot amber"></div>
-                      <div style={{ flex: 1 }}>
+                      <div className="activity-item-body">
                         <p className="activity-text">
                           <strong>{doc.subject || 'Document'}</strong>
                         </p>
-                        <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
-                          <span style={{
-                            padding: '0.1rem 0.375rem', borderRadius: '9999px',
-                            fontSize: '0.6rem', fontWeight: 600,
-                            background: pInfo.bg, color: pInfo.color,
-                          }}>
+                        <div className="activity-badges">
+                          <span
+                            className="activity-tag"
+                            style={{ background: pInfo.bg, color: pInfo.color }}
+                          >
                             {pInfo.label}
                           </span>
-                          <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`} style={{ fontSize: '0.65rem' }}>
+                          <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`}>
                             {getWorkflowStatus(doc)}
                           </span>
                           {(doc.intakeStatus || 'Approved') !== 'Approved' && (
-                            <span className="status-badge status-in-transit" style={{ fontSize: '0.65rem' }}>
+                            <span className="status-badge status-in-transit">
                               {doc.intakeStatus}
                             </span>
                           )}
                         </div>
-                        <p className="activity-time" style={{ marginTop: '0.25rem' }}>
+                        <div className="activity-subline activity-time">
                           <Clock size={10} /> {getDocumentPendingReason(doc) || 'Pending next workflow update.'}
-                        </p>
+                        </div>
                       </div>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <div className="empty-state" style={{ padding: '2rem 1rem' }}>
+              <div className="empty-state">
                 <CheckCircle2 size={28} style={{ color: 'var(--success)', marginBottom: '0.5rem' }} />
                 <h3>All clear!</h3>
                 <p>No pending documents</p>
@@ -465,7 +444,7 @@ const ReceptionistDashboard = ({
       )}
 
       {activeTab === 'incoming' && (
-        <div className="table-container">
+        <div className="receptionist-tab-panel table-container">
           <table>
             <thead>
               <tr>
@@ -520,7 +499,7 @@ const ReceptionistDashboard = ({
       )}
 
       {activeTab === 'routing' && (
-        <div className="table-container">
+        <div className="receptionist-tab-panel table-container">
           <table>
             <thead>
               <tr>
@@ -585,6 +564,7 @@ const ReceptionistDashboard = ({
           </table>
         </div>
       )}
+      </div>
 
       {/* Receive Document Modal */}
       {showReceiveForm && (

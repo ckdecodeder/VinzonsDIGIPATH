@@ -12,7 +12,6 @@ import {
   Inbox,
   Send,
   Archive,
-  Filter,
   Download,
   Printer,
   Eye,
@@ -196,7 +195,8 @@ const ReportsPage = ({
   };
 
   const handleExport = async () => {
-    const stamp = new Date().toISOString().split('T')[0];
+    const label = categories.find(item => item.id === activeCategory)?.label || 'Summary';
+    const filename = `DigiPath-${label.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.docx`;
     setExportError('');
     setIsExporting(true);
     try {
@@ -206,7 +206,7 @@ const ReportsPage = ({
         dateTo,
       });
       downloadBlob(
-        `digipath-${activeCategory}-${stamp}.docx`,
+        filename,
         blob,
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       );
@@ -246,6 +246,7 @@ const ReportsPage = ({
       return {
         title: 'Transmission Report',
         headers: ['ID', 'Document', 'From', 'To', 'Sent By', 'Status'],
+        columnWidths: ['9%', '27%', '14%', '14%', '16%', '20%'],
         rows: filteredTransmissions.map(t => {
           const doc = documents.find(d => d.id === t.documentId);
           return [
@@ -265,6 +266,7 @@ const ReportsPage = ({
       return {
         title: 'Office Movement Report',
         headers: ['Office', 'Sent From', 'Received To', 'Total', 'Share', 'Notes'],
+        columnWidths: ['18%', '14%', '14%', '10%', '10%', '34%'],
         rows: officeStats.map(item => [
           item.name,
           item.sentFrom,
@@ -280,6 +282,7 @@ const ReportsPage = ({
       return {
         title: 'Activity Log Report',
         headers: ['Date / Time', 'User', 'Role', 'Action', 'Reference', 'Details'],
+        columnWidths: ['16%', '14%', '10%', '12%', '12%', '36%'],
         rows: filteredLogs.map(log => {
           const user = users.find(item => item.id === log.userId);
           return [
@@ -305,6 +308,7 @@ const ReportsPage = ({
     return {
       title: 'Document Report Table',
       headers: ['Tracking #', 'Subject', 'Type', 'Status', 'Priority', 'Date'],
+      columnWidths: ['13%', '30%', '12%', '14%', '11%', '20%'],
       rows: filteredDocs.map(doc => [
         doc.trackingNumber,
         doc.subject,
@@ -370,58 +374,57 @@ const ReportsPage = ({
         </div>
       </div>
 
-      {/* Category Tabs */}
-      <div style={{
-        display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap',
-      }}>
-        {categories.map(cat => (
-          <button
-            key={cat.id}
-            className={`filter-chip ${activeCategory === cat.id ? 'active' : ''}`}
-            onClick={() => setActiveCategory(cat.id)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}
-          >
-            {cat.icon}
-            {cat.label}
-          </button>
-        ))}
-      </div>
+      {/* Category Tabs + Date Filter */}
+      <div className="card reports-controls">
+        <div className="reports-controls-toolbar">
+          <div className="reports-category-tabs" role="tablist" aria-label="Report categories">
+            {categories.map(cat => (
+              <button
+                key={cat.id}
+                type="button"
+                role="tab"
+                aria-selected={activeCategory === cat.id}
+                className={`reports-category-tab ${activeCategory === cat.id ? 'active' : ''}`}
+                onClick={() => setActiveCategory(cat.id)}
+              >
+                {cat.icon}
+                {cat.label}
+              </button>
+            ))}
+          </div>
 
-      {/* Date Range Filter */}
-      <div className="report-filter-row">
-        <div className="report-filter-label">
-          <Filter size={16} />
-          <span>Date Range:</span>
+          <div className="reports-date-filter">
+            <div className="reports-date-filter-label">
+              <Calendar size={16} />
+              <span>Date range</span>
+            </div>
+            <input
+              type="date"
+              className="form-input reports-date-input"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              aria-label="Report start date"
+            />
+            <span className="reports-date-separator">to</span>
+            <input
+              type="date"
+              className="form-input reports-date-input"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              aria-label="Report end date"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm reports-date-clear"
+                onClick={() => { setDateFrom(''); setDateTo(''); }}
+              >
+                <X size={14} />
+                Clear
+              </button>
+            )}
+          </div>
         </div>
-        <div className="report-filter-field">
-          <input
-            type="date"
-            className="form-input"
-            value={dateFrom}
-            onChange={e => setDateFrom(e.target.value)}
-            placeholder="From"
-          />
-          <p className="field-hint">Start date included in the report.</p>
-        </div>
-        <span style={{ color: 'var(--text-muted)' }}>—</span>
-        <div className="report-filter-field">
-          <input
-            type="date"
-            className="form-input"
-            value={dateTo}
-            onChange={e => setDateTo(e.target.value)}
-            placeholder="To"
-          />
-          <p className="field-hint">End date included in the report.</p>
-        </div>
-        {(dateFrom || dateTo) && (
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => { setDateFrom(''); setDateTo(''); }}
-          >
-            Clear
-          </button>
-        )}
       </div>
 
       {/* ==================== SUMMARY ==================== */}
@@ -465,53 +468,43 @@ const ReportsPage = ({
             </div>
 
             {/* Direction Split */}
-            <div className="card">
+            <div className="card reports-summary-card">
               <div className="card-header">
                 <h3 className="card-title">Document Direction</h3>
               </div>
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <div style={{
-                  flex: 1, textAlign: 'center', padding: '1.5rem',
-                  background: 'rgba(6, 182, 212, 0.08)', borderRadius: 'var(--radius-md)',
-                }}>
-                  <Inbox size={24} style={{ color: 'var(--accent)', marginBottom: '0.5rem' }} />
-                  <p style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)' }}>{directionCounts.Incoming}</p>
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Incoming</p>
+              <div className="reports-metric-split">
+                <div className="reports-metric-box reports-metric-box--incoming">
+                  <Inbox size={24} className="reports-metric-icon reports-metric-icon--accent" />
+                  <p className="reports-metric-value">{directionCounts.Incoming}</p>
+                  <p className="reports-metric-label">Incoming</p>
                 </div>
-                <div style={{
-                  flex: 1, textAlign: 'center', padding: '1.5rem',
-                  background: 'rgba(15, 76, 117, 0.08)', borderRadius: 'var(--radius-md)',
-                }}>
-                  <Send size={24} style={{ color: 'var(--primary-light)', marginBottom: '0.5rem' }} />
-                  <p style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)' }}>{directionCounts.Outgoing}</p>
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Outgoing</p>
+                <div className="reports-metric-box reports-metric-box--outgoing">
+                  <Send size={24} className="reports-metric-icon reports-metric-icon--primary" />
+                  <p className="reports-metric-value">{directionCounts.Outgoing}</p>
+                  <p className="reports-metric-label">Outgoing</p>
                 </div>
               </div>
             </div>
 
             {/* Transmissions Summary */}
-            <div className="card">
+            <div className="card reports-summary-card">
               <div className="card-header">
                 <h3 className="card-title">Transmissions Summary</h3>
               </div>
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <div style={{
-                  flex: 1, textAlign: 'center', padding: '1.5rem',
-                  background: 'rgba(245, 158, 11, 0.08)', borderRadius: 'var(--radius-md)',
-                }}>
-                  <p style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)' }}>
+              <div className="reports-metric-split">
+                <div className="reports-metric-box reports-metric-box--pending">
+                  <Clock size={24} className="reports-metric-icon reports-metric-icon--amber" />
+                  <p className="reports-metric-value">
                     {filteredTransmissions.filter(t => !t.receivedBy).length}
                   </p>
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Pending Receipt</p>
+                  <p className="reports-metric-label">Pending Receipt</p>
                 </div>
-                <div style={{
-                  flex: 1, textAlign: 'center', padding: '1.5rem',
-                  background: 'rgba(16, 185, 129, 0.08)', borderRadius: 'var(--radius-md)',
-                }}>
-                  <p style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                <div className="reports-metric-box reports-metric-box--completed">
+                  <CheckCircle2 size={24} className="reports-metric-icon reports-metric-icon--green" />
+                  <p className="reports-metric-value">
                     {filteredTransmissions.filter(t => t.receivedBy).length}
                   </p>
-                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Completed</p>
+                  <p className="reports-metric-label">Completed</p>
                 </div>
               </div>
             </div>
@@ -856,8 +849,15 @@ const ReportsPage = ({
                   <div><span>Record Count</span><strong>{activeCategory === 'summary' ? filteredDocs.length : previewTable.rows.length}</strong></div>
                 </div>
 
-                <h3>Summary</h3>
-                <table className="official-report-table">
+                <h3 className="official-report-section-title">Summary</h3>
+                <div className="official-report-table-wrap">
+                <table className="official-report-table official-report-table--summary">
+                  <colgroup>
+                    <col style={{ width: '18%' }} />
+                    <col style={{ width: '30%' }} />
+                    <col style={{ width: '12%' }} />
+                    <col style={{ width: '40%' }} />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>Section</th>
@@ -874,11 +874,20 @@ const ReportsPage = ({
                     ))}
                   </tbody>
                 </table>
+                </div>
 
                 {previewTable.title && (
                   <>
-                    <h3>{previewTable.title}</h3>
+                    <h3 className="official-report-section-title">{previewTable.title}</h3>
+                    <div className="official-report-table-wrap">
                     <table className="official-report-table">
+                      {previewTable.columnWidths && (
+                        <colgroup>
+                          {previewTable.columnWidths.map((width, index) => (
+                            <col key={index} style={{ width }} />
+                          ))}
+                        </colgroup>
+                      )}
                       <thead>
                         <tr>
                           {previewTable.headers.map(header => <th key={header}>{header}</th>)}
@@ -896,6 +905,7 @@ const ReportsPage = ({
                         )}
                       </tbody>
                     </table>
+                    </div>
                   </>
                 )}
 

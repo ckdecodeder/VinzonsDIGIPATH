@@ -9,7 +9,7 @@ const {
   createHttpError,
   isApprovalRole,
   normalizeText,
-  sanitizeFileName,
+  buildReportFileName,
   workflowStatuses,
   normalizeWorkflowStatus,
 } = require('../utils/helpers');
@@ -253,7 +253,7 @@ const buildReportData = async (req, category, dateFrom, dateTo) => {
         String(item.receivedTo),
         String(item.total),
         percentText(item.total, totalOfficeMovement),
-        item.office.id,
+        'Office movement count',
       ]),
     };
   }
@@ -316,6 +316,7 @@ router.get('/export', asyncHandler(async (req, res) => {
   const preparedBy = getFullName(req.user);
   const reportBuffer = buildOfficialReportDocx({
     templatePath: reportTemplatePath,
+    category,
     title: 'DigiPath Official Report',
     categoryLabel,
     preparedBy,
@@ -331,7 +332,7 @@ router.get('/export', asyncHandler(async (req, res) => {
     headers: reportData.headers,
     rows: reportData.rows,
   });
-  const filename = sanitizeFileName(`digipath-${category}-${generatedDate.toISOString().slice(0, 10)}.docx`);
+  const filename = buildReportFileName(categoryLabel, generatedDate);
 
   const { createLogEntry } = require('../utils/helpers');
   await createLogEntry(req, 'report_exported', `Exported ${categoryLabel} report using official Word template`, category);

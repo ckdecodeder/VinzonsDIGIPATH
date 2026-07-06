@@ -1,8 +1,45 @@
 const fs = require('fs');
+const path = require('path');
 const AdmZip = require('adm-zip');
 
 const WORD_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const REPORT_WIDTH = 10368;
+const SEAL_IMAGE_NAME = 'seal_of_vinzons.png';
+const SEAL_CANDIDATE_PATHS = [
+  process.env.REPORT_SEAL_PATH,
+  path.join(__dirname, '..', 'assets', 'Seal_of_Vinzons.png'),
+  path.join(__dirname, '..', '..', 'dashboard', 'public', 'Seal_of_Vinzons.png'),
+  path.join(__dirname, '..', '..', 'Seal_of_Vinzons.png'),
+].filter(Boolean);
+
+const scaleWidths = (ratios) => {
+  const total = ratios.reduce((sum, value) => sum + value, 0);
+  const widths = ratios.map((ratio) => Math.floor((REPORT_WIDTH * ratio) / total));
+  const used = widths.reduce((sum, value) => sum + value, 0);
+  widths[widths.length - 1] += REPORT_WIDTH - used;
+  return widths;
+};
+
+const summaryColumnWidths = () => scaleWidths([18, 30, 12, 40]);
+
+const detailColumnWidths = (category, columnCount) => {
+  const presets = {
+    documents: [13, 30, 12, 14, 11, 20],
+    transmissions: [9, 27, 14, 14, 16, 20],
+    offices: [18, 14, 14, 10, 10, 34],
+    activity: [16, 14, 10, 12, 12, 36],
+  };
+  const ratios = presets[category];
+  if (ratios && ratios.length === columnCount) return scaleWidths(ratios);
+  return scaleWidths(Array.from({ length: columnCount }, () => 1));
+};
+
+const resolveSealPath = () => {
+  for (const candidate of SEAL_CANDIDATE_PATHS) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+};
 
 const xml = (value = '') => String(value ?? '')
   .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
@@ -17,9 +54,10 @@ const textValue = (value, fallback = '') => {
   return normalized.trim() || fallback;
 };
 
-const runProperties = ({ bold = false, size = 18, color = '000000' } = {}) => [
+const runProperties = ({ bold = false, size = 18, color = '000000', caps = false } = {}) => [
   '<w:rPr>',
   bold ? '<w:b/>' : '',
+  caps ? '<w:caps/>' : '',
   `<w:color w:val="${color}"/>`,
   `<w:sz w:val="${size}"/>`,
   `<w:szCs w:val="${size}"/>`,
@@ -41,6 +79,7 @@ const paragraph = (text, {
   bold = false,
   size = 18,
   color = '000000',
+  caps = false,
   before = 0,
   after = 0,
 } = {}) => [
@@ -49,20 +88,30 @@ const paragraph = (text, {
   `<w:jc w:val="${align}"/>`,
   `<w:spacing w:before="${before}" w:after="${after}" w:line="240" w:lineRule="auto"/>`,
   '</w:pPr>',
-  textRun(text, { bold, size, color }),
+  textRun(text, { bold, size, color, caps }),
   '</w:p>',
 ].join('');
 
-const sectionHeading = (text) => paragraph(text, {
-  align: 'left',
-  bold: true,
-  size: 22,
-  color: '1F3A8A',
-  before: 220,
-  after: 80,
-});
-
 const emptyParagraph = (height = 120) => paragraph('', { before: height, after: 0 });
+
+const sectionTitle = (text) => [
+  '<w:p>',
+  '<w:pPr>',
+  '<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="E5E7EB"/></w:pBdr>',
+  '<w:spacing w:before="200" w:after="80"/>',
+  '</w:pPr>',
+  textRun(String(text || '').toUpperCase(), { bold: true, size: 16, color: '374151' }),
+  '</w:p>',
+].join('');
+
+const headerDivider = () => [
+  '<w:p>',
+  '<w:pPr>',
+  '<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="4" w:color="1F2937"/></w:pBdr>',
+  '<w:spacing w:before="80" w:after="160"/>',
+  '</w:pPr>',
+  '</w:p>',
+].join('');
 
 const normalizeCell = (cell) => {
   if (cell && typeof cell === 'object' && !Array.isArray(cell)) return cell;
@@ -76,12 +125,13 @@ const tableCell = (cell, defaults = {}) => {
   const size = spec.size || defaults.size || 18;
   const align = spec.align || defaults.align || 'left';
   const bold = Boolean(spec.bold ?? defaults.bold);
+  const caps = Boolean(spec.caps ?? defaults.caps);
   const vertical = spec.vertical || 'center';
   const colSpan = Number(spec.colSpan || 1);
   const width = spec.width || defaults.width || 1728;
   const paragraphs = Array.isArray(spec.paragraphs)
     ? spec.paragraphs
-    : [paragraph(spec.text ?? '', { align, bold, size, color })];
+    : [paragraph(spec.text ?? '', { align, bold, size, color, caps })];
 
   return [
     '<w:tc>',
@@ -89,12 +139,12 @@ const tableCell = (cell, defaults = {}) => {
     `<w:tcW w:type="dxa" w:w="${width}"/>`,
     colSpan > 1 ? `<w:gridSpan w:val="${colSpan}"/>` : '',
     `<w:vAlign w:val="${vertical}"/>`,
-    fill ? `<w:shd w:fill="${fill}"/>` : '',
+    fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : '',
     '<w:tcMar>',
-    '<w:top w:w="90" w:type="dxa"/>',
-    '<w:left w:w="90" w:type="dxa"/>',
-    '<w:bottom w:w="90" w:type="dxa"/>',
-    '<w:right w:w="90" w:type="dxa"/>',
+    '<w:top w:w="70" w:type="dxa"/>',
+    '<w:left w:w="80" w:type="dxa"/>',
+    '<w:bottom w:w="70" w:type="dxa"/>',
+    '<w:right w:w="80" w:type="dxa"/>',
     '</w:tcMar>',
     '</w:tcPr>',
     paragraphs.join(''),
@@ -102,7 +152,13 @@ const tableCell = (cell, defaults = {}) => {
   ].join('');
 };
 
-const tableRow = (cells, widths, { header = false, fill = '', bold = false, size = 18, color = '000000' } = {}) => {
+const tableRow = (cells, widths, {
+  header = false,
+  fill = '',
+  bold = false,
+  size = 18,
+  color = '000000',
+} = {}) => {
   let widthIndex = 0;
   const renderedCells = cells.map((cell) => {
     const spec = normalizeCell(cell);
@@ -120,92 +176,144 @@ const tableRow = (cells, widths, { header = false, fill = '', bold = false, size
   ].join('');
 };
 
-const table = (rows, widths, { headerRows = 1 } = {}) => [
+const borderSpec = (bordered, color, size) => {
+  if (!bordered) {
+    return [
+      '<w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>',
+      '<w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>',
+      '<w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>',
+      '<w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>',
+      '<w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>',
+      '<w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>',
+    ].join('');
+  }
+
+  const edge = (val) => `<w:${val} w:val="single" w:sz="${size}" w:space="0" w:color="${color}"/>`;
+  return [
+    edge('top'),
+    edge('left'),
+    edge('bottom'),
+    edge('right'),
+    edge('insideH'),
+    edge('insideV'),
+  ].join('');
+};
+
+const table = (rows, widths, {
+  headerRows = 1,
+  bordered = true,
+  borderColor = 'D1D5DB',
+  borderSize = 4,
+  headerFill = 'F3F4F6',
+} = {}) => [
   '<w:tbl>',
   '<w:tblPr>',
   `<w:tblW w:type="dxa" w:w="${widths.reduce((sum, item) => sum + item, 0)}"/>`,
   '<w:jc w:val="center"/>',
   '<w:tblLayout w:type="fixed"/>',
   '<w:tblBorders>',
-  '<w:top w:val="single" w:sz="8" w:space="0" w:color="000000"/>',
-  '<w:left w:val="single" w:sz="8" w:space="0" w:color="000000"/>',
-  '<w:bottom w:val="single" w:sz="8" w:space="0" w:color="000000"/>',
-  '<w:right w:val="single" w:sz="8" w:space="0" w:color="000000"/>',
-  '<w:insideH w:val="single" w:sz="8" w:space="0" w:color="000000"/>',
-  '<w:insideV w:val="single" w:sz="8" w:space="0" w:color="000000"/>',
+  borderSpec(bordered, borderColor, borderSize),
   '</w:tblBorders>',
   '<w:tblCellMar>',
-  '<w:top w:w="90" w:type="dxa"/>',
-  '<w:left w:w="90" w:type="dxa"/>',
-  '<w:bottom w:w="90" w:type="dxa"/>',
-  '<w:right w:w="90" w:type="dxa"/>',
+  '<w:top w:w="0" w:type="dxa"/>',
+  '<w:left w:w="0" w:type="dxa"/>',
+  '<w:bottom w:w="0" w:type="dxa"/>',
+  '<w:right w:w="0" w:type="dxa"/>',
   '</w:tblCellMar>',
-  '<w:tblLook w:firstRow="1" w:lastRow="0" w:firstColumn="1" w:lastColumn="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/>',
+  '<w:tblLook w:firstRow="1" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="1" w:noVBand="1" w:val="04A0"/>',
   '</w:tblPr>',
   '<w:tblGrid>',
   widths.map(width => `<w:gridCol w:w="${width}"/>`).join(''),
   '</w:tblGrid>',
   rows.map((row, index) => tableRow(row, widths, {
     header: index < headerRows,
-    fill: index < headerRows ? 'E7EEF8' : '',
+    fill: index < headerRows ? headerFill : '',
     bold: index < headerRows,
-    color: index < headerRows ? '1F2937' : '000000',
-    size: index < headerRows ? 17 : 16,
+    color: index < headerRows ? '4B5563' : '111827',
+    size: index < headerRows ? 13 : 14,
   })).join(''),
   '</w:tbl>',
 ].join('');
 
-const keepTogetherParagraph = (text) => [
+const metaLabelParagraph = (text) => paragraph(text, {
+  bold: true,
+  size: 12,
+  color: '6B7280',
+  caps: true,
+  after: 20,
+});
+
+const metaValueParagraph = (text, { bold = false } = {}) => paragraph(text, {
+  bold,
+  size: 14,
+  color: '111827',
+  after: 0,
+});
+
+const buildMetadataRow = (report) => [[
+  {
+    fill: 'FAFAFA',
+    paragraphs: [
+      metaLabelParagraph('Prepared By'),
+      metaValueParagraph(report.preparedBy),
+    ],
+  },
+  {
+    fill: 'FAFAFA',
+    paragraphs: [
+      metaLabelParagraph('Coverage'),
+      metaValueParagraph(report.coverage),
+    ],
+  },
+  {
+    fill: 'FAFAFA',
+    paragraphs: [
+      metaLabelParagraph('Generated'),
+      metaValueParagraph(report.generatedAt),
+    ],
+  },
+  {
+    fill: 'FAFAFA',
+    paragraphs: [
+      metaLabelParagraph('Record Count'),
+      metaValueParagraph(String(report.recordCount), { bold: true }),
+    ],
+  },
+]];
+
+const signoffNameParagraph = (text) => [
   '<w:p>',
-  '<w:pPr><w:keepNext/><w:spacing w:before="160" w:after="80"/></w:pPr>',
-  textRun(text, { bold: true, size: 18, color: '1F2937' }),
+  '<w:pPr>',
+  '<w:jc w:val="center"/>',
+  '<w:pBdr><w:top w:val="single" w:sz="6" w:space="4" w:color="1F2937"/></w:pBdr>',
+  '<w:spacing w:before="480" w:after="0"/>',
+  '</w:pPr>',
+  textRun(text || '____________________________', { bold: Boolean(text), size: 14, color: text ? '111827' : '9CA3AF' }),
   '</w:p>',
 ].join('');
 
-const buildMetadataRows = (report) => [
-  [
-    { text: 'Report Type', fill: 'F3F4F6', bold: true },
-    report.title,
-    { text: 'Category', fill: 'F3F4F6', bold: true },
-    report.categoryLabel,
-  ],
-  [
-    { text: 'Prepared By', fill: 'F3F4F6', bold: true },
-    report.preparedBy,
-    { text: 'User Level', fill: 'F3F4F6', bold: true },
-    report.role,
-  ],
-  [
-    { text: 'Office', fill: 'F3F4F6', bold: true },
-    report.office,
-    { text: 'Coverage', fill: 'F3F4F6', bold: true },
-    report.coverage,
-  ],
-  [
-    { text: 'Generated At', fill: 'F3F4F6', bold: true },
-    report.generatedAt,
-    { text: 'Records Included', fill: 'F3F4F6', bold: true },
-    String(report.recordCount),
-  ],
-];
-
-const buildSignoffRows = (report) => [
-  [
-    { text: 'Prepared By', fill: 'F3F4F6', bold: true, align: 'center' },
-    { text: 'Reviewed / Noted By', fill: 'F3F4F6', bold: true, align: 'center' },
-    { text: 'Date', fill: 'F3F4F6', bold: true, align: 'center' },
-  ],
-  [
-    { text: '\n\n', align: 'center' },
-    { text: '\n\n', align: 'center' },
-    { text: '\n\n', align: 'center' },
-  ],
-  [
-    { text: report.preparedBy, align: 'center', bold: true },
-    { text: report.reviewedBy || '', align: 'center' },
-    { text: report.generatedDate, align: 'center' },
-  ],
-];
+const buildSignoffBlock = (report) => {
+  const half = Math.floor(REPORT_WIDTH / 2);
+  const widths = [half, REPORT_WIDTH - half];
+  return table([
+    [
+      {
+        paragraphs: [paragraph('Prepared by', { size: 12, color: '6B7280', caps: true })],
+      },
+      {
+        paragraphs: [paragraph('Verified / Noted by', { size: 12, color: '6B7280', caps: true })],
+      },
+    ],
+    [
+      {
+        paragraphs: [signoffNameParagraph(report.preparedBy)],
+      },
+      {
+        paragraphs: [signoffNameParagraph(report.reviewedBy || '')],
+      },
+    ],
+  ], widths, { headerRows: 0, bordered: false });
+};
 
 const noRows = (columnCount) => [[{
   text: 'No records matched the selected report filters.',
@@ -214,36 +322,105 @@ const noRows = (columnCount) => [[{
   color: '6B7280',
 }]];
 
+const getNextRelId = (relsXml) => {
+  const ids = [...relsXml.matchAll(/Id="rId(\d+)"/g)].map((match) => Number(match[1]));
+  return `rId${Math.max(0, ...ids) + 1}`;
+};
+
+const ensurePngContentType = (contentTypesXml) => {
+  if (contentTypesXml.includes('Extension="png"')) return contentTypesXml;
+  return contentTypesXml.replace(
+    '</Types>',
+    '<Default Extension="png" ContentType="image/png"/></Types>',
+  );
+};
+
+const addImageToZip = (zip, imagePath) => {
+  const mediaPath = `word/media/${SEAL_IMAGE_NAME}`;
+  zip.addFile(mediaPath, fs.readFileSync(imagePath));
+
+  const relsEntry = zip.getEntry('word/_rels/document.xml.rels');
+  if (!relsEntry) {
+    throw new Error('Report template is missing word/_rels/document.xml.rels');
+  }
+
+  let relsXml = relsEntry.getData().toString('utf8');
+  const relId = getNextRelId(relsXml);
+  const relationship = `<Relationship Id="${relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${SEAL_IMAGE_NAME}"/>`;
+  relsXml = relsXml.replace('</Relationships>', `${relationship}</Relationships>`);
+  zip.updateFile('word/_rels/document.xml.rels', Buffer.from(relsXml, 'utf8'));
+
+  const contentTypesEntry = zip.getEntry('[Content_Types].xml');
+  if (contentTypesEntry) {
+    let contentTypesXml = contentTypesEntry.getData().toString('utf8');
+    contentTypesXml = ensurePngContentType(contentTypesXml);
+    zip.updateFile('[Content_Types].xml', Buffer.from(contentTypesXml, 'utf8'));
+  }
+
+  return relId;
+};
+
+const imageParagraph = (relId, cx = 647700, cy = 647700) => [
+  '<w:p>',
+  '<w:pPr><w:jc w:val="center"/></w:pPr>',
+  '<w:r>',
+  '<w:drawing>',
+  '<wp:inline distT="0" distB="0" distL="0" distR="0">',
+  `<wp:extent cx="${cx}" cy="${cy}"/>`,
+  '<wp:effectExtent l="0" t="0" r="0" b="0"/>',
+  '<wp:docPr id="1" name="Seal of Vinzons"/>',
+  '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>',
+  '<a:graphic>',
+  '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+  '<pic:pic>',
+  '<pic:nvPicPr><pic:cNvPr id="0" name="Seal"/><pic:cNvPicPr/></pic:nvPicPr>',
+  '<pic:blipFill>',
+  `<a:blip r:embed="${relId}"/>`,
+  '<a:stretch><a:fillRect/></a:stretch>',
+  '</pic:blipFill>',
+  '<pic:spPr>',
+  '<a:xfrm><a:off x="0" y="0"/>',
+  `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`,
+  '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>',
+  '</pic:spPr>',
+  '</pic:pic>',
+  '</a:graphicData>',
+  '</a:graphic>',
+  '</wp:inline>',
+  '</w:drawing>',
+  '</w:r>',
+  '</w:p>',
+].join('');
+
+const officialReportHeader = (imageRelId) => {
+  const logoWidth = 1700;
+  const textWidth = REPORT_WIDTH - logoWidth;
+  const logoCell = imageRelId
+    ? { paragraphs: [imageParagraph(imageRelId)], vertical: 'center', width: logoWidth }
+    : { text: '', vertical: 'center', width: logoWidth };
+  const textCell = {
+    width: textWidth,
+    vertical: 'center',
+    paragraphs: [
+      paragraph('Republic of the Philippines', { align: 'center', size: 15, color: '374151' }),
+      paragraph('Province of Camarines Norte', { align: 'center', size: 15, color: '374151' }),
+      paragraph('Municipality of Vinzons', { align: 'center', bold: true, size: 22, color: '111827', caps: true }),
+      paragraph('DigiPath Document Tracking System', { align: 'center', size: 14, color: '4B5563' }),
+    ],
+  };
+
+  return [
+    table([[logoCell, textCell]], [logoWidth, textWidth], { headerRows: 0, bordered: false }),
+    headerDivider(),
+  ].join('');
+};
+
 const removeDocumentHeaders = (sectionProperties) => {
   if (!sectionProperties) return sectionProperties;
   return sectionProperties
     .replace(/<w:headerReference\b[^>]*\/>/g, '')
     .replace(/<w:titlePg\/>/g, '');
 };
-
-const officialTemplateHeaderGrid = () => table([
-  [
-    { text: '' },
-    {
-      colSpan: 2,
-      align: 'center',
-      paragraphs: [
-        paragraph('Republic of the Philippines', { align: 'center', size: 18 }),
-        paragraph('Province of Camarines Norte', { align: 'center', size: 18 }),
-        paragraph('MUNICIPALITY OF\nVINZONS', { align: 'center', bold: true, size: 24, color: '1F3A8A' }),
-      ],
-    },
-    { text: '' },
-  ],
-  [
-    { text: '' },
-    { text: 'OFFICIAL REPORT TEMPLATE', colSpan: 2, align: 'center', bold: true, size: 24 },
-    { text: '' },
-  ],
-  [{ text: '\n' }, { text: '\n' }, { text: '\n' }, { text: '\n' }],
-  [{ text: '\n' }, { text: '\n' }, { text: '\n' }, { text: '\n' }],
-  [{ text: '\n' }, { text: '\n' }, { text: '\n' }, { text: '\n' }],
-], [2592, 2592, 2592, 2592], { headerRows: 0 });
 
 const limitCellText = (value, max = 220) => {
   const text = textValue(value);
@@ -252,6 +429,7 @@ const limitCellText = (value, max = 220) => {
 
 const buildOfficialReportDocx = ({
   templatePath,
+  category = 'summary',
   title,
   categoryLabel,
   preparedBy,
@@ -277,6 +455,9 @@ const buildOfficialReportDocx = ({
     throw new Error('Report template is missing word/document.xml');
   }
 
+  const sealPath = resolveSealPath();
+  const imageRelId = sealPath ? addImageToZip(zip, sealPath) : null;
+
   const originalDocument = entry.getData().toString('utf8');
   const bodyOpen = '<w:body>';
   const bodyStart = originalDocument.indexOf(bodyOpen);
@@ -288,14 +469,15 @@ const buildOfficialReportDocx = ({
   const originalBody = originalDocument.slice(bodyStart + bodyOpen.length, bodyEnd);
   const sectionMatch = originalBody.match(/<w:sectPr[\s\S]*?<\/w:sectPr>/);
   const sectionProperties = removeDocumentHeaders(sectionMatch ? sectionMatch[0] : '');
-  const metadataWidths = [2592, 2592, 2592, 2592];
-  const summaryWidths = [2592, 2592, 2592, 2592];
-  const detailWidths = [1728, 1728, 1728, 1728, 1728, 1728];
-  const signoffWidths = [3456, 3456, 3456];
+  const metadataWidths = summaryColumnWidths();
+  const summaryWidths = summaryColumnWidths();
   const hasDetailTable = headers.length > 0;
+  const detailWidths = hasDetailTable ? detailColumnWidths(category, headers.length) : [];
   const detailRows = hasDetailTable && rows.length
-    ? [headers.map(header => ({ text: header, align: 'center' })), ...rows.map(row => row.map(cell => limitCellText(cell)))]
-    : [headers.map(header => ({ text: header, align: 'center' })), ...noRows(headers.length || 6)];
+    ? [headers.map(header => ({ text: header, align: 'left' })), ...rows.map(row => row.map(cell => limitCellText(cell, 320)))]
+    : hasDetailTable
+      ? [headers.map(header => ({ text: header, align: 'left' })), ...noRows(headers.length || 6)]
+      : [];
   const normalizedSummaryRows = summaryRows.length
     ? [['Section', 'Metric', 'Value', 'Notes'], ...summaryRows]
     : [['Section', 'Metric', 'Value', 'Notes'], ...noRows(4)];
@@ -314,15 +496,28 @@ const buildOfficialReportDocx = ({
   };
 
   const bodyContent = [
-    officialTemplateHeaderGrid(),
-    emptyParagraph(160),
-    table(buildMetadataRows(report), metadataWidths, { headerRows: 0 }),
-    sectionHeading('Report Overview'),
-    table(normalizedSummaryRows, summaryWidths, { headerRows: 1 }),
-    hasDetailTable ? sectionHeading(tableTitle || `${categoryLabel} Details`) : '',
-    hasDetailTable ? table(detailRows, detailWidths, { headerRows: 1 }) : '',
-    keepTogetherParagraph('Certification'),
-    table(buildSignoffRows(report), signoffWidths, { headerRows: 1 }),
+    officialReportHeader(imageRelId),
+    paragraph(`${categoryLabel} Report`.toUpperCase(), {
+      align: 'center',
+      bold: true,
+      size: 20,
+      color: '111827',
+      after: 30,
+    }),
+    paragraph('Official generated report from DigiPath records', {
+      align: 'center',
+      size: 14,
+      color: '6B7280',
+      after: 140,
+    }),
+    table(buildMetadataRow(report), metadataWidths, { headerRows: 0, bordered: true }),
+    emptyParagraph(80),
+    sectionTitle('Summary'),
+    table(normalizedSummaryRows, summaryWidths, { headerRows: 1, bordered: true }),
+    hasDetailTable ? sectionTitle(tableTitle || `${categoryLabel} Details`) : '',
+    hasDetailTable ? table(detailRows, detailWidths, { headerRows: 1, bordered: true }) : '',
+    emptyParagraph(120),
+    buildSignoffBlock(report),
     sectionProperties,
   ].join('');
 

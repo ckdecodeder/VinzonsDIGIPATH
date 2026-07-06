@@ -42,6 +42,17 @@ const createHttpError = (message, status = 400) => {
 const normalizeText = (value) => typeof value === 'string' ? value.trim() : value;
 const escapeRegExp = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const sanitizeFileName = (name = 'file') => {
+  const cleaned = String(name).replace(/[^a-zA-Z0-9._-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  return (cleaned || 'file').slice(0, 120);
+};
+
+const buildReportFileName = (categoryLabel, date = new Date()) => {
+  const slug = String(categoryLabel || 'Summary').replace(/\s+/g, '-');
+  const stamp = date.toISOString().slice(0, 10);
+  return sanitizeFileName(`DigiPath-${slug}-${stamp}.docx`);
+};
+
 // ─── Workflow helpers ──────────────────────────────────────────────────────────
 const workflowStatuses = ['Received', 'In Transit', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
 const legacyWorkflowStatuses = ['Processing', 'For Signature'];
@@ -146,6 +157,8 @@ module.exports = {
   createHttpError,
   normalizeText,
   escapeRegExp,
+  sanitizeFileName,
+  buildReportFileName,
   workflowStatuses,
   legacyWorkflowStatuses,
   storedWorkflowStatuses,
