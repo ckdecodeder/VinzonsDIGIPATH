@@ -20,170 +20,43 @@ const {
 } = require('../utils/helpers');
 const { persistAttachments } = require('../utils/attachments');
 const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
+const {
+  getDeviceSnapshot,
+  recordHardwareDeviceEvent,
+  hardwarePresenceEvents,
+} = require('../services/devicePresence');
+const {
+  broadcastDeviceUpdated,
+  broadcastCommandUpdated,
+  broadcastDataInvalidate,
+  pushCommandToDevice,
+} = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
 const scannerCommandRoles = allowRoles('Admin', 'Receptionist');
 const updateOptions = { new: true, runValidators: true };
 
-const deviceHeartbeatTimeoutMs = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_MS || 12000);
 const scannerCommandStaleMs = Number(process.env.SCANNER_COMMAND_STALE_MS || 60000);
 
-const hardwarePresenceEvents = [
-  'device_connected',
-  'device_disconnected',
-  'device_heartbeat',
-  'scan_started',
-  'scan_completed',
-  'rfid_detected',
-];
-
 const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
-
-const isFreshHardwareSignal = (event) => {
-  if (!event?.timestamp) return false;
-  const timestamp = new Date(event.timestamp).getTime();
-  if (Number.isNaN(timestamp)) return false;
-  return Date.now() - timestamp <= deviceHeartbeatTimeoutMs;
-};
-
-const getDeviceSnapshot = async (deviceId = 'DEV-001') => {
-  const device = await Device.findOne({ id: deviceId }).lean();
-  const latestHardwareEvent = await DeviceEvent.findOne({
-    deviceId,
-    recordedBy: 'hardware',
-    eventType: { $in: hardwarePresenceEvents },
-  }).sort({ timestamp: -1, _id: -1 }).lean();
-
-  const hardwareScanCount = await DeviceEvent.countDocuments({
-    deviceId,
-    recordedBy: 'hardware',
-    eventType: 'scan_completed',
-  });
-
-  const hasHardwareSignal = Boolean(latestHardwareEvent);
-  const disconnectedByDevice = latestHardwareEvent?.eventType === 'device_disconnected' || latestHardwareEvent?.status === 'Offline';
-  const connected = hasHardwareSignal && !disconnectedByDevice && isFreshHardwareSignal(latestHardwareEvent);
-  const status = connected ? 'Online' : 'Offline';
-
-  if (!device || !hasHardwareSignal) {
-    return {
-      id: deviceId,
-      name: 'No physical scanner connected',
-      model: 'Not reported',
-      type: 'Scanner',
-      status: 'Offline',
-      connected: false,
-      configured: false,
-      connectionState: 'waiting_for_device',
-      heartbeatTimeoutMs: deviceHeartbeatTimeoutMs,
-      lastActive: null,
-      lastSignalAt: null,
-      scanCount: 0,
-    };
-  }
-
-  return {
-    ...device,
-    status,
-    connected,
-    configured: true,
-    connectionState: connected ? 'connected' : 'stale_or_disconnected',
-    heartbeatTimeoutMs: deviceHeartbeatTimeoutMs,
-    lastActive: latestHardwareEvent.timestamp,
-    lastSignalAt: latestHardwareEvent.timestamp,
-    lastEventType: latestHardwareEvent.eventType,
-    payload: latestHardwareEvent.payload,
-    streamUrl: latestHardwareEvent.payload?.streamUrl,
-    scanCount: hardwareScanCount,
-  };
-};
-
-const recordHardwareDeviceEvent = async (req, eventType) => {
-  const now = new Date().toISOString();
-  const deviceId = req.body.deviceId || req.body.id || 'DEV-001';
-  const reportedStatus = ['Online', 'Offline', 'Maintenance'].includes(req.body.status) ? req.body.status : null;
-  const status = eventType === 'device_disconnected' || eventType === 'error' ? 'Offline' : (reportedStatus || 'Online');
-
-  const event = new DeviceEvent({
-    id: req.body.eventId || generateId('EVT'),
-    deviceId,
-    eventType,
-    documentId: req.body.documentId,
-    officeId: req.body.officeId,
-    rfidTag: req.body.rfidTag,
-    status,
-    signalStrength: req.body.signalStrength,
-    details: req.body.details || `Hardware reported ${eventType}`,
-    payload: req.body.payload,
-    recordedBy: 'hardware',
-    timestamp: req.body.timestamp || now,
-  });
-  await event.save();
-
-  if (event.eventType === 'rfid_detected' && event.documentId) {
-    const detectedDoc = await Document.findOne({ id: event.documentId }).lean();
-    const detectionUpdates = {
-      ...(event.rfidTag ? { rfidTag: event.rfidTag } : {}),
-      ...(event.officeId ? { lastDetectedOfficeId: event.officeId, lastDetectedAt: event.timestamp } : {}),
-      ...(event.officeId && detectedDoc?.status !== 'Archived' ? { currentOfficeId: event.officeId } : {}),
-    };
-
-    await appendDocumentTimeline(
-      event.documentId,
-      createTimelineEvent(
-        req,
-        'rfid_detected',
-        'RFID location detected',
-        `RFID tag ${event.rfidTag || 'unknown'} detected at ${event.officeId || 'scanner node'}`,
-        event.officeId,
-        event.id,
-      ),
-      detectionUpdates,
-    );
-  }
-
-  await Device.findOneAndUpdate(
-    { id: deviceId },
-    {
-      $set: {
-        id: deviceId,
-        name: req.body.name || req.body.deviceName || 'Physical Document Scanner',
-        model: req.body.model,
-        type: req.body.type || 'Scanner',
-        status,
-        ip: req.body.ip || req.ip,
-        location: req.body.location,
-        lastActive: event.timestamp,
-        firmware: req.body.firmware,
-        serialNumber: req.body.serialNumber,
-        resolution: req.body.resolution,
-        assignedTo: req.body.assignedTo,
-      },
-      ...(eventType === 'scan_completed' ? { $inc: { scanCount: 1 } } : {}),
-    },
-    { upsert: true, runValidators: true, new: true }
-  );
-
-  const snapshot = await getDeviceSnapshot(deviceId);
-  await createLogEntry(req, 'device_event', `Hardware event: ${eventType}`, event.id, 'hardware');
-
-  return { event, device: snapshot };
-};
 
 // ─── HARDWARE / IOT ENDPOINTS ──────────────────────────────────────────────────
 router.post('/devices/connect', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
   const result = await recordHardwareDeviceEvent(req, 'device_connected');
+  broadcastDeviceUpdated(result.device);
   res.status(201).json(result);
 }));
 
 router.post('/devices/heartbeat', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
   const result = await recordHardwareDeviceEvent(req, 'device_heartbeat');
+  broadcastDeviceUpdated(result.device);
   res.status(201).json(result);
 }));
 
 router.post('/devices/disconnect', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
   const result = await recordHardwareDeviceEvent(req, 'device_disconnected');
+  broadcastDeviceUpdated(result.device);
   res.status(201).json(result);
 }));
 
@@ -194,6 +67,7 @@ router.post('/devices/events', deviceLimiter, requireDeviceApiKey, asyncHandler(
   }
 
   const result = await recordHardwareDeviceEvent(req, req.body.eventType);
+  broadcastDeviceUpdated(result.device);
   res.status(201).json(result);
 }));
 
@@ -228,6 +102,12 @@ router.put('/devices/commands/:id', deviceLimiter, requireDeviceApiKey, asyncHan
 
   if (!command) return res.status(404).json({ message: 'Command not found' });
   await createLogEntry(req, 'device_command_updated', `Device command ${command.command} marked ${command.status}`, command.id, 'hardware');
+
+  let resultDocument = null;
+  if (command.resultDocumentId) {
+    resultDocument = await Document.findOne({ id: command.resultDocumentId }).lean();
+  }
+  broadcastCommandUpdated(command.toObject?.() || command, resultDocument);
   res.json(command);
 }));
 
@@ -350,7 +230,17 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
     metadata: { deviceId },
   });
 
-  res.status(201).json({ documentId: doc.id, document: doc, device: await getDeviceSnapshot(deviceId) });
+  const deviceSnapshot = await getDeviceSnapshot(deviceId);
+  if (req.body.commandId) {
+    const updatedCommand = await Command.findOne({ id: req.body.commandId }).lean();
+    if (updatedCommand) {
+      broadcastCommandUpdated(updatedCommand, doc.toObject?.() || doc);
+    }
+  }
+  broadcastDeviceUpdated(deviceSnapshot);
+  broadcastDataInvalidate(['documents', 'notifications', 'senderNotifications', 'logs', 'device']);
+
+  res.status(201).json({ documentId: doc.id, document: doc, device: deviceSnapshot });
 }));
 
 // ─── ADMIN / USER FRONTEND ENDPOINTS ───────────────────────────────────────────
@@ -613,6 +503,9 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   await command.save();
 
   await createLogEntry(req, 'device_command_created', `Queued ${command.command} command for ${command.deviceId}`, command.id);
+  const commandPayload = command.toObject?.() || command;
+  broadcastCommandUpdated(commandPayload);
+  pushCommandToDevice(command.deviceId, commandPayload);
   res.status(201).json(command);
 }));
 

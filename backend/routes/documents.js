@@ -21,6 +21,7 @@ const {
 } = require('../utils/helpers');
 const { persistAttachments } = require('../utils/attachments');
 const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
+const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
@@ -318,6 +319,7 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
     message: `Your document was scanned and registered with tracking number ${doc.trackingNumber}.`,
   });
 
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications', 'device']);
   res.status(201).json({ document: doc, deviceEvent });
 }));
 
@@ -375,6 +377,7 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
   await queueSenderNotifications(req, doc, 'document_received', {
     message: `Your document was received and registered with tracking number ${doc.trackingNumber}.`,
   });
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(doc);
 }));
 
@@ -468,6 +471,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
       message: `${doc.subject} is now ${doc.status}.`,
     });
   }
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(doc);
 }));
 
@@ -529,6 +533,7 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
       : `Your document ${doc.trackingNumber} was rejected during intake review. Reason: ${String(rejectionReason).trim()}`,
   });
 
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(savedDoc);
 }));
 
@@ -575,6 +580,7 @@ router.post('/:id/resubmit', documentCreateRoles, asyncHandler(async (req, res) 
   await queueSenderNotifications(req, savedDoc, 'document_resubmitted', {
     message: `Your corrected document ${doc.trackingNumber} was resubmitted for intake review.`,
   });
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(savedDoc);
 }));
 
@@ -673,6 +679,7 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
     message: `${labels[action]} for ${doc.trackingNumber}${note ? `: ${note}` : '.'}`,
   });
 
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(savedDoc);
 }));
 
@@ -703,6 +710,7 @@ router.delete('/:id', adminOnly, asyncHandler(async (req, res) => {
     Notification.deleteMany({ referenceId: { $in: relatedReferenceIds } }),
   ]);
   await createLogEntry(req, 'document_deleted', `Deleted document and related workflow records: ${doc.subject}`, req.params.id);
+  broadcastDataInvalidate(['documents', 'transmissions', 'archives', 'logs', 'notifications', 'senderNotifications']);
   res.json({ success: true });
 }));
 

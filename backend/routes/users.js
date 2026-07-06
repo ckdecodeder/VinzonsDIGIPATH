@@ -4,6 +4,7 @@ const { User, Transmission, Archive, Document, Command } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { stripPassword } = require('../utils/sanitize');
 const { asyncHandler, requireFields, createLogEntry, generateId, normalizeText } = require('../utils/helpers');
+const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
 const approvalRoles = allowRoles('Admin', 'Mayor');
@@ -52,6 +53,7 @@ router.post('/', adminOnly, asyncHandler(async (req, res) => {
   const user = new User({ ...payload, id: payload.id || generateId('USR') });
   await user.save();
   await createLogEntry(req, 'user_created', `Created user account: ${user.username}`, user.id);
+  broadcastDataInvalidate(['users', 'logs']);
   res.json(stripPassword(user));
 }));
 
@@ -72,6 +74,7 @@ router.put('/:id', adminOnly, asyncHandler(async (req, res) => {
   const user = await User.findOneAndUpdate({ id: req.params.id }, payload, updateOptions);
   if (!user) return res.status(404).json({ message: 'User not found' });
   await createLogEntry(req, 'user_updated', `Updated user account: ${user.username}`, user.id);
+  broadcastDataInvalidate(['users', 'logs']);
   res.json(stripPassword(user));
 }));
 
@@ -107,6 +110,7 @@ router.delete('/:id', adminOnly, asyncHandler(async (req, res) => {
 
   await User.findOneAndDelete({ id: req.params.id });
   await createLogEntry(req, 'user_deleted', `Deleted user account: ${user.username}`, req.params.id);
+  broadcastDataInvalidate(['users', 'logs']);
   res.json({ success: true });
 }));
 

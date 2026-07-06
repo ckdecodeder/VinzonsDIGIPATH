@@ -1,5 +1,5 @@
 param(
-  [string]$PiHost = "192.168.100.157",
+  [string]$PiHost = "10.137.17.39",
   [string]$PiUser = "digipathberry",
   [string]$BackendBaseUrl = "",
   [string]$DeviceApiKey = "",
@@ -78,6 +78,10 @@ Write-Host "Dashboard bridge URL after install: http://${PiHost}:$StreamPort"
 ssh $remote "rm -rf $remoteDir && mkdir -p $remoteDir/raspberry_pi"
 scp $bridgeFile "${remote}:$remoteDir/pi_scanner_bridge.py"
 scp $installerFile "${remote}:$remoteDir/raspberry_pi/install_digipath_scanner.sh"
+$bridgeEnvExample = Join-Path $repoRoot "bridge.env.example"
+if (Test-Path $bridgeEnvExample) {
+  scp $bridgeEnvExample "${remote}:$remoteDir/bridge.env.example"
+}
 
 $argsList = @(
   "--backend-url", $BackendBaseUrl,

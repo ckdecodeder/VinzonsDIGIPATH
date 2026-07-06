@@ -1,7 +1,5 @@
 import { getApiBase } from './apiBase';
 
-const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || 6000);
-
 const STORAGE_KEYS = {
   currentUser: 'dp_currentUser',
   authToken: 'dp_authToken',
@@ -80,73 +78,58 @@ const parseResponse = async (res) => {
 };
 
 const apiRequest = async (path, options = {}) => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   const token = getAuthToken();
   const { headers = {}, ...fetchOptions } = options;
 
-  try {
-    const res = await fetch(`${getApiBase()}${path}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...headers,
-      },
-      ...fetchOptions,
-      signal: controller.signal,
-    });
-    const data = await parseResponse(res);
+  const res = await fetch(`${getApiBase()}${path}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
+    },
+    ...fetchOptions,
+  });
+  const data = await parseResponse(res);
 
-    if (!res.ok) {
-      const message = data?.message || data?.error || `API request failed with status ${res.status}`;
-      const error = new Error(message);
-      error.status = res.status;
-      error.data = data;
-      if (res.status === 401 && path !== '/auth/login') {
-        notifyAuthExpired();
-      }
-      throw error;
+  if (!res.ok) {
+    const message = data?.message || data?.error || `API request failed with status ${res.status}`;
+    const error = new Error(message);
+    error.status = res.status;
+    error.data = data;
+    if (res.status === 401 && path !== '/auth/login') {
+      notifyAuthExpired();
     }
-
-    return data;
-  } finally {
-    clearTimeout(timeout);
+    throw error;
   }
+
+  return data;
 };
 
 const apiBlobRequest = async (path, options = {}) => {
-  const controller = new AbortController();
-  const { timeoutMs = API_TIMEOUT_MS } = options;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const token = getAuthToken();
-  const { headers = {}, timeoutMs: _timeoutMs, ...fetchOptions } = options;
+  const { headers = {}, ...fetchOptions } = options;
 
-  try {
-    const res = await fetch(`${getApiBase()}${path}`, {
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...headers,
-      },
-      ...fetchOptions,
-      signal: controller.signal,
-    });
+  const res = await fetch(`${getApiBase()}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...headers,
+    },
+    ...fetchOptions,
+  });
 
-    if (!res.ok) {
-      const data = await parseResponse(res);
-      const message = data?.message || data?.error || `API request failed with status ${res.status}`;
-      const error = new Error(message);
-      error.status = res.status;
-      error.data = data;
-      if (res.status === 401) {
-        notifyAuthExpired();
-      }
-      throw error;
+  if (!res.ok) {
+    const data = await parseResponse(res);
+    const message = data?.message || data?.error || `API request failed with status ${res.status}`;
+    const error = new Error(message);
+    error.status = res.status;
+    error.data = data;
+    if (res.status === 401) {
+      notifyAuthExpired();
     }
-
-    return res.blob();
-  } finally {
-    clearTimeout(timeout);
+    throw error;
   }
+
+  return res.blob();
 };
 
 const buildQuery = (params = {}) => {
@@ -342,7 +325,6 @@ export const reportService = {
   exportOfficialReport(payload = {}) {
     return apiBlobRequest(`/reports/export${buildQuery(payload)}`, {
       headers: { Accept: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
-      timeoutMs: 30000,
     });
   },
 };

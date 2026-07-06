@@ -75,13 +75,12 @@ function getProbeRoot(base) {
   return base.replace(/\/api\/?$/, '');
 }
 
-async function probeApiUrl(base, timeoutMs = 6000) {
+async function probeApiUrl(base) {
   const root = getProbeRoot(base);
 
   try {
     const status = await fetch(`${root}/api/status`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!status.ok) return null;
@@ -97,7 +96,6 @@ async function probeApiUrl(base, timeoutMs = 6000) {
     try {
       const cfgRes = await fetch(`${root}/api/config`, {
         cache: 'no-store',
-        signal: AbortSignal.timeout(timeoutMs),
       });
 
       if (cfgRes.ok) {
@@ -127,10 +125,8 @@ export async function bootstrapApiBase(options = {}) {
   if (bootstrapPromise) return bootstrapPromise;
 
   bootstrapPromise = (async () => {
-    const probeTimeoutMs = options.probeTimeoutMs ?? Number(import.meta.env.VITE_API_TIMEOUT_MS || 6000);
-
     for (const candidate of collectApiCandidates()) {
-      const working = await probeApiUrl(candidate, probeTimeoutMs);
+      const working = await probeApiUrl(candidate);
       if (working) {
         resolvedApiBase = working;
         setStoredApiUrl(working);

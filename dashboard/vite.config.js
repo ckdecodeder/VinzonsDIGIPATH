@@ -12,6 +12,11 @@ const sharedServer = {
       target: backendTarget,
       changeOrigin: true,
     },
+    '/ws': {
+      target: backendTarget,
+      changeOrigin: true,
+      ws: true,
+    },
     '/uploads': {
       target: backendTarget,
       changeOrigin: true,

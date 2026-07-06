@@ -1,5 +1,6 @@
 require('dotenv').config();
 const path = require('path');
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const { connectDB, getDatabaseStatus } = require('./config/db');
@@ -38,6 +39,8 @@ app.use(express.json({ limit: '15mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 const apiRoutes = require('./routes/index');
+const { initRealtimeHub } = require('./ws/realtimeHub');
+require('./routes/registerRealtime');
 
 const startServer = async () => {
   await connectDB();
@@ -62,9 +65,13 @@ const startServer = async () => {
 
   const PORT = process.env.PORT || 5000;
   const HOST = process.env.HOST || '0.0.0.0';
+  const server = http.createServer(app);
 
-  app.listen(PORT, HOST, () => {
+  initRealtimeHub(server);
+
+  server.listen(PORT, HOST, () => {
     console.log(formatServerUrls(PORT, 'DigiPath API running:'));
+    console.log(`  WebSocket: ws://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}/ws`);
     console.log(`  Database: ${getDatabaseStatus()}`);
     const publicApiUrl = getPublicApiUrl();
     if (process.env.PUBLIC_API_URL) {

@@ -131,7 +131,7 @@ chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
 echo "Creating Python environment..."
 python3 -m venv --system-site-packages "$TARGET_DIR/.venv"
 "$TARGET_DIR/.venv/bin/python" -m pip install --upgrade pip
-"$TARGET_DIR/.venv/bin/python" -m pip install requests Pillow pytesseract
+"$TARGET_DIR/.venv/bin/python" -m pip install requests Pillow pytesseract websocket-client
 "$TARGET_DIR/.venv/bin/python" - <<'PY'
 import importlib.util
 

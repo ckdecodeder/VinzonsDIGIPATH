@@ -4,6 +4,7 @@ const { Notification, SenderNotification } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { asyncHandler, generateId, createLogEntry } = require('../utils/helpers');
 const { deliverSenderNotification } = require('../utils/senderNotifications');
+const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
@@ -136,6 +137,7 @@ router.put('/notifications/:id/read', allRoles, asyncHandler(async (req, res) =>
     return res.status(404).json({ message: 'Notification not found' });
   }
 
+  broadcastDataInvalidate(['notifications']);
   res.json({ ...notification, isRead: true });
 }));
 
@@ -145,6 +147,7 @@ router.put('/notifications/read-all', allRoles, asyncHandler(async (req, res) =>
     { $addToSet: { readBy: req.user.id } },
   );
 
+  broadcastDataInvalidate(['notifications']);
   res.json({ success: true, modifiedCount: result.modifiedCount || 0 });
 }));
 
@@ -152,6 +155,7 @@ router.delete('/notifications/:id', adminOnly, asyncHandler(async (req, res) => 
   const notification = await Notification.findOne({ id: req.params.id }).lean();
   await Notification.findOneAndDelete({ id: req.params.id });
   await createLogEntry(req, 'notification_deleted', `Deleted notification ${notification?.title || req.params.id}`, req.params.id);
+  broadcastDataInvalidate(['notifications']);
   res.json({ success: true });
 }));
 
@@ -191,6 +195,7 @@ router.post('/sender-notifications/:id/resend', allRoles, asyncHandler(async (re
   await copy.save();
   const delivered = await deliverSenderNotification(copy);
   await createLogEntry(req, 'sender_notification_resent', `Queued sender notification resend for ${original.trackingNumber}`, copy.id);
+  broadcastDataInvalidate(['senderNotifications', 'logs']);
   res.status(201).json(delivered || copy);
 }));
 

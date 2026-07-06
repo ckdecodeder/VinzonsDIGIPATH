@@ -14,6 +14,7 @@ const {
   getUserOfficeId,
   isApprovalRole,
 } = require('../utils/helpers');
+const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
 const approvalRoles = allowRoles('Admin', 'Mayor');
@@ -220,6 +221,7 @@ router.post('/', allRoles, asyncHandler(async (req, res) => {
     message: `Your document ${doc.trackingNumber} was routed from ${fromOffice} to ${toOffice}.`,
     metadata: { transmissionId: trans.id },
   });
+  broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(trans);
 }));
 
@@ -315,6 +317,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
         await createLogEntry(req, 'transmission_updated', `Updated transmission ${trans.id}`, trans.id);
       }
 
+      broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
       res.json(trans);
     }));
 
@@ -345,6 +348,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
         );
       }
       await createLogEntry(req, 'transmission_deleted', `Deleted transmission ${trans.id}`, req.params.id);
+      broadcastDataInvalidate(['transmissions', 'documents', 'logs']);
       res.json({ success: true });
     }));
 

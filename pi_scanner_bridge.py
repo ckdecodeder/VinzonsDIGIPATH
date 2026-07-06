@@ -11,22 +11,141 @@ Install requirements:
   sudo apt install -y tesseract-ocr
   pip3 install picamera2 pytesseract Pillow requests
 
-Required environment variables:
-  DIGIPATH_BACKEND_BASE_URL=http://YOUR_BACKEND_IP:5000/api
-  DIGIPATH_DEVICE_API_KEY=the_same_DEVICE_API_KEY_from_backend_env
-Optional:
-  DIGIPATH_DEVICE_ID=DEV-001
-  DIGIPATH_OFFICE_ID=OFF-001
-  DIGIPATH_STREAM_PORT=8080
+Configuration (pick one):
+  1. Create bridge.env next to this script (easiest for Geany / double-click runs)
+  2. Export environment variables in the terminal
+  3. Use install_digipath_scanner.sh (writes /etc/digipath-scanner.env + systemd)
+
+See bridge.env.example for the settings to copy.
+Set DIGIPATH_AUTO_INSTALL=0 to skip automatic dependency install on startup.
 """
 
+import importlib
+import importlib.util
+import os
+import sys
+import subprocess
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(SCRIPT_DIR)
+
+PIP_PACKAGES = (
+    ("requests", "requests"),
+    ("PIL", "Pillow"),
+    ("pytesseract", "pytesseract"),
+    ("websocket", "websocket-client"),
+)
+
+APT_PACKAGES = (
+    "python3-pip",
+    "python3-venv",
+    "python3-requests",
+    "python3-pil",
+    "python3-opencv",
+    "python3-numpy",
+    "python3-picamera2",
+    "tesseract-ocr",
+    "rpicam-apps",
+    "libgl1",
+    "libglib2.0-0",
+)
+
+
+def _module_available(module_name):
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _run_command(cmd, label):
+    print(f"[Setup] {label}...")
+    try:
+        subprocess.run(cmd, check=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError) as err:
+        print(f"[Setup] Failed: {err}")
+        return False
+
+
+def ensure_dependencies():
+    """Install missing Pi packages before camera/stream workers start."""
+    if os.environ.get("DIGIPATH_AUTO_INSTALL", "1").strip().lower() in ("0", "false", "no", "off"):
+        print("[Setup] Auto-install disabled (DIGIPATH_AUTO_INSTALL=0).")
+        return
+
+    missing_pip = [package for module, package in PIP_PACKAGES if not _module_available(module)]
+    if missing_pip:
+        pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *missing_pip]
+        if sys.platform.startswith("linux"):
+            pip_cmd.append("--break-system-packages")
+        _run_command(pip_cmd, f"Installing pip packages: {', '.join(missing_pip)}")
+
+    import shutil as _shutil
+    needs_apt = (
+        not _module_available("numpy")
+        or not _module_available("cv2")
+        or not _module_available("picamera2")
+        or not _module_available("PIL")
+    )
+    if needs_apt and _shutil.which("apt-get"):
+        _run_command(["sudo", "apt-get", "update"], "Updating apt package index")
+        _run_command(
+            ["sudo", "apt-get", "install", "-y", *APT_PACKAGES],
+            "Installing apt packages for camera, numpy, and OpenCV",
+        )
+
+    local_installer = os.path.join(SCRIPT_DIR, "install-pi-deps.sh")
+    if needs_apt and os.path.isfile(local_installer) and not _shutil.which("apt-get"):
+        print(f"[Setup] Run manually: bash {local_installer}")
+
+
+def load_optional_modules():
+    """Import optional modules after dependency install."""
+    global OCR_AVAILABLE, CV_AVAILABLE, CAMERA_AVAILABLE, CAMERA_IMPORT_ERROR, WS_AVAILABLE
+
+    try:
+        import pytesseract
+        from PIL import Image
+        globals()["pytesseract"] = pytesseract
+        globals()["Image"] = Image
+        OCR_AVAILABLE = True
+    except ImportError:
+        OCR_AVAILABLE = False
+        print("WARNING: pytesseract or Pillow not installed. OCR will use dummy text.")
+
+    try:
+        import cv2
+        import numpy as np
+        globals()["cv2"] = cv2
+        globals()["np"] = np
+        CV_AVAILABLE = True
+    except ImportError:
+        CV_AVAILABLE = False
+        print("WARNING: opencv-python or numpy not installed. Cropping will be disabled.")
+
+    try:
+        from picamera2 import Picamera2
+        globals()["Picamera2"] = Picamera2
+        CAMERA_AVAILABLE = True
+        CAMERA_IMPORT_ERROR = ""
+    except ImportError as err:
+        CAMERA_AVAILABLE = False
+        CAMERA_IMPORT_ERROR = str(err)
+        print("INFO: picamera2 not available. Camera features will use CLI fallback when possible.")
+
+    try:
+        import websocket
+        globals()["websocket"] = websocket
+        WS_AVAILABLE = True
+    except ImportError:
+        WS_AVAILABLE = False
+        print("INFO: websocket-client not installed. Realtime WebSocket mode will use HTTP fallback.")
+
+
 import base64
+import json
 import mimetypes
 import sqlite3
-import requests
 import time
 import threading
-import os
 import re
 import io
 import atexit
@@ -39,33 +158,70 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 import subprocess
 
-# OCR Libraries
-try:
-    import pytesseract
-    from PIL import Image
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
-    print("WARNING: pytesseract or Pillow not installed. OCR will use dummy text.")
 
-# Image Processing & Edge Detection
-try:
-    import cv2
-    import numpy as np
-    CV_AVAILABLE = True
-except ImportError:
-    CV_AVAILABLE = False
-    print("WARNING: opencv-python or numpy not installed. Cropping will be disabled.")
+def load_local_env():
+    """Load bridge.env from the script folder so Geany runs work without export."""
+    local_env = os.path.join(SCRIPT_DIR, "bridge.env")
+    alt_local_env = os.path.join(SCRIPT_DIR, "digipath-bridge.env")
+    system_env = "/etc/digipath-scanner.env"
 
-# Pi Camera Module
-try:
-    from picamera2 import Picamera2
-    CAMERA_AVAILABLE = True
-    CAMERA_IMPORT_ERROR = ""
-except ImportError as e:
-    CAMERA_AVAILABLE = False
-    CAMERA_IMPORT_ERROR = str(e)
-    print("INFO: picamera2 not available. Camera features will use CLI fallback when possible.")
+    def apply_env_file(path, override=False):
+        loaded = 0
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[7:].strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if not key:
+                    continue
+                if override or key not in os.environ:
+                    os.environ[key] = value
+                    loaded += 1
+        return loaded
+
+    for path in (local_env, alt_local_env):
+        if not os.path.isfile(path):
+            continue
+        try:
+            count = apply_env_file(path, override=True)
+            print(f"[Config] Loaded {count} setting(s) from {path}")
+            print(f"[Config] Backend URL: {os.environ.get('DIGIPATH_BACKEND_BASE_URL', '(not set)')}")
+            return path
+        except OSError as err:
+            print(f"[Config] Could not read {path}: {err}")
+
+    if os.path.isfile(system_env):
+        try:
+            count = apply_env_file(system_env, override=False)
+            print(f"[Config] Loaded {count} setting(s) from {system_env}")
+            print(f"[Config] Backend URL: {os.environ.get('DIGIPATH_BACKEND_BASE_URL', '(not set)')}")
+            return system_env
+        except OSError as err:
+            print(f"[Config] Could not read {system_env}: {err}")
+
+    print("[Config] No bridge.env found next to this script.")
+    return None
+
+
+OCR_AVAILABLE = False
+CV_AVAILABLE = False
+CAMERA_AVAILABLE = False
+CAMERA_IMPORT_ERROR = ""
+WS_AVAILABLE = False
+
+load_local_env()
+ensure_dependencies()
+
+import requests
+
+load_optional_modules()
 
 # ================= CONFIGURATION =================
 # Configure these with environment variables on the Raspberry Pi.
@@ -89,13 +245,18 @@ DUMMY_IMAGE_PATH = "dummy_test.jpg"
 
 # Camera settings
 CAMERA_RESOLUTION = (3280, 2464)     # Max resolution for Pi Camera v2 (capture)
-STREAM_RESOLUTION = (1280, 720)      # Lower resolution for live stream
+STREAM_RESOLUTION = (960, 540)       # Lower resolution = faster live stream
 CAMERA_WARMUP_SECS = 1
 STREAM_PORT = 8080                   # MJPEG stream port
 STREAM_PORT = int(os.environ.get("DIGIPATH_STREAM_PORT", str(STREAM_PORT)))
-STREAM_FPS = 10                      # Target frames per second for stream
+STREAM_FPS = max(1, int(os.environ.get("DIGIPATH_STREAM_FPS", "20")))
+STREAM_JPEG_QUALITY = max(40, min(int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALITY", "78")), 95))
+_stream_width = int(os.environ.get("DIGIPATH_STREAM_WIDTH", str(STREAM_RESOLUTION[0])))
+_stream_height = int(os.environ.get("DIGIPATH_STREAM_HEIGHT", str(STREAM_RESOLUTION[1])))
+STREAM_RESOLUTION = (_stream_width, _stream_height)
 OPENCV_CAMERA_INDEX = int(os.environ.get("DIGIPATH_OPENCV_CAMERA_INDEX", "0"))
 ENABLE_OPENCV_CAMERA = os.environ.get("DIGIPATH_ENABLE_OPENCV_CAMERA", "auto").lower()
+USE_WEBSOCKET = os.environ.get("DIGIPATH_USE_WEBSOCKET", "1").strip().lower() not in ("0", "false", "no", "off")
 
 if not os.path.exists(SCANS_DIR):
     os.makedirs(SCANS_DIR)
@@ -111,6 +272,13 @@ last_presence_ok = False
 last_presence_error = ""
 last_presence_at = ""
 last_command_error = ""
+latest_stream_frame = b""
+latest_stream_lock = threading.Lock()
+stream_producer_running = False
+realtime_ws = None
+realtime_ws_lock = threading.Lock()
+ws_connected = False
+ws_connected_once = False
 
 # ================= LOCAL DATABASE SETUP =================
 def init_db():
@@ -221,6 +389,56 @@ def get_device_payload(event_type):
         },
     }
 
+def get_realtime_ws_url():
+    base = BACKEND_BASE_URL.rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    if base.startswith("https://"):
+        return "wss://" + base[len("https://"):] + "/ws/device"
+    if base.startswith("http://"):
+        return "ws://" + base[len("http://"):] + "/ws/device"
+    return f"ws://{base}/ws/device"
+
+
+def send_ws_json(payload):
+    global ws_connected, realtime_ws
+    if not ws_connected or not realtime_ws:
+        return False
+    with realtime_ws_lock:
+        try:
+            realtime_ws.send(json.dumps(payload))
+            return True
+        except Exception as err:
+            ws_connected = False
+            print(f"[Realtime] Send failed: {err}")
+            return False
+
+
+def send_ws_frame(frame):
+    global ws_connected, realtime_ws
+    if not WS_AVAILABLE or not ws_connected or not realtime_ws or not frame:
+        return
+    with realtime_ws_lock:
+        try:
+            realtime_ws.send(frame, opcode=websocket.ABNF.OPCODE_BINARY)
+        except Exception:
+            ws_connected = False
+
+
+def send_ws_presence(event_type):
+    global ws_connected_once
+    payload = get_device_payload(event_type)
+    if event_type not in ("device_connected", "device_heartbeat", "device_disconnected"):
+        payload["eventType"] = event_type
+        message_type = "device_event"
+    else:
+        message_type = "heartbeat" if event_type == "device_heartbeat" else event_type
+    ok = send_ws_json({"type": message_type, "payload": payload})
+    if ok and event_type == "device_connected":
+        ws_connected_once = True
+    return ok
+
+
 def post_device_presence(event_type):
     endpoint_map = {
         "device_connected": "connect",
@@ -242,22 +460,30 @@ def post_device_presence(event_type):
     return response.json()
 
 def device_presence_worker():
-    global connected_once, last_presence_ok, last_presence_error, last_presence_at
+    global connected_once, last_presence_ok, last_presence_error, last_presence_at, ws_connected_once
 
     while True:
         try:
-            if not connected_once:
-                post_device_presence("device_connected")
+            use_ws = USE_WEBSOCKET and WS_AVAILABLE and ws_connected
+            if not connected_once and not ws_connected_once:
+                if use_ws:
+                    send_ws_presence("device_connected")
+                else:
+                    post_device_presence("device_connected")
                 connected_once = True
                 print("[Device] Auto-connected to backend.")
             else:
-                post_device_presence("device_heartbeat")
+                if use_ws:
+                    send_ws_presence("device_heartbeat")
+                else:
+                    post_device_presence("device_heartbeat")
                 print("[Device] Heartbeat sent.")
             last_presence_ok = True
             last_presence_error = ""
             last_presence_at = datetime.now().isoformat()
         except Exception as e:
             connected_once = False
+            ws_connected_once = False
             last_presence_ok = False
             last_presence_error = str(e)
             last_presence_at = datetime.now().isoformat()
@@ -370,29 +596,106 @@ def capture_opencv_frame(file_path=None, width=None, height=None):
     finally:
         cap.release()
 
-def init_camera():
-    global camera, last_camera_error
+def init_camera(retries=3, retry_delay=2.0):
+    global camera, last_camera_error, CAMERA_AVAILABLE, CAMERA_IMPORT_ERROR
+
     if not CAMERA_AVAILABLE:
-        last_camera_error = f"picamera2 not available: {CAMERA_IMPORT_ERROR or 'module import failed'}"
-        print(f"[Camera] {last_camera_error}")
-        return False
-    try:
-        camera = Picamera2()
-        # Start with stream resolution for live preview
-        config = camera.create_still_configuration(
-            main={"size": STREAM_RESOLUTION, "format": "RGB888"}
-        )
-        camera.configure(config)
-        camera.start()
-        time.sleep(CAMERA_WARMUP_SECS)
-        print(f"[Camera] Initialized at {STREAM_RESOLUTION} for streaming.")
-        mark_camera_success()
-        return True
-    except Exception as e:
-        last_camera_error = f"picamera2 init error: {e}"
-        print(f"[Camera] Init error: {e}")
-        camera = None
-        return False
+        load_optional_modules()
+
+    for attempt in range(1, retries + 1):
+        if not CAMERA_AVAILABLE:
+            last_camera_error = f"picamera2 not available: {CAMERA_IMPORT_ERROR or 'module import failed'}"
+            if attempt == 1:
+                print(f"[Camera] {last_camera_error}")
+            if attempt < retries:
+                ensure_dependencies()
+                load_optional_modules()
+                time.sleep(retry_delay)
+            continue
+
+        try:
+            camera = Picamera2()
+            try:
+                config = camera.create_preview_configuration(
+                    main={"size": STREAM_RESOLUTION, "format": "RGB888"},
+                    controls={"FrameRate": float(STREAM_FPS)},
+                )
+            except Exception:
+                config = camera.create_preview_configuration(
+                    main={"size": STREAM_RESOLUTION, "format": "RGB888"},
+                )
+            camera.configure(config)
+            camera.start()
+            time.sleep(CAMERA_WARMUP_SECS)
+            print(f"[Camera] Initialized at {STREAM_RESOLUTION} @ {STREAM_FPS}fps for streaming.")
+            mark_camera_success()
+            return True
+        except Exception as e:
+            last_camera_error = f"picamera2 init error: {e}"
+            print(f"[Camera] Init attempt {attempt}/{retries} failed: {e}")
+            camera = None
+            if attempt < retries:
+                time.sleep(retry_delay)
+
+    print("[Camera] Camera auto-start failed. Check ribbon cable, camera enable, and that only one bridge instance is running.")
+    return False
+
+def encode_stream_jpeg(image_array):
+    if CV_AVAILABLE:
+        try:
+            if len(image_array.shape) == 3 and image_array.shape[2] == 3:
+                image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+            ok, encoded = cv2.imencode(
+                ".jpg",
+                image_array,
+                [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY, cv2.IMWRITE_JPEG_OPTIMIZE, 1],
+            )
+            if ok:
+                return encoded.tobytes()
+        except Exception:
+            pass
+
+    if OCR_AVAILABLE:
+        img = Image.fromarray(image_array)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=STREAM_JPEG_QUALITY, optimize=True)
+        return buf.getvalue()
+
+    return None
+
+def capture_stream_frame():
+    global last_camera_error
+
+    if is_capturing:
+        return None
+
+    if camera:
+        try:
+            with camera_lock:
+                image_array = camera.capture_array()
+            frame = encode_stream_jpeg(image_array)
+            if frame:
+                mark_camera_success()
+                return frame
+        except Exception as e:
+            last_camera_error = f"stream frame error: {e}"
+
+    frame, _ = capture_preview_frame()
+    return frame
+
+def stream_frame_producer():
+    global latest_stream_frame, stream_producer_running
+
+    interval = max(1.0 / STREAM_FPS, 0.02)
+    print(f"[Stream] Producer running at ~{STREAM_FPS} fps.")
+    while stream_producer_running:
+        frame = capture_stream_frame()
+        if frame:
+            with latest_stream_lock:
+                latest_stream_frame = frame
+            if USE_WEBSOCKET and WS_AVAILABLE:
+                send_ws_frame(frame)
+        time.sleep(interval)
 
 def capture_preview_frame():
     global last_camera_error
@@ -739,24 +1042,19 @@ class StreamHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Connection', 'close')
+            self.send_header('X-Accel-Buffering', 'no')
             self.end_headers()
 
+            frame_interval = max(1.0 / STREAM_FPS, 0.02)
             try:
                 while True:
-                    if is_capturing or not camera:
-                        frame, _ = capture_preview_frame()
-                        if not frame:
-                            time.sleep(0.5)
-                            continue
-                    else:
-                        try:
-                            with camera_lock:
-                                stream = io.BytesIO()
-                                camera.capture_file(stream, format='jpeg')
-                                frame = stream.getvalue()
-                        except Exception:
-                            time.sleep(0.5)
-                            continue
+                    with latest_stream_lock:
+                        frame = latest_stream_frame
+
+                    if not frame:
+                        time.sleep(0.02)
+                        continue
 
                     try:
                         self.wfile.write(b'--frame\r\n')
@@ -765,10 +1063,11 @@ class StreamHandler(BaseHTTPRequestHandler):
                         self.wfile.write(b'\r\n')
                         self.wfile.write(frame)
                         self.wfile.write(b'\r\n')
+                        self.wfile.flush()
                     except (BrokenPipeError, ConnectionResetError):
                         break
 
-                    time.sleep(1.0 / STREAM_FPS)
+                    time.sleep(frame_interval)
 
             except Exception as e:
                 print(f"[Stream] Client disconnected: {e}")
@@ -879,83 +1178,159 @@ class StreamHandler(BaseHTTPRequestHandler):
         pass  # Suppress default logging
 
 def start_stream_server():
-    server = ThreadingHTTPServer(('0.0.0.0', STREAM_PORT), StreamHandler)
+    try:
+        server = ThreadingHTTPServer(('0.0.0.0', STREAM_PORT), StreamHandler)
+    except OSError as err:
+        print(f"[Bridge] Could not bind port {STREAM_PORT}: {err}")
+        print("[Bridge] Stop the other bridge instance first:")
+        print("  sudo systemctl stop digipath-scanner")
+        print("  pkill -f pi_scanner_bridge.py")
+        print(f"  sudo fuser -k {STREAM_PORT}/tcp")
+        return
     print(f"[Bridge] Local bridge server started on port {STREAM_PORT}")
     print(f"[Bridge] Connect endpoint: http://0.0.0.0:{STREAM_PORT}/connect")
     print(f"[Stream] View at: http://0.0.0.0:{STREAM_PORT}/stream.mjpg")
     server.serve_forever()
 
 # ================= COMMAND POLLING WORKER =================
+def execute_device_command(cmd):
+    if not cmd or not cmd.get("command"):
+        return
+
+    print(f"\n[Command] Received: {cmd['command']}")
+
+    if cmd['command'] == 'SCAN':
+        doc_id = None
+        local_scan_id = None
+        update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
+        try:
+            requests.put(
+                f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+                json={'status': 'Executing'},
+                headers=DEVICE_HEADERS,
+                timeout=10
+            )
+            file_path, text, title, date, sender = scan_document()
+            if os.path.exists(file_path):
+                local_scan_id = queue_scan(file_path, text, title, date, sender, "pending")
+                result = upload_scan_to_backend(file_path, text, title, date, sender, cmd['id'])
+                doc_id = result.get('documentId')
+                mark_scan_status(local_scan_id, "uploaded")
+                print(f"[Command] Upload success, doc: {doc_id}")
+                update_data = {'status': 'Executed'}
+                if doc_id:
+                    update_data['resultDocumentId'] = doc_id
+            else:
+                update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
+        except Exception as e:
+            print(f"[Command] Upload error: {e}")
+            if local_scan_id:
+                mark_scan_status(local_scan_id, "pending")
+            update_data = {'status': 'Failed', 'errorMessage': str(e)}
+
+        requests.put(
+            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+            json=update_data,
+            headers=DEVICE_HEADERS,
+            timeout=10
+        )
+        print(f"[Command] Executed {cmd['command']} successfully.")
+
+    elif cmd['command'] == 'RESTART':
+        print("[Command] Received RESTART command.")
+        requests.put(
+            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+            json={'status': 'Executed'},
+            headers=DEVICE_HEADERS,
+            timeout=10
+        )
+        time.sleep(1)
+        subprocess.run(['sudo', 'reboot'])
+
+    elif cmd['command'] == 'SHUTDOWN':
+        print("[Command] Received SHUTDOWN command.")
+        requests.put(
+            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+            json={'status': 'Executed'},
+            headers=DEVICE_HEADERS,
+            timeout=10
+        )
+        time.sleep(1)
+        subprocess.run(['sudo', 'shutdown', '-h', 'now'])
+
+
+def on_realtime_message(ws, message):
+    try:
+        msg = json.loads(message)
+    except json.JSONDecodeError:
+        return
+    if msg.get("type") in ("auth:ok", "presence:ok"):
+        return
+    if msg.get("type") == "command:pending" and msg.get("command"):
+        threading.Thread(target=execute_device_command, args=(msg["command"],), daemon=True).start()
+
+
+def on_realtime_open(ws):
+    global ws_connected, realtime_ws
+    realtime_ws = ws
+    ws_connected = True
+    ws.send(json.dumps({
+        "type": "auth",
+        "deviceId": DEVICE_ID,
+        "apiKey": DEVICE_API_KEY,
+    }))
+    print(f"[Realtime] Connected to {get_realtime_ws_url()}")
+
+
+def on_realtime_close(ws, close_status_code, close_msg):
+    global ws_connected, realtime_ws, ws_connected_once
+    ws_connected = False
+    ws_connected_once = False
+    realtime_ws = None
+    print(f"[Realtime] Disconnected ({close_status_code}): {close_msg or 'closed'}")
+
+
+def on_realtime_error(ws, error):
+    print(f"[Realtime] Error: {error}")
+
+
+def realtime_worker():
+    global ws_connected
+    if not USE_WEBSOCKET or not WS_AVAILABLE:
+        print("[Realtime] WebSocket mode disabled.")
+        return
+
+    while True:
+        try:
+            ws_app = websocket.WebSocketApp(
+                get_realtime_ws_url(),
+                on_open=on_realtime_open,
+                on_message=on_realtime_message,
+                on_close=on_realtime_close,
+                on_error=on_realtime_error,
+            )
+            ws_app.run_forever(ping_interval=20, ping_timeout=10)
+        except Exception as err:
+            print(f"[Realtime] Connection loop error: {err}")
+        ws_connected = False
+        time.sleep(5)
+
+
 def command_worker():
     global last_command_error
 
     while True:
+        if USE_WEBSOCKET and WS_AVAILABLE and ws_connected:
+            time.sleep(3)
+            continue
+
         try:
             response = requests.get(COMMAND_API_URL, headers=DEVICE_HEADERS, timeout=10)
             if response.status_code == 200:
                 last_command_error = ""
                 commands = response.json()
                 for cmd in commands:
-                    print(f"\n[Command] Received: {cmd['command']}")
-
-                    if cmd['command'] == 'SCAN':
-                        doc_id = None
-                        local_scan_id = None
-                        update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
-                        try:
-                            requests.put(
-                                f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-                                json={'status': 'Executing'},
-                                headers=DEVICE_HEADERS,
-                                timeout=10
-                            )
-                            file_path, text, title, date, sender = scan_document()
-                            if os.path.exists(file_path):
-                                local_scan_id = queue_scan(file_path, text, title, date, sender, "pending")
-                                result = upload_scan_to_backend(file_path, text, title, date, sender, cmd['id'])
-                                doc_id = result.get('documentId')
-                                mark_scan_status(local_scan_id, "uploaded")
-                                print(f"[Command] Upload success, doc: {doc_id}")
-                                update_data = {'status': 'Executed'}
-                                if doc_id:
-                                    update_data['resultDocumentId'] = doc_id
-                            else:
-                                update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
-                        except Exception as e:
-                            print(f"[Command] Upload error: {e}")
-                            if local_scan_id:
-                                mark_scan_status(local_scan_id, "pending")
-                            update_data = {'status': 'Failed', 'errorMessage': str(e)}
-
-                        requests.put(
-                            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-                            json=update_data,
-                            headers=DEVICE_HEADERS,
-                            timeout=10
-                        )
-                        print(f"[Command] Executed {cmd['command']} successfully.")
-                        
-                    elif cmd['command'] == 'RESTART':
-                        print("[Command] Received RESTART command.")
-                        requests.put(
-                            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-                            json={'status': 'Executed'},
-                            headers=DEVICE_HEADERS,
-                            timeout=10
-                        )
-                        time.sleep(1)
-                        subprocess.run(['sudo', 'reboot'])
-                        
-                    elif cmd['command'] == 'SHUTDOWN':
-                        print("[Command] Received SHUTDOWN command.")
-                        requests.put(
-                            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-                            json={'status': 'Executed'},
-                            headers=DEVICE_HEADERS,
-                            timeout=10
-                        )
-                        time.sleep(1)
-                        subprocess.run(['sudo', 'shutdown', '-h', 'now'])
+                    execute_device_command(cmd)
 
         except Exception as e:
             last_command_error = str(e)
@@ -1000,12 +1375,27 @@ if __name__ == "__main__":
     atexit.register(send_disconnect)
     init_db()
 
-    # Init camera
+    print("[Main] Auto-installing missing dependencies (if any)...")
+    ensure_dependencies()
+    load_optional_modules()
+
+    # Init camera automatically on startup.
+    print("[Main] Auto-starting camera...")
     cam_ok = init_camera()
+
+    stream_producer_running = True
+    producer_thread = threading.Thread(target=stream_frame_producer, daemon=True)
+    producer_thread.start()
 
     # Start automatic backend connection and heartbeat reporting.
     presence_thread = threading.Thread(target=device_presence_worker, daemon=True)
     presence_thread.start()
+
+    if USE_WEBSOCKET and WS_AVAILABLE:
+        realtime_thread = threading.Thread(target=realtime_worker, daemon=True)
+        realtime_thread.start()
+    else:
+        print("[Realtime] Using HTTP-only mode for heartbeat/commands.")
 
     # Start the local bridge server even when the camera is missing, so the
     # dashboard can still trigger /connect and inspect /status.
@@ -1026,7 +1416,8 @@ if __name__ == "__main__":
     print("  VinzonsDIGIPATH - Pi Scanner Bridge")
     print("=" * 60)
     print(f"  Camera:  {'Ready' if cam_ok else 'Not available'}")
-    print(f"  Stream:  http://0.0.0.0:{STREAM_PORT}/stream.mjpg")
+    print(f"  Stream:  http://0.0.0.0:{STREAM_PORT}/stream.mjpg ({STREAM_FPS} fps)")
+    print(f"  Realtime: {'WebSocket' if USE_WEBSOCKET and WS_AVAILABLE else 'HTTP fallback'}")
     print(f"  Backend: {BACKEND_BASE_URL}")
     print(f"  Device:  {DEVICE_ID}")
     print(f"  Office:  {OFFICE_ID}")

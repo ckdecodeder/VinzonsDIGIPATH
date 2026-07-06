@@ -3,6 +3,7 @@ const router = express.Router();
 const { Office, User, Document, Transmission, Device } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { asyncHandler, requireFields, createLogEntry, generateId } = require('../utils/helpers');
+const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
 const updateOptions = { new: true, runValidators: true };
@@ -19,6 +20,7 @@ router.post('/', adminOnly, asyncHandler(async (req, res) => {
   const office = new Office({ ...req.body, id: req.body.id || generateId('OFF') });
   await office.save();
   await createLogEntry(req, 'office_created', `Created office: ${office.name}`, office.id);
+  broadcastDataInvalidate(['offices', 'logs']);
   res.json(office);
 }));
 
@@ -26,6 +28,7 @@ router.put('/:id', adminOnly, asyncHandler(async (req, res) => {
   const office = await Office.findOneAndUpdate({ id: req.params.id }, req.body, updateOptions);
   if (!office) return res.status(404).json({ message: 'Office not found' });
   await createLogEntry(req, 'office_updated', `Updated office: ${office.name}`, office.id);
+  broadcastDataInvalidate(['offices', 'logs']);
   res.json(office);
 }));
 
@@ -60,6 +63,7 @@ router.delete('/:id', adminOnly, asyncHandler(async (req, res) => {
 
   await Office.findOneAndDelete({ id: req.params.id });
   await createLogEntry(req, 'office_deleted', `Deleted office: ${office.name}`, req.params.id);
+  broadcastDataInvalidate(['offices', 'logs']);
   res.json({ success: true });
 }));
 

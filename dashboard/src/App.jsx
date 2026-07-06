@@ -28,6 +28,8 @@ import {
   userService,
 } from './api/documentService';
 import { sortNewest } from './utils/sorting';
+import { RealtimeProvider } from './context/RealtimeContext';
+import { realtimeClient } from './ws/realtimeClient';
 
 const PAGE_STORAGE_KEY = 'dp_currentPage';
 
@@ -226,14 +228,21 @@ function App() {
   useEffect(() => {
     if (!currentUser) return undefined;
 
-    const refreshMs = currentPage === 'device-panel' ? 5000 : 15000;
-    const interval = setInterval(() => {
-      refreshSystemStatus();
-      loadData({ silent: true });
-    }, refreshMs);
+    const offDevice = realtimeClient.on('device:updated', (message) => {
+      if (message.device) {
+        setDevice(message.device);
+      }
+    });
 
-    return () => clearInterval(interval);
-  }, [currentUser?.id, currentPage]);
+    const offInvalidate = realtimeClient.on('data:invalidate', () => {
+      loadData({ silent: true });
+    });
+
+    return () => {
+      offDevice();
+      offInvalidate();
+    };
+  }, [currentUser]);
 
   useEffect(() => { localStorage.setItem('dp_dismissedNotifications', JSON.stringify(dismissedNotifications)); }, [dismissedNotifications]);
   useEffect(() => {
@@ -1033,7 +1042,7 @@ function App() {
   };
 
   return (
-    <>
+    <RealtimeProvider enabled={Boolean(currentUser)}>
       <Layout
         currentPage={currentPage}
         currentRole={currentRole}
@@ -1063,7 +1072,7 @@ function App() {
         onConfirm={appDialog.onConfirm}
         onCancel={appDialog.onCancel}
       />
-    </>
+    </RealtimeProvider>
   );
 }
 

@@ -98,7 +98,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [cameraFacingMode, setCameraFacingMode] = useState('environment');
   const [paperGuideId, setPaperGuideId] = useState('letter-landscape');
   const [streamReloadKey, setStreamReloadKey] = useState(0);
-  const [livePreviewUrl, setLivePreviewUrl] = useState('');
   const [previewErrorMessage, setPreviewErrorMessage] = useState('');
   const [streamHasError, setStreamHasError] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
@@ -192,53 +191,37 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
   useEffect(() => {
     if (!isPhysicalSource || !bridgeBaseUrl) {
-      setLivePreviewUrl('');
+      setStreamHasError(false);
+      setPreviewErrorMessage('');
       return undefined;
     }
 
     let cancelled = false;
-    let inFlight = false;
 
-    const refreshPreview = async () => {
-      if (inFlight) return;
-      inFlight = true;
+    const checkBridge = async () => {
       try {
-        const blob = await bridgeService.getSnapshot({
+        const result = await bridgeService.status({
           deviceId: device?.id || 'DEV-001',
           bridgeUrl: bridgeBaseUrl,
-          t: Date.now(),
         });
         if (cancelled) return;
-        const objectUrl = URL.createObjectURL(blob);
-        setLivePreviewUrl(prev => {
-          if (prev?.startsWith('blob:')) URL.revokeObjectURL(prev);
-          return objectUrl;
-        });
-        setStreamHasError(false);
-        setPreviewErrorMessage('');
+        const status = result.status || result.bridge || null;
+        const cameraReady = Boolean(status?.cameraReady ?? status?.camera);
+        setStreamHasError(!cameraReady);
+        setPreviewErrorMessage(cameraReady ? '' : 'Scanner camera is not ready yet.');
       } catch (err) {
         if (!cancelled) {
           setStreamHasError(true);
           setPreviewErrorMessage(err.message || 'Scanner preview is not ready yet.');
         }
-      } finally {
-        inFlight = false;
       }
     };
 
-    refreshPreview();
-    const interval = setInterval(refreshPreview, 1200);
+    checkBridge();
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
   }, [isPhysicalSource, bridgeBaseUrl, device?.id, streamReloadKey]);
-
-  useEffect(() => {
-    return () => {
-      if (livePreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(livePreviewUrl);
-    };
-  }, [livePreviewUrl]);
 
   const handleCameraSourceChange = (value) => {
     setCameraSource(value);
@@ -246,6 +229,53 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     if (value !== PHYSICAL_CAMERA_VALUE) {
       setSelectedCameraId(value === 'browser-camera' ? '' : value);
     }
+  };
+
+  const applyPhysicalScanResult = (result) => {
+    if (result.status === 'Executed') {
+      const doc = result.resultDocument;
+      setHardwareScannedDoc(doc || null);
+      if (doc) {
+        const scannedFile = doc.scannedFiles?.[0];
+        const scannedUrl = doc.scannedImageUrl || scannedFile?.url || scannedFile?.dataUrl || null;
+        const scannedType = scannedFile?.type || (/\.pdf($|\?)/i.test(scannedUrl || '') ? 'application/pdf' : '');
+        setCapturedImage(scannedUrl);
+        setCapturedFileType(scannedType);
+        setExtractedText(doc.scannedText || '');
+        setFormData(prev => ({
+          ...prev,
+          subject: getSubjectFromOcr(doc.scannedText || '', doc.subject) || prev.subject,
+          documentDirection: doc.documentDirection || prev.documentDirection,
+          documentTypeId: doc.documentTypeId || prev.documentTypeId,
+          documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
+          status: doc.status || prev.status,
+          priorityLevel: doc.priorityLevel || prev.priorityLevel,
+          fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
+          originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
+          toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
+          dateReceived: doc.dateReceived || prev.dateReceived,
+          senderName: doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : prev.senderName,
+          senderContact: doc.senderContact || prev.senderContact,
+          senderEmail: doc.senderEmail || prev.senderEmail,
+          notifySender: doc.notifySender ?? prev.notifySender,
+          senderNotificationConsent: doc.senderNotificationConsent ?? prev.senderNotificationConsent,
+          senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
+          remarks: doc.remarks || prev.remarks,
+        }));
+      }
+      setIsDeviceScanning(false);
+      setDeviceScanStatus('');
+      setStep(2);
+      return true;
+    }
+
+    if (result.status === 'Failed' || result.status === 'Cancelled') {
+      setIsDeviceScanning(false);
+      setDeviceScanStatus(result.errorMessage || `Physical scanner command ${result.status.toLowerCase()}.`);
+      return true;
+    }
+
+    return false;
   };
 
   // STEP 1: Capture/scan the document
@@ -311,47 +341,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         attempts += 1;
         try {
           const result = await commandService.checkStatus(command.id);
-          if (result.status === 'Executed') {
+          if (applyPhysicalScanResult(result)) {
             clearInterval(commandPollRef.current);
             commandPollRef.current = null;
-            const doc = result.resultDocument;
-            setHardwareScannedDoc(doc || null);
-            if (doc) {
-              const scannedFile = doc.scannedFiles?.[0];
-              const scannedUrl = doc.scannedImageUrl || scannedFile?.url || scannedFile?.dataUrl || null;
-              const scannedType = scannedFile?.type || (/\.pdf($|\?)/i.test(scannedUrl || '') ? 'application/pdf' : '');
-              setCapturedImage(scannedUrl);
-              setCapturedFileType(scannedType);
-              setExtractedText(doc.scannedText || '');
-              setFormData(prev => ({
-                ...prev,
-                subject: getSubjectFromOcr(doc.scannedText || '', doc.subject) || prev.subject,
-                documentDirection: doc.documentDirection || prev.documentDirection,
-                documentTypeId: doc.documentTypeId || prev.documentTypeId,
-                documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
-                status: doc.status || prev.status,
-                priorityLevel: doc.priorityLevel || prev.priorityLevel,
-                fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
-                originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
-                toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
-                dateReceived: doc.dateReceived || prev.dateReceived,
-                senderName: doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : prev.senderName,
-                senderContact: doc.senderContact || prev.senderContact,
-                senderEmail: doc.senderEmail || prev.senderEmail,
-                notifySender: doc.notifySender ?? prev.notifySender,
-                senderNotificationConsent: doc.senderNotificationConsent ?? prev.senderNotificationConsent,
-                senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
-                remarks: doc.remarks || prev.remarks,
-              }));
-            }
-            setIsDeviceScanning(false);
-            setDeviceScanStatus('');
-            setStep(2);
-          } else if (result.status === 'Failed' || result.status === 'Cancelled') {
-            clearInterval(commandPollRef.current);
-            commandPollRef.current = null;
-            setIsDeviceScanning(false);
-            setDeviceScanStatus(result.errorMessage || `Physical scanner command ${result.status.toLowerCase()}.`);
           } else if (attempts > 90) {
             clearInterval(commandPollRef.current);
             commandPollRef.current = null;
@@ -611,19 +603,22 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
           <div className="scanner-preview-shell">
             {isPhysicalSource ? (
-              bridgeBaseUrl && livePreviewUrl ? (
+              bridgeBaseUrl ? (
                 <img
                   key={streamReloadKey}
                   className="scanner-live-stream"
-                  src={livePreviewUrl}
+                  src={physicalStreamUrl}
                   alt="Physical scanner live preview"
                   onLoad={() => setStreamHasError(false)}
-                  onError={() => setStreamHasError(true)}
+                  onError={() => {
+                    setStreamHasError(true);
+                    setPreviewErrorMessage(`Live stream unavailable. Check ${physicalStatusUrl || 'the Pi bridge status'}.`);
+                  }}
                 />
               ) : (
                 <div className="scanner-preview-empty">
                   <CameraIcon size={34} />
-                  <span>{bridgeBaseUrl ? 'Loading physical scanner preview' : 'Waiting for physical scanner stream'}</span>
+                  <span>Physical scanner bridge URL is not configured</span>
                 </div>
               )
             ) : (

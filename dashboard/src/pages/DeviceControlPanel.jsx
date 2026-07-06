@@ -22,6 +22,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { bridgeService } from '../api/documentService';
+import { useOptionalRealtime } from '../context/RealtimeContext';
 import { users as defaultUsers } from '../data/mockData';
 
 import { getApiBase } from '../api/apiBase';
@@ -52,7 +53,23 @@ const normalizeBridgeUrl = (value) => {
 };
 
 const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, deviceEvents = [] }) => {
-  const scanner = device || {
+  const realtime = useOptionalRealtime();
+  const [liveDevice, setLiveDevice] = useState(device);
+
+  useEffect(() => {
+    setLiveDevice(device);
+  }, [device]);
+
+  useEffect(() => {
+    if (!realtime?.client) return undefined;
+    return realtime.subscribe('device:updated', (message) => {
+      if (message.device) {
+        setLiveDevice(message.device);
+      }
+    });
+  }, [realtime]);
+
+  const scanner = liveDevice || {
     id: 'DEV-001',
     name: 'No physical scanner connected',
     model: 'Not reported',

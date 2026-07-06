@@ -12,6 +12,7 @@ const {
   appendDocumentTimeline,
   createTimelineEvent,
 } = require('../utils/helpers');
+const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
 const approvalRoles = allowRoles('Admin', 'Mayor');
@@ -165,6 +166,7 @@ router.post('/', approvalRoles, asyncHandler(async (req, res) => {
     message: `Your document ${doc.trackingNumber} was archived as a completed record.`,
     metadata: { archiveId: arc.id },
   });
+  broadcastDataInvalidate(['archives', 'documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(arc);
 }));
 
@@ -176,6 +178,7 @@ router.put('/:id', approvalRoles, asyncHandler(async (req, res) => {
   const archive = await Archive.findOneAndUpdate({ id: req.params.id }, updates, updateOptions);
   if (!archive) return res.status(404).json({ message: 'Archive not found' });
   await createLogEntry(req, 'archive_updated', `Updated archive ${archive.id}`, archive.id);
+  broadcastDataInvalidate(['archives', 'documents', 'logs']);
   res.json(archive);
 }));
 
@@ -201,6 +204,7 @@ router.delete('/:id', approvalRoles, asyncHandler(async (req, res) => {
   );
   await Notification.deleteMany({ referenceId: archive.id });
   await createLogEntry(req, 'archive_deleted', `Deleted archive ${archive.id}`, req.params.id);
+  broadcastDataInvalidate(['archives', 'documents', 'logs']);
   res.json({ success: true });
 }));
 
