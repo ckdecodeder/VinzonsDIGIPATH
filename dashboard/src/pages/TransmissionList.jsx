@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import PageShell from "../components/PageShell";
 import {
   ArrowRightLeft,
   Search,
@@ -282,49 +283,52 @@ const TransmissionList = ({
   };
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-header-left">
-          <h1>Transmissions</h1>
-          <p>Track document movement between offices</p>
-        </div>
-      </div>
-
-      <div className="page-toolbar-row">
-        <div className="filter-dropdown-inline">
-          <label>Search</label>
-          <div className="search-bar">
-            <Search size={16} color="var(--text-muted)" />
-            <input
-              type="text"
-              placeholder="Search transmissions..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+    <>
+      <PageShell
+        header={
+          <div className="page-header">
+            <div className="page-header-left">
+              <h1>Transmissions</h1>
+              <p>Track document movement between offices</p>
+            </div>
           </div>
-        </div>
-        <div className="filter-dropdown filter-dropdown-inline">
-          <label>Type</label>
-          <select
-            className="form-select"
-            value={filterType}
-            onChange={(e) => setFilterType(e.target.value)}
-          >
-            {types.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-        </div>
-        {visibleRouteDocuments.length > 0 && (
-          <button className="btn btn-primary" onClick={openCreateForm}>
-            <Plus size={16} /> New Transmission
-          </button>
-        )}
-      </div>
-
-      {/* Table */}
+        }
+        toolbar={
+          <div className="page-toolbar-row">
+            <div className="filter-dropdown-inline">
+              <label>Search</label>
+              <div className="search-bar">
+                <Search size={16} color="var(--text-muted)" />
+                <input
+                  type="text"
+                  placeholder="Search transmissions..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="filter-dropdown filter-dropdown-inline">
+              <label>Type</label>
+              <select
+                className="form-select"
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+              >
+                {types.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {visibleRouteDocuments.length > 0 && (
+              <button className="btn btn-primary" onClick={openCreateForm}>
+                <Plus size={16} /> New Transmission
+              </button>
+            )}
+          </div>
+        }
+      >
       <div className="table-container">
         <table>
           <thead>
@@ -492,6 +496,7 @@ const TransmissionList = ({
           </button>
         </div>
       </div>
+      </PageShell>
 
       {detailTransmission &&
         (() => {
@@ -935,7 +940,7 @@ const TransmissionList = ({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

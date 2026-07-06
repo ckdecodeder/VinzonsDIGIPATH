@@ -130,6 +130,11 @@ const Layout = ({
   const pageContentRef = useRef(null);
 
   useEffect(() => {
+    const scrollArea = pageContentRef.current?.querySelector('.page-scroll-area');
+    if (scrollArea) {
+      scrollArea.scrollTo({ top: 0, behavior: 'auto' });
+      return;
+    }
     pageContentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
   }, [currentPage]);
 
@@ -191,7 +196,7 @@ const Layout = ({
       <main className="main-content">
         <div className="page-content" ref={pageContentRef}>
           {(dataError || saveError) && (
-            <div style={{
+            <div className="page-content-alert" style={{
               marginBottom: '1rem',
               padding: '0.75rem 1rem',
               borderRadius: 'var(--radius-md)',

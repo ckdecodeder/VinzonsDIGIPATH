@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PageShell from '../components/PageShell';
 import {
   Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
   Flag, User, Phone, Mail, MessageSquare, ChevronDown, ChevronUp,
@@ -793,83 +794,85 @@ const DocumentList = ({
   };
 
   return (
-    <div>
-      <div className="page-header page-header--align-bottom">
-        <div className="page-header-left">
-          <h1>Documents</h1>
-          <p>Scan, route, acknowledge, sign, file, and archive official documents</p>
-        </div>
-        {canCreate && (
-          <div className="page-header-actions">
-            <button className="btn btn-primary" onClick={() => handleOpenForm()}>
-              <Plus size={16} /> New Document
-            </button>
+    <>
+      <PageShell
+        header={
+          <div className="page-header page-header--align-bottom">
+            <div className="page-header-left">
+              <h1>Documents</h1>
+              <p>Scan, route, acknowledge, sign, file, and archive official documents</p>
+            </div>
+            {canCreate && (
+              <div className="page-header-actions">
+                <button className="btn btn-primary" onClick={() => handleOpenForm()}>
+                  <Plus size={16} /> New Document
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        }
+        toolbar={
+          <div className="document-toolbar">
+            <div className="filter-dropdown filter-dropdown-search">
+              <label>Search</label>
+              <div className="search-bar document-search-bar">
+                <Search size={16} color="var(--text-muted)" />
+                <input
+                  type="text"
+                  placeholder="Search by subject, tracking, sender, or office..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
 
-      <section className="document-panel">
-        <div className="document-toolbar">
-          <div className="filter-dropdown filter-dropdown-search">
-            <label>Search</label>
-            <div className="search-bar document-search-bar">
-              <Search size={16} color="var(--text-muted)" />
+            <div className="filter-dropdown filter-dropdown-date">
+              <label htmlFor="document-date-filter">Date</label>
               <input
-                type="text"
-                placeholder="Search by subject, tracking, sender, or office..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
+                id="document-date-filter"
+                className="form-input"
+                type="date"
+                value={filterDate}
+                onChange={e => setFilterDate(e.target.value)}
               />
             </div>
-          </div>
 
-          <div className="filter-dropdown filter-dropdown-date">
-            <label htmlFor="document-date-filter">Date</label>
-            <input
-              id="document-date-filter"
-              className="form-input"
-              type="date"
-              value={filterDate}
-              onChange={e => setFilterDate(e.target.value)}
-            />
-          </div>
+            <div className="filter-dropdowns">
+              <div className="filter-dropdown">
+                <label>Status</label>
+                <select className="form-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                  {statuses.map(status => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </div>
 
-          <div className="filter-dropdowns">
-            <div className="filter-dropdown">
-              <label>Status</label>
-              <select className="form-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-                {statuses.map(status => (
-                  <option key={status} value={status}>{status}</option>
-                ))}
-              </select>
-            </div>
+              <div className="filter-dropdown">
+                <label>Direction</label>
+                <select className="form-select" value={filterDirection} onChange={e => setFilterDirection(e.target.value)}>
+                  {directions.map(direction => (
+                    <option key={direction} value={direction}>{direction}</option>
+                  ))}
+                </select>
+              </div>
 
-            <div className="filter-dropdown">
-              <label>Direction</label>
-              <select className="form-select" value={filterDirection} onChange={e => setFilterDirection(e.target.value)}>
-                {directions.map(direction => (
-                  <option key={direction} value={direction}>{direction}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="filter-dropdown">
-              <label>Priority</label>
-              <select className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
-                {priorities.map(priority => {
-                  const pInfo = priority === 'All' ? null : getPriorityInfo(priority);
-                  return (
-                    <option key={priority} value={priority}>
-                      {priority === 'All' ? 'All Priority' : pInfo?.label}
-                    </option>
-                  );
-                })}
-              </select>
+              <div className="filter-dropdown">
+                <label>Priority</label>
+                <select className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+                  {priorities.map(priority => {
+                    const pInfo = priority === 'All' ? null : getPriorityInfo(priority);
+                    return (
+                      <option key={priority} value={priority}>
+                        {priority === 'All' ? 'All Priority' : pInfo?.label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-
+        }
+      >
       <section className="document-panel">
         <div className="table-container">
           <table>
@@ -1107,6 +1110,7 @@ const DocumentList = ({
         </div>
       </div>
       </section>
+      </PageShell>
 
       {detailDoc && (() => {
         const doc = documents.find(item => item.id === detailDoc.id) || detailDoc;
@@ -1707,7 +1711,7 @@ const DocumentList = ({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

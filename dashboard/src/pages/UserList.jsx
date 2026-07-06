@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import PageShell from '../components/PageShell';
 import {
   Users,
   Search,
@@ -199,32 +200,36 @@ const UserList = ({
   };
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-header-left">
-          <h1>User Management</h1>
-          <p>Manage system users and their access levels</p>
-        </div>
-      </div>
-
-      <div className="page-toolbar-row">
-        <div className="filter-dropdown-inline">
-          <label>Search</label>
-          <div className="search-bar">
-            <Search size={16} color="var(--text-muted)" />
-            <input
-              type="text"
-              placeholder="Search users..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+    <>
+      <PageShell
+        header={
+          <div className="page-header">
+            <div className="page-header-left">
+              <h1>User Management</h1>
+              <p>Manage system users and their access levels</p>
+            </div>
           </div>
-        </div>
-        <button className="btn btn-primary" onClick={() => openForm()}>
-          <Plus size={16} /> New User
-        </button>
-      </div>
-
+        }
+        toolbar={
+          <div className="page-toolbar-row">
+            <div className="filter-dropdown-inline">
+              <label>Search</label>
+              <div className="search-bar">
+                <Search size={16} color="var(--text-muted)" />
+                <input
+                  type="text"
+                  placeholder="Search users..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <button className="btn btn-primary" onClick={() => openForm()}>
+              <Plus size={16} /> New User
+            </button>
+          </div>
+        }
+      >
       <div className="table-container">
         <table>
           <thead>
@@ -379,6 +384,7 @@ const UserList = ({
           </button>
         </div>
       </div>
+      </PageShell>
 
       {showForm && (
         <div className="modal-overlay" onClick={closeForm}>
@@ -562,7 +568,7 @@ const UserList = ({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

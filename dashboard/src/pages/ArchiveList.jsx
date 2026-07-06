@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import PageShell from "../components/PageShell";
 import {
   Archive,
   Search,
@@ -197,32 +198,36 @@ const ArchiveList = ({
   );
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-header-left">
-          <h1>Archives</h1>
-          <p>Documents that are filed, archived, and stored for records</p>
-        </div>
-      </div>
-
-      <div className="page-toolbar-row">
-        <div className="filter-dropdown-inline">
-          <label>Search</label>
-          <div className="search-bar">
-            <Search size={16} color="var(--text-muted)" />
-            <input
-              type="text"
-              placeholder="Search archives..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+    <>
+      <PageShell
+        header={
+          <div className="page-header">
+            <div className="page-header-left">
+              <h1>Archives</h1>
+              <p>Documents that are filed, archived, and stored for records</p>
+            </div>
           </div>
-        </div>
-        <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-          <Plus size={16} /> Archive Document
-        </button>
-      </div>
-
+        }
+        toolbar={
+          <div className="page-toolbar-row">
+            <div className="filter-dropdown-inline">
+              <label>Search</label>
+              <div className="search-bar">
+                <Search size={16} color="var(--text-muted)" />
+                <input
+                  type="text"
+                  placeholder="Search archives..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+              <Plus size={16} /> Archive Document
+            </button>
+          </div>
+        }
+      >
       <div className="table-container">
         <table>
           <thead>
@@ -340,6 +345,7 @@ const ArchiveList = ({
           </button>
         </div>
       </div>
+      </PageShell>
 
       {detailArchive &&
         (() => {
@@ -698,7 +704,7 @@ const ArchiveList = ({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

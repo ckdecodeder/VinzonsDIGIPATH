@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PageShell from '../components/PageShell';
 import {
   Activity,
   AlertTriangle,
@@ -261,19 +262,21 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
     .slice(0, 5);
 
   return (
-    <div>
-      <div className="page-header page-header--align-bottom">
-        <div className="page-header-left">
-          <h1>Device Management</h1>
-          <p>Physical scanner connection, heartbeat status, and hardware telemetry</p>
+    <PageShell
+      header={
+        <div className="page-header page-header--align-bottom">
+          <div className="page-header-left">
+            <h1>Device Management</h1>
+            <p>Physical scanner connection, heartbeat status, and hardware telemetry</p>
+          </div>
+          <div className="page-header-actions">
+            <button className="btn btn-secondary" onClick={onRefresh}>
+              <RefreshCcw size={16} /> Refresh
+            </button>
+          </div>
         </div>
-        <div className="page-header-actions">
-          <button className="btn btn-secondary" onClick={onRefresh}>
-            <RefreshCcw size={16} /> Refresh
-          </button>
-        </div>
-      </div>
-
+      }
+    >
       <div className="card" style={{ marginBottom: '1.25rem' }}>
         <div className="card-header">
           <h3 className="card-title">Auto-Connect Bridge</h3>
@@ -635,7 +638,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   );
 };
 

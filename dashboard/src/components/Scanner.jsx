@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import PageShell from "./PageShell";
 import {
   Camera as CameraIcon,
   Scan,
@@ -486,18 +487,20 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   ];
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-header-left">
-          <h1>Scan Document</h1>
-          <p>Scan first, then submit the document for intake review</p>
+    <PageShell
+      header={
+        <div className="page-header">
+          <div className="page-header-left">
+            <h1>Scan Document</h1>
+            <p>Scan first, then submit the document for intake review</p>
+          </div>
+          <div className={device?.connected ? 'status-badge status-online' : 'status-badge status-offline'}>
+            {device?.connected ? <Wifi size={12} /> : <WifiOff size={12} />}
+            {device?.connected ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
+          </div>
         </div>
-        <div className={device?.connected ? 'status-badge status-online' : 'status-badge status-offline'}>
-          {device?.connected ? <Wifi size={12} /> : <WifiOff size={12} />}
-          {device?.connected ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
-        </div>
-      </div>
-
+      }
+    >
       {/* Step Indicator */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1134,7 +1137,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           100% { top: 100% }
         }
       `}</style>
-    </div>
+    </PageShell>
   );
 };
 

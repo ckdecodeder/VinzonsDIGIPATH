@@ -605,6 +605,84 @@ body {
   color: var(--accent);
 }
 
+/* ==================== PAGE LAYOUT (fixed header + scroll body) ==================== */
+.page-content:has(.page-layout) {
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-content:has(.page-layout) .page-content-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: none;
+  width: 100%;
+  margin: 0;
+}
+
+.page-content:has(.page-layout) .page-content-alert,
+.page-content:has(.page-layout) .page-content-refresh-bar {
+  flex-shrink: 0;
+  width: calc(100% - 4rem);
+  max-width: calc(1400px - 4rem);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.page-content:has(.page-layout) .page-content-alert {
+  margin-top: 1rem;
+}
+
+.page-content:has(.page-layout) .page-content-refresh-bar {
+  margin-top: 0.85rem;
+}
+
+.page-layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.page-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1.25rem 2rem 2rem;
+}
+
+.page-sticky-top {
+  flex-shrink: 0;
+  background-color: #f0f6f9;
+  background-image:
+    linear-gradient(90deg, rgba(15, 76, 117, 0.04) 1px, #f0f6f9 1px),
+    linear-gradient(0deg, rgba(8, 145, 178, 0.035) 1px, #f0f6f9 1px);
+  background-size:
+    72px 72px,
+    72px 72px;
+  border-bottom: 1px solid var(--border-light);
+  box-shadow: 0 10px 24px rgba(15, 76, 117, 0.08);
+}
+
+.page-toolbar-zone {
+  padding: 0 2rem 1.5rem;
+}
+
+.page-sticky-top .page-toolbar-row,
+.page-sticky-top .activity-filter-row,
+.page-sticky-top .document-toolbar {
+  margin-bottom: 0;
+}
+
 /* ==================== PAGE HEADER ==================== */
 .page-header {
   display: flex;
@@ -613,6 +691,19 @@ body {
   margin-bottom: 2rem;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+.page-layout .page-header {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 2.5rem 2rem 1.5rem;
+  background: none;
+  border-bottom: none;
+  box-shadow: none;
+}
+
+.page-layout .page-sticky-top:has(.page-toolbar-zone) .page-header {
+  padding-bottom: 1rem;
 }
 
 .page-header.page-header--align-bottom {
@@ -3795,6 +3886,18 @@ tbody tr:hover {
 
   .page-header {
     flex-direction: column;
+  }
+
+  .page-layout .page-header {
+    padding: 1.25rem 1rem 0.85rem;
+  }
+
+  .page-toolbar-zone {
+    padding: 0 1rem 1.15rem;
+  }
+
+  .page-scroll-area {
+    padding: 0.85rem 1rem 1rem;
   }
 
   .receptionist-register-modal .modal-body {

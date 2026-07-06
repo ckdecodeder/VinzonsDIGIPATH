@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import PageShell from "../components/PageShell";
 import { Building2, Users, Search, Plus, X, Edit2, Trash2 } from "lucide-react";
 
 const OfficeList = ({
@@ -53,32 +54,36 @@ const OfficeList = ({
   };
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-header-left">
-          <h1>Offices</h1>
-          <p>All registered offices in the municipal system</p>
-        </div>
-      </div>
-
-      <div className="page-toolbar-row">
-        <div className="filter-dropdown-inline">
-          <label>Search</label>
-          <div className="search-bar">
-            <Search size={16} color="var(--text-muted)" />
-            <input
-              type="text"
-              placeholder="Search offices..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+    <>
+      <PageShell
+        header={
+          <div className="page-header">
+            <div className="page-header-left">
+              <h1>Offices</h1>
+              <p>All registered offices in the municipal system</p>
+            </div>
           </div>
-        </div>
-        <button className="btn btn-primary" onClick={() => openForm()}>
-          <Plus size={16} /> New Office
-        </button>
-      </div>
-
+        }
+        toolbar={
+          <div className="page-toolbar-row">
+            <div className="filter-dropdown-inline">
+              <label>Search</label>
+              <div className="search-bar">
+                <Search size={16} color="var(--text-muted)" />
+                <input
+                  type="text"
+                  placeholder="Search offices..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <button className="btn btn-primary" onClick={() => openForm()}>
+              <Plus size={16} /> New Office
+            </button>
+          </div>
+        }
+      >
       <div className="device-grid">
         {filteredOffices.map((office) => {
           const officeUsers = users.filter((u) => u.officeId === office.id);
@@ -210,6 +215,7 @@ const OfficeList = ({
           );
         })}
       </div>
+      </PageShell>
 
       {showForm && (
         <div className="modal-overlay" onClick={() => setShowForm(false)}>
@@ -255,7 +261,7 @@ const OfficeList = ({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

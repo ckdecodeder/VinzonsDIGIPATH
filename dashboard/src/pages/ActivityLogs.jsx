@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import PageShell from "../components/PageShell";
 import {
   Search,
   FileText,
@@ -218,52 +219,53 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
   };
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-header-left">
-          <h1>Activity Logs</h1>
-          <p>Complete audit trail of all system activities</p>
+    <PageShell
+      header={
+        <div className="page-header">
+          <div className="page-header-left">
+            <h1>Activity Logs</h1>
+            <p>Complete audit trail of all system activities</p>
+          </div>
         </div>
-      </div>
+      }
+      toolbar={
+        <div className="activity-filter-row">
+          <div className="search-bar">
+            <Search size={16} color="var(--text-muted)" />
+            <input
+              type="text"
+              placeholder="Search logs..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
 
-      {/* Filters */}
-      <div className="activity-filter-row">
-        <div className="search-bar">
-          <Search size={16} color="var(--text-muted)" />
-          <input
-            type="text"
-            placeholder="Search logs..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
+          <div className="activity-filter-dropdown">
+            <select
+              id="actionFilter"
+              className="form-select activity-filter-select"
+              value={filterAction}
+              onChange={(e) => setFilterAction(e.target.value)}
+            >
+              {actionTypes.map((a) => (
+                <option key={a} value={a}>
+                  {formatActionLabel(a)}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="activity-filter-dropdown">
-          <select
-            id="actionFilter"
-            className="form-select activity-filter-select"
-            value={filterAction}
-            onChange={(e) => setFilterAction(e.target.value)}
+          <div
+            className="activity-entries-count"
+            style={{ marginLeft: "auto", alignSelf: "center" }}
           >
-            {actionTypes.map((a) => (
-              <option key={a} value={a}>
-                {formatActionLabel(a)}
-              </option>
-            ))}
-          </select>
+            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+              {filtered.length} entries
+            </span>
+          </div>
         </div>
-
-        <div
-          className="activity-entries-count"
-          style={{ marginLeft: "auto", alignSelf: "center" }}
-        >
-          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-            {filtered.length} entries
-          </span>
-        </div>
-      </div>
-
-      {/* Log entries */}
+      }
+    >
       <div className="table-container">
         <table>
           <thead>
@@ -424,7 +426,7 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
           </button>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 };
 

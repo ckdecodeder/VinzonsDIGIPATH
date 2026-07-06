@@ -18,6 +18,7 @@ import {
   getPriorityInfo,
 } from "../data/mockData";
 import { compareNewest } from "../utils/sorting";
+import PageShell from "../components/PageShell";
 
 const AdminDashboard = ({
   documents,
@@ -184,35 +185,37 @@ const AdminDashboard = ({
   };
 
   return (
-    <div>
-      <div className="page-header page-header--align-bottom">
-        <div className="page-header-left">
-          <h1>Dashboard</h1>
-          <p>
-            Welcome back, {welcomeName}. Here's an overview of your document
-            system.
-          </p>
+    <PageShell
+      header={
+        <div className="page-header page-header--align-bottom">
+          <div className="page-header-left">
+            <h1>Dashboard</h1>
+            <p>
+              Welcome back, {welcomeName}. Here's an overview of your document
+              system.
+            </p>
+          </div>
+          <div className="page-header-actions">
+            {canScan && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => onNavigate("scan-documents")}
+              >
+                <Inbox size={16} /> Scan
+              </button>
+            )}
+            {canCreateDocument && (
+              <button
+                className="btn btn-primary"
+                onClick={() => onNavigate("add-document")}
+              >
+                <FileText size={16} /> New Document
+              </button>
+            )}
+          </div>
         </div>
-        <div className="page-header-actions">
-          {canScan && (
-            <button
-              className="btn btn-secondary"
-              onClick={() => onNavigate("scan-documents")}
-            >
-              <Inbox size={16} /> Scan
-            </button>
-          )}
-          {canCreateDocument && (
-            <button
-              className="btn btn-primary"
-              onClick={() => onNavigate("add-document")}
-            >
-              <FileText size={16} /> New Document
-            </button>
-          )}
-        </div>
-      </div>
-
+      }
+    >
       {/* Stats */}
       <div className="stats-grid">
         {statCards.map((stat, i) => {
@@ -453,7 +456,7 @@ const AdminDashboard = ({
           </table>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 };
 

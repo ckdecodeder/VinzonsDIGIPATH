@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PageShell from '../components/PageShell';
 import {
   BarChart3,
   FileText,
@@ -328,28 +329,31 @@ const ReportsPage = ({
   };
 
   return (
-    <div>
-      <div className="page-header page-header--align-bottom">
-        <div className="page-header-left">
-          <h1>Reports</h1>
-          <p>View categorized reports and analytics</p>
-        </div>
-        <div className="page-header-actions">
-          <button className="btn btn-secondary" onClick={() => setShowPreview(true)}>
-            <Eye size={16} />
-            Preview
-          </button>
-          <button className="btn btn-secondary" onClick={handlePrintPreview}>
-            <Printer size={16} />
-            Print
-          </button>
-          <button className="btn btn-secondary" onClick={handleExport} disabled={isExporting}>
-            {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            {isExporting ? 'Generating...' : 'Download DOCX'}
-          </button>
-        </div>
-      </div>
-      {exportError && (
+    <>
+      <PageShell
+        header={
+          <div className="page-header page-header--align-bottom">
+            <div className="page-header-left">
+              <h1>Reports</h1>
+              <p>View categorized reports and analytics</p>
+            </div>
+            <div className="page-header-actions">
+              <button className="btn btn-secondary" onClick={() => setShowPreview(true)}>
+                <Eye size={16} />
+                Preview
+              </button>
+              <button className="btn btn-secondary" onClick={handlePrintPreview}>
+                <Printer size={16} />
+                Print
+              </button>
+              <button className="btn btn-secondary" onClick={handleExport} disabled={isExporting}>
+                {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                {isExporting ? 'Generating...' : 'Download DOCX'}
+              </button>
+            </div>
+          </div>
+        }
+      >      {exportError && (
         <div className="alert alert-danger" style={{ marginBottom: '1rem' }}>
           {exportError}
         </div>
@@ -808,6 +812,8 @@ const ReportsPage = ({
         </div>
       )}
 
+      </PageShell>
+
       {showPreview && (
         <div className="modal-overlay report-preview-overlay" onClick={() => setShowPreview(false)}>
           <div className="modal report-preview-modal" onClick={e => e.stopPropagation()}>
@@ -924,7 +930,7 @@ const ReportsPage = ({
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 
