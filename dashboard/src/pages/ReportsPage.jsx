@@ -855,9 +855,10 @@ const ReportsPage = ({
                   <div><span>Record Count</span><strong>{activeCategory === 'summary' ? filteredDocs.length : previewTable.rows.length}</strong></div>
                 </div>
 
-                <h3 className="official-report-section-title">Summary</h3>
-                <div className="official-report-table-wrap">
-                <table className="official-report-table official-report-table--summary">
+                <div className="official-report-section">
+                  <h3 className="official-report-section-title">Summary</h3>
+                  <div className="official-report-table-wrap">
+                  <table className="official-report-table official-report-table--summary">
                   <colgroup>
                     <col style={{ width: '18%' }} />
                     <col style={{ width: '30%' }} />
@@ -881,9 +882,10 @@ const ReportsPage = ({
                   </tbody>
                 </table>
                 </div>
+                </div>
 
                 {previewTable.title && (
-                  <>
+                  <div className="official-report-section">
                     <h3 className="official-report-section-title">{previewTable.title}</h3>
                     <div className="official-report-table-wrap">
                     <table className="official-report-table">
@@ -912,7 +914,7 @@ const ReportsPage = ({
                       </tbody>
                     </table>
                     </div>
-                  </>
+                  </div>
                 )}
 
                 <footer className="official-report-footer">

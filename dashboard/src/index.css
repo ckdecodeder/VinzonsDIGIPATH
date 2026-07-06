@@ -1561,11 +1561,9 @@ tbody tr:hover {
 }
 
 .page-toolbar-row .btn {
-  height: 40px;
-  white-space: nowrap;
-}
-
-.page-toolbar-row .btn {
+  min-height: 46px;
+  padding: 0 1.65rem;
+  border-radius: var(--radius-lg);
   white-space: nowrap;
 }
 
@@ -3433,15 +3431,29 @@ tbody tr:hover {
   word-break: break-word;
 }
 
+.official-report-section {
+  margin-bottom: 0.75rem;
+}
+
 .official-report-section-title {
-  margin: 0.85rem 0 0.45rem;
+  margin: 0.85rem 0 0.35rem;
   font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #374151;
   font-weight: 700;
-  padding-bottom: 0.3rem;
+  padding-bottom: 0.25rem;
   border-bottom: 1px solid #e5e7eb;
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.official-report-section .official-report-section-title {
+  margin-top: 0;
+}
+
+.official-report-section .official-report-section-title:not(:first-child) {
+  margin-top: 0.65rem;
 }
 
 .official-report-table-wrap {
@@ -3450,7 +3462,7 @@ tbody tr:hover {
   overflow: hidden;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0;
   background: white;
 }
 
@@ -3546,6 +3558,13 @@ tbody tr:hover {
     margin: 0.5in;
   }
 
+  html,
+  body,
+  #root {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
   .sidebar,
   .page-header-actions,
   .filter-chip,
@@ -3573,7 +3592,7 @@ tbody tr:hover {
   /* Report preview print: hide page UI, show only the report document */
   body:has(.report-print-root) .sidebar,
   body:has(.report-print-root) .notification-dock,
-  body:has(.report-print-root) .page-content-shell > div > *:not(.report-preview-overlay),
+  body:has(.report-print-root) .page-content-shell > div:not(.report-preview-overlay) > *,
   body:has(.report-print-root) .report-preview-toolbar {
     display: none !important;
   }
@@ -3582,6 +3601,9 @@ tbody tr:hover {
   body:has(.report-print-root) .main-content,
   body:has(.report-print-root) .page-content,
   body:has(.report-print-root) .page-content-shell,
+  body:has(.report-print-root) .page-layout,
+  body:has(.report-print-root) .page-sticky-top,
+  body:has(.report-print-root) .page-scroll-area,
   body:has(.report-print-root) .report-preview-overlay,
   body:has(.report-print-root) .report-preview-modal,
   body:has(.report-print-root) .report-print-root {
@@ -3601,6 +3623,11 @@ tbody tr:hover {
     backdrop-filter: none !important;
   }
 
+  body:has(.report-print-root) .report-print-root {
+    flex: none !important;
+    min-height: auto !important;
+  }
+
   body:has(.report-print-root) .official-report-page {
     width: 100% !important;
     max-width: 100% !important;
@@ -3616,13 +3643,42 @@ tbody tr:hover {
     border-radius: 0 !important;
   }
 
+  body:has(.report-print-root) .official-report-section {
+    margin-bottom: 0.5rem !important;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+
+  body:has(.report-print-root) .official-report-section-title {
+    margin: 0.55rem 0 0.2rem !important;
+    padding-bottom: 0.15rem !important;
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }
+
+  body:has(.report-print-root) .official-report-section .official-report-section-title {
+    margin-top: 0 !important;
+  }
+
   body:has(.report-print-root) .official-report-table-wrap {
     width: 100% !important;
     max-width: 100% !important;
     overflow: visible !important;
     border-radius: 0 !important;
     box-sizing: border-box !important;
-    break-inside: avoid;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }
+
+  body:has(.report-print-root) .official-report-page .official-report-table thead {
+    display: table-header-group !important;
+  }
+
+  body:has(.report-print-root) .official-report-page .official-report-table tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 
   body:has(.report-print-root) .official-report-page table.official-report-table {
@@ -3898,6 +3954,11 @@ tbody tr:hover {
 
   .page-scroll-area {
     padding: 0.85rem 1rem 1rem;
+  }
+
+  .page-toolbar-row .btn {
+    min-height: 44px;
+    padding: 0 1.35rem;
   }
 
   .receptionist-register-modal .modal-body {
