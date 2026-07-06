@@ -260,7 +260,7 @@ const AdminDashboard = ({
           </div>
           <div className="chart-donut">
             <div className="donut-ring">
-              <svg width="190" height="190" viewBox="0 0 190 190">
+              <svg width="230" height="230" viewBox="0 0 190 190">
                 {statusCounts.map((seg, i) => {
                   const pct = (seg.count / total) * 100;
                   const circ = 2 * Math.PI * 72;
