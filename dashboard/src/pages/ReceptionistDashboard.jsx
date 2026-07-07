@@ -96,10 +96,34 @@ const ReceptionistDashboard = ({
     });
 
   const statCards = [
-    { label: 'Received Today', value: todayDocs.length, icon: <Inbox size={26} />, color: 'blue' },
-    { label: 'Urgent Items', value: urgentDocs.length, icon: <Flag size={26} />, color: 'red' },
-    { label: 'Pending', value: pendingDocuments.length, icon: <Clock size={26} />, color: 'amber' },
-    { label: 'Total In System', value: documents.length, icon: <FileText size={26} />, color: 'purple' },
+    {
+      label: 'Received Today',
+      value: todayDocs.length,
+      icon: <Inbox size={26} />,
+      color: 'blue',
+      onClick: () => setActiveTab('incoming'),
+    },
+    {
+      label: 'Urgent Items',
+      value: urgentDocs.length,
+      icon: <Flag size={26} />,
+      color: 'red',
+      onClick: () => onNavigate('documents'),
+    },
+    {
+      label: 'Pending',
+      value: pendingDocuments.length,
+      icon: <Clock size={26} />,
+      color: 'amber',
+      onClick: () => setActiveTab('routing'),
+    },
+    {
+      label: 'Total In System',
+      value: documents.length,
+      icon: <FileText size={26} />,
+      color: 'purple',
+      onClick: () => onNavigate('documents'),
+    },
   ];
 
   const getOfficeName = (officeId) => {
@@ -315,13 +339,20 @@ const ReceptionistDashboard = ({
 
         <div className="stats-grid receptionist-stats">
           {statCards.map((stat, i) => (
-            <div key={i} className={`stat-card ${stat.color}`}>
+            <button
+              type="button"
+              key={i}
+              className={`stat-card ${stat.color}`}
+              onClick={stat.onClick}
+              title={`Open ${stat.label}`}
+              style={{ textAlign: 'left' }}
+            >
               <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
               <div className="stat-info">
                 <p className="stat-label">{stat.label}</p>
                 <p className="stat-value">{stat.value}</p>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       </div>

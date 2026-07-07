@@ -878,20 +878,20 @@ const DocumentList = ({
           <table>
           <thead>
             <tr>
-              <th>Tracking #</th>
-              <th>Subject</th>
+              <th className="documents-col-tracking">Tracking #</th>
+              <th className="documents-col-subject">Subject</th>
               <th style={{ cursor: 'pointer' }} onClick={() => handleSort('priority')}>
                 Priority <SortIcon field="priority" />
               </th>
-              <th>Type</th>
+              <th className="documents-col-type">Type</th>
               <th>Current Location</th>
-              <th>Direction</th>
-              <th>Status</th>
+              <th className="documents-col-direction">Direction</th>
+              <th className="documents-col-status-header">Status</th>
               <th>Files</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('dateReceived')}>
+              <th className="documents-col-date" style={{ cursor: 'pointer' }} onClick={() => handleSort('dateReceived')}>
                 Date <SortIcon field="dateReceived" />
               </th>
-              <th style={{ textAlign: 'right' }}>Actions</th>
+              <th className="documents-col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -910,8 +910,8 @@ const DocumentList = ({
                     title="Open document details"
                     onClick={() => setDetailDoc(doc)}
                   >
-                    <td><span className="td-mono">{doc.trackingNumber}</span></td>
-                    <td className="td-primary">{doc.subject}</td>
+                    <td className="documents-col-tracking"><span className="td-mono">{doc.trackingNumber}</span></td>
+                    <td className="td-primary documents-col-subject">{doc.subject}</td>
                     <td>
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
@@ -924,27 +924,27 @@ const DocumentList = ({
                         {pInfo.label}
                       </span>
                     </td>
-                    <td>{getDocumentTypeLabel(doc)}</td>
+                    <td className="documents-col-type">{getDocumentTypeLabel(doc)}</td>
                     <td>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                        <MapPin size={13} />
+                        <MapPin size={13} style={{ flexShrink: 0 }} />
                         {getCurrentLocation(doc)}
                       </span>
                     </td>
-                    <td>
+                    <td className="documents-col-direction">
                       <span className={`direction-badge direction-${doc.documentDirection.toLowerCase()}`}>
                         {doc.documentDirection === 'Incoming' ? <Inbox size={12} /> : <Send size={12} />}
                         {' '}{doc.documentDirection}
                       </span>
                     </td>
-                    <td>
+                    <td className="documents-col-status-cell">
                       <span className={`status-badge status-${getStatusClass(doc)}`}>
                         {getWorkflowStatus(doc)}
                       </span>
                       {(doc.intakeStatus || 'Approved') !== 'Approved' && (
                         <span
                           className={`status-badge ${doc.intakeStatus === 'Rejected' ? 'status-archived' : 'status-in-transit'}`}
-                          style={{ marginLeft: '0.35rem' }}
+                          style={{ display: 'inline-flex', marginTop: '0.35rem' }}
                         >
                           {doc.intakeStatus}
                         </span>
@@ -958,9 +958,9 @@ const DocumentList = ({
                         <Paperclip size={13} /> {files.length}
                       </span>
                     </td>
-                    <td style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.375rem' }}>
+                    <td className="documents-col-date" style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
+                    <td className="documents-col-actions">
+                      <div className="documents-actions-wrap">
                         <button className="btn-icon" title="Open details" onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
                           <Eye size={14} />
                         </button>

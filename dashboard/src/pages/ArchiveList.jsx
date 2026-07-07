@@ -66,6 +66,13 @@ const ArchiveList = ({
     return date.toLocaleString();
   };
 
+  const formatArchiveDate = (value) => {
+    if (!value) return "Not recorded";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toISOString().slice(0, 10);
+  };
+
   const getDocumentFiles = (doc) => {
     if (!doc) return [];
     if (doc.scannedFiles?.length) return doc.scannedFiles;
@@ -237,7 +244,7 @@ const ArchiveList = ({
               <th>Document Subject</th>
               <th>Type</th>
               <th>Archived By</th>
-              <th>Archive Date</th>
+              <th className="archives-col-date">Archive Date</th>
             </tr>
           </thead>
           <tbody>
@@ -271,17 +278,10 @@ const ArchiveList = ({
                       {getUserFullName(a.userId)}
                     </div>
                   </td>
-                  <td>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem",
-                        color: "var(--text-muted)",
-                      }}
-                    >
-                      <Calendar size={14} />
-                      {a.date}
+                  <td className="archives-col-date">
+                    <div className="archives-date-wrap">
+                      <Calendar size={14} className="archives-date-icon" />
+                      <span>{formatArchiveDate(a.date)}</span>
                     </div>
                   </td>
                 </tr>

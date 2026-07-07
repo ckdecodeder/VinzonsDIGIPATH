@@ -67,6 +67,20 @@ const TransmissionList = ({
       : "Unknown";
   };
 
+  const renderRouteOfficeRight = (officeName) => {
+    const name = officeName || "Unknown Office";
+    const parts = name.split(" & ");
+    if (parts.length < 2) return name;
+    const firstLine = parts[0];
+    const rest = parts.slice(1).join(" & ");
+    return (
+      <span className="transfer-office-split">
+        <span className="transfer-office-line">{firstLine}</span>
+        <span className="transfer-office-line">{`& ${rest}`}</span>
+      </span>
+    );
+  };
+
   const getDocument = (documentId) =>
     documents.find((d) => d.id === documentId);
   const getWorkflowStatus = (doc) => {
@@ -125,6 +139,19 @@ const TransmissionList = ({
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleString();
+  };
+
+  const formatTransmissionDateParts = (value) => {
+    if (!value) return { date: "Not recorded", time: "" };
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      const [rawDate = value, rawTime = ""] = String(value).split("T");
+      return { date: rawDate, time: rawTime.replace("Z", "") };
+    }
+    return {
+      date: parsed.toLocaleDateString(),
+      time: parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
   };
 
   const getTransmissionTimeline = (transmission) => {
@@ -294,7 +321,7 @@ const TransmissionList = ({
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row">
+          <div className="page-toolbar-row transmissions-toolbar">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -333,21 +360,23 @@ const TransmissionList = ({
         <table>
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Document</th>
-              <th>Route</th>
-              <th>Sent By</th>
-              <th>Received By</th>
-              <th>Date</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th style={{ textAlign: "right" }}>Actions</th>
+              <th className="transmissions-col-id">ID</th>
+              <th className="transmissions-col-document">Document</th>
+              <th className="transmissions-col-route">Route</th>
+              <th className="transmissions-col-sent-by">Sent By</th>
+              <th className="transmissions-col-received-by">Received By</th>
+              <th className="transmissions-col-date">Date</th>
+              <th className="transmissions-col-type">Type</th>
+              <th className="transmissions-col-status">Status</th>
+              <th className="transmissions-col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
             {paginatedTransmissions.length > 0 ? (
               paginatedTransmissions.map((t) => {
                 const doc = documents.find((d) => d.id === t.documentId);
+                const displayTimestamp = t.receivedAt || t.transmissionDate;
+                const timestampParts = formatTransmissionDateParts(displayTimestamp);
                 return (
                   <tr
                     key={t.id}
@@ -355,50 +384,40 @@ const TransmissionList = ({
                     onClick={() => setDetailTransmission(t)}
                     title="View transmission details"
                   >
-                    <td>
+                    <td className="transmissions-col-id">
                       <span className="td-mono">{t.id}</span>
                     </td>
-                    <td
-                      className="td-primary"
-                      style={{
-                        maxWidth: "200px",
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
+                    <td className="td-primary transmissions-col-document">
                       {doc?.subject || "Unknown Document"}
                     </td>
-                    <td>
+                    <td className="transmissions-col-route">
                       <div className="transfer-visual">
-                        <span className="transfer-office">
+                        <span className="transfer-office transfer-office-left">
                           {getOfficeName(t.fromOfficeId)}
                         </span>
                         <ArrowRight size={14} className="transfer-arrow" />
-                        <span className="transfer-office">
-                          {getOfficeName(t.toOfficeId)}
+                        <span className="transfer-office transfer-office-right">
+                          {renderRouteOfficeRight(getOfficeName(t.toOfficeId))}
                         </span>
                       </div>
                     </td>
-                    <td>{getUserFullName(t.sentBy)}</td>
-                    <td>
+                    <td className="transmissions-col-sent-by">{getUserFullName(t.sentBy)}</td>
+                    <td className="transmissions-col-received-by">
                       {t.receivedBy ? (
                         getUserFullName(t.receivedBy)
                       ) : (
-                        <span
-                          style={{
-                            color: "var(--warning)",
-                            fontStyle: "italic",
-                          }}
-                        >
+                        <span className="transmissions-pending-text">
                           Pending: awaiting {getOfficeName(t.toOfficeId)}
                         </span>
                       )}
                     </td>
-                    <td style={{ color: "var(--text-muted)" }}>
-                      {t.receivedAt || t.transmissionDate}
+                    <td className="transmissions-col-date">
+                      <div className="transmissions-date-stack">
+                        <span>{timestampParts.date}</span>
+                        {timestampParts.time && <span>{timestampParts.time}</span>}
+                      </div>
                     </td>
-                    <td>
+                    <td className="transmissions-col-type">
                       <span
                         className={`filter-chip active`}
                         style={{ cursor: "default", fontSize: "0.7rem" }}
@@ -406,7 +425,7 @@ const TransmissionList = ({
                         {t.transmissionType}
                       </span>
                     </td>
-                    <td>
+                    <td className="transmissions-col-status">
                       {t.receivedBy ? (
                         <span className="status-badge status-archived">
                           <CheckCircle2 size={12} /> Completed
@@ -420,18 +439,20 @@ const TransmissionList = ({
                         {getTransmissionPendingReason(t)}
                       </small>
                     </td>
-                    <td style={{ textAlign: "right" }}>
-                      {canReceiveTransmission(t) && (
-                        <button
-                          className="btn btn-sm btn-success"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleReceive(t.id).catch(() => {});
-                          }}
-                        >
-                          <CheckCircle2 size={14} /> Receive
-                        </button>
-                      )}
+                    <td className="transmissions-col-actions">
+                      <div className="transmissions-actions-wrap">
+                        {canReceiveTransmission(t) && (
+                          <button
+                            className="btn btn-sm btn-success"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleReceive(t.id).catch(() => {});
+                            }}
+                          >
+                            <CheckCircle2 size={14} /> Receive
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

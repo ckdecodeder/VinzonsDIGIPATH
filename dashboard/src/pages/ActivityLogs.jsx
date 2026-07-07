@@ -255,11 +255,8 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
             </select>
           </div>
 
-          <div
-            className="activity-entries-count"
-            style={{ marginLeft: "auto", alignSelf: "center" }}
-          >
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+          <div className="activity-entries-count ml-auto self-center whitespace-nowrap text-right">
+            <span className="activity-entries-text">
               {filtered.length} entries
             </span>
           </div>
@@ -270,11 +267,11 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
         <table>
           <thead>
             <tr>
-              <th style={{ width: "180px" }}>Timestamp</th>
-              <th style={{ width: "160px" }}>Action</th>
-              <th style={{ width: "160px" }}>User</th>
-              <th>Details</th>
-              <th style={{ width: "100px" }}>Reference</th>
+              <th className="activity-col-timestamp">Timestamp</th>
+              <th className="w-[170px] min-w-[160px]">Action</th>
+              <th className="w-[170px] min-w-[160px]">User</th>
+              <th className="min-w-[280px]">Details</th>
+              <th className="w-[120px] min-w-[110px]">Reference</th>
             </tr>
           </thead>
           <tbody>
@@ -288,78 +285,37 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
                 };
                 return (
                   <tr key={log.id}>
-                    <td>
-                      <div
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: "0.125rem",
-                        }}
-                      >
-                        <span
-                          style={{
-                            fontSize: "0.78rem",
-                            color: "var(--text-secondary)",
-                          }}
-                        >
-                          {formatTimestamp(log.timestamp)}
-                        </span>
-                      </div>
+                    <td className="activity-col-timestamp-cell">
+                      <span className="activity-log-timestamp">
+                        {formatTimestamp(log.timestamp)}
+                      </span>
                     </td>
                     <td>
                       <span
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "0.375rem",
-                          padding: "0.25rem 0.625rem",
-                          borderRadius: "9999px",
-                          fontSize: "0.7rem",
-                          fontWeight: 600,
-                          background: cfg.bg,
-                          color: cfg.color,
-                          whiteSpace: "nowrap",
-                        }}
+                        className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold whitespace-nowrap"
+                        style={{ background: cfg.bg, color: cfg.color }}
                       >
                         {cfg.icon}
                         {cfg.label}
                       </span>
                     </td>
                     <td>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.5rem",
-                        }}
-                      >
+                      <div className="flex items-center gap-2">
                         <User
                           size={14}
                           style={{ color: "var(--text-muted)" }}
                         />
-                        <span
-                          style={{
-                            fontSize: "0.8rem",
-                            color: "var(--text-main)",
-                            fontWeight: 500,
-                          }}
-                        >
+                        <span className="text-[0.8rem] font-medium text-[var(--text-main)]">
                           {getUserFullName(log.userId)}
                         </span>
                       </div>
                     </td>
-                    <td
-                      className="td-primary"
-                      style={{ fontSize: "0.8rem", fontWeight: 400 }}
-                    >
+                    <td className="td-primary text-[0.8rem] font-normal leading-snug">
                       {log.details}
                     </td>
                     <td>
                       {log.referenceId && (
-                        <span
-                          className="td-mono"
-                          style={{ fontSize: "0.7rem" }}
-                        >
+                        <span className="td-mono text-[0.7rem]">
                           {log.referenceId}
                         </span>
                       )}

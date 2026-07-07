@@ -585,7 +585,7 @@ const ReportsPage = ({
                     <th>Priority</th>
                     <th>Direction</th>
                     <th>Status</th>
-                    <th>Date</th>
+                    <th className="reports-date-col">Date</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -611,7 +611,7 @@ const ReportsPage = ({
                             {getWorkflowStatus(doc)}
                           </span>
                         </td>
-                        <td style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
+                        <td className="reports-date-col reports-date-cell">{formatReportDate(doc.dateReceived)}</td>
                       </tr>
                     );
                   })}
@@ -644,13 +644,13 @@ const ReportsPage = ({
               <table>
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Document</th>
-                    <th>From</th>
-                    <th>To</th>
-                    <th>Sent By</th>
-                    <th>Date</th>
-                    <th>Status</th>
+                    <th className="reports-trans-col-id">ID</th>
+                    <th className="reports-trans-col-document">Document</th>
+                    <th className="reports-trans-col-from">From</th>
+                    <th className="reports-trans-col-to">To</th>
+                    <th className="reports-trans-col-sent-by">Sent By</th>
+                    <th className="reports-date-col reports-trans-col-date">Date</th>
+                    <th className="reports-trans-col-status">Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -658,13 +658,13 @@ const ReportsPage = ({
                     const doc = documents.find(d => d.id === t.documentId);
                     return (
                       <tr key={t.id}>
-                        <td><span className="td-mono">{t.id}</span></td>
-                        <td className="td-primary">{doc?.subject || '—'}</td>
-                        <td>{getOfficeName(t.fromOfficeId)}</td>
-                        <td>{getOfficeName(t.toOfficeId)}</td>
-                        <td>{getUserFullName(t.sentBy)}</td>
-                        <td style={{ color: 'var(--text-muted)' }}>{t.transmissionDate}</td>
-                        <td>
+                        <td className="reports-trans-col-id"><span className="td-mono">{t.id}</span></td>
+                        <td className="td-primary reports-trans-col-document">{doc?.subject || '—'}</td>
+                        <td className="reports-trans-col-from">{getOfficeName(t.fromOfficeId)}</td>
+                        <td className="reports-trans-col-to">{getOfficeName(t.toOfficeId)}</td>
+                        <td className="reports-trans-col-sent-by">{getUserFullName(t.sentBy)}</td>
+                        <td className="reports-date-col reports-date-cell reports-trans-col-date">{formatReportDate(t.transmissionDate)}</td>
+                        <td className="reports-trans-col-status">
                           {t.receivedBy ? (
                             <span className="status-badge status-archived">Completed</span>
                           ) : (
