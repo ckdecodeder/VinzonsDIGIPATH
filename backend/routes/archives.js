@@ -8,10 +8,10 @@ const {
   createLogEntry,
   generateId,
   createNotification,
-  queueSenderNotifications,
   appendDocumentTimeline,
   createTimelineEvent,
 } = require('../utils/helpers');
+const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');

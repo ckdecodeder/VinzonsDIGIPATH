@@ -10,7 +10,6 @@ const {
   generateTrackingNumber,
   notifyApprovalUsers,
   createNotification,
-  queueSenderNotifications,
   appendDocumentTimeline,
   createTimelineEvent,
   normalizeWorkflowStatus,
@@ -20,7 +19,7 @@ const {
   isGlobalRole,
 } = require('../utils/helpers');
 const { persistAttachments } = require('../utils/attachments');
-const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
+const { normalizeSenderNotificationChannels, queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');

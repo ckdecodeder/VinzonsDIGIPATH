@@ -11,13 +11,13 @@ const {
   generateId,
   generateTrackingNumber,
   notifyApprovalUsers,
-  queueSenderNotifications,
   appendDocumentTimeline,
   createTimelineEvent,
   normalizeWorkflowStatus,
   isGlobalRole,
   getUserOfficeId,
 } = require('../utils/helpers');
+const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { persistAttachments } = require('../utils/attachments');
 const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
 const {

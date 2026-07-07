@@ -1483,7 +1483,7 @@ tbody tr:hover {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 0.35rem;
+  gap: 1rem;
   flex-wrap: wrap;
   margin-bottom: 1.5rem;
 }
@@ -1522,8 +1522,8 @@ tbody tr:hover {
 }
 
 .page-toolbar-row .filter-dropdown-inline .search-bar {
-  width: 500%;
-  height: 60px;
+  min-width: 260px;
+  height: 40px;
   padding: 0 1rem;
   display: flex;
   align-items: center;

@@ -82,7 +82,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const commandPollRef = useRef(null);
   const canChooseSourceOffice = currentUser?.role === 'Admin';
   const canChooseDirection = currentUser?.role === 'Admin';
-  const canSetInitialStatus = currentUser?.role === 'Receptionist';
+  const canSetInitialStatus = currentUser?.role === 'Receptionist' || currentUser?.role === 'Admin';
   const defaultSourceOfficeId = currentUser?.officeId || offices[0]?.id || 'OFF-001';
   const getNextOfficeId = (fromOfficeId) => offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId;
   const isOtherDocumentType = (typeId) => {
@@ -826,7 +826,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     <option>For Signing</option>
                     <option>For Filing</option>
                   </select>
-                  <p className="field-hint">Only receptionists set the initial pending status before Mayor/Admin review.</p>
+                  <p className="field-hint">Set the initial pending status before Mayor review.</p>
                 </div>
 
                 {/* Sender Information */}

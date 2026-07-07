@@ -10,6 +10,7 @@ const STATIC_ORIGINS = new Set([
   'http://127.0.0.1:3000',
   'https://localhost',
   'http://localhost',
+  'https://digipath-zeta.vercel.app',
 ]);
 
 function extraOriginsFromEnv() {

@@ -418,7 +418,7 @@ const DocumentList = ({
     const normalizedFormData = {
       ...formData,
       documentDirection: isReceptionist ? 'Incoming' : formData.documentDirection,
-      status: editDoc ? getWorkflowStatus(formData.status) : (currentRole === 'receptionist' ? getWorkflowStatus(formData.status) : 'Received'),
+      status: editDoc ? getWorkflowStatus(formData.status) : getWorkflowStatus(formData.status),
       dateReceived: editDoc ? editDoc.dateReceived : formData.dateReceived,
       documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
       originOfficeOther: formData.originOfficeOther.trim(),
@@ -1337,13 +1337,13 @@ const DocumentList = ({
                       className="form-select"
                       value={formData.status}
                       onChange={e => setFormData({ ...formData, status: e.target.value })}
-                      disabled={Boolean(editDoc) || currentRole !== 'receptionist'}
+                      disabled={Boolean(editDoc) || (currentRole !== 'receptionist' && currentRole !== 'admin')}
                     >
                       {registrationStatuses.map(status => (
                         <option key={status} value={status}>{status}</option>
                       ))}
                     </select>
-                    <p className="field-hint">Only receptionists set the starting status. Mayor/Admin actions finish it after approval.</p>
+                    <p className="field-hint">Set the starting workflow status. Mayor actions finish it after approval.</p>
                   </div>
                 </div>
                 <div className="form-grid">

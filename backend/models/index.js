@@ -44,7 +44,7 @@ const UserModel = sequelize
 const DocumentTypeModel = sequelize
   ? sequelize.define('DocumentType', {
       id:        { type: DataTypes.STRING, primaryKey: true },
-      name:      { type: DataTypes.STRING, allowNull: false },
+      category:  { type: DataTypes.STRING, allowNull: false },
       createdAt: { type: DataTypes.STRING },
       updatedAt: { type: DataTypes.STRING },
     }, { tableName: 'document_types', timestamps: false })
