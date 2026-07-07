@@ -541,14 +541,7 @@ body {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background:
-    linear-gradient(90deg, rgba(15, 76, 117, 0.025) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(8, 145, 178, 0.022) 1px, transparent 1px),
-    linear-gradient(135deg, #f8fbfd 0%, #eef6f8 100%);
-  background-size:
-    72px 72px,
-    72px 72px,
-    100% 100%;
+  background: linear-gradient(135deg, #f8fbfd 0%, #eef6f8 100%);
 }
 
 .page-content {
@@ -663,12 +656,6 @@ body {
 .page-sticky-top {
   flex-shrink: 0;
   background-color: #f0f6f9;
-  background-image:
-    linear-gradient(90deg, rgba(15, 76, 117, 0.04) 1px, #f0f6f9 1px),
-    linear-gradient(0deg, rgba(8, 145, 178, 0.035) 1px, #f0f6f9 1px);
-  background-size:
-    72px 72px,
-    72px 72px;
   border-bottom: 1px solid var(--border-light);
   box-shadow: 0 10px 24px rgba(15, 76, 117, 0.08);
 }
@@ -1506,6 +1493,27 @@ tbody tr:hover {
   flex: none;
 }
 
+.page-toolbar-row .filter-dropdown-search {
+  flex: 0 0 540px;
+  width: 540px;
+  max-width: 100%;
+}
+
+.page-toolbar-row .filter-dropdown-search .search-bar {
+  width: 100%;
+  max-width: 540px;
+  flex: none;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 0.85rem;
+}
+
+.page-toolbar-row .filter-dropdown-search .search-bar input {
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+}
+
 .page-toolbar-row .filter-dropdown-inline {
   display: flex;
   flex-direction: column;
@@ -1569,8 +1577,8 @@ tbody tr:hover {
 
 .activity-filter-row {
   display: flex;
-  gap: 0.75rem;
-  align-items: stretch;
+  gap: 1.25rem;
+  align-items: flex-end;
   flex-wrap: wrap;
   margin-bottom: 1.5rem;
 }
@@ -1580,8 +1588,18 @@ tbody tr:hover {
   min-width: 540px;
   max-width: 540px;
   width: 540px;
-  height: 48px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 0.85rem;
   border-color: var(--border-light);
+}
+
+.activity-filter-row .search-bar input {
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  box-shadow: none;
 }
 
 .activity-filter-row .filter-dropdown-inline {
@@ -1604,41 +1622,47 @@ tbody tr:hover {
 }
 
 .activity-filter-row .filter-dropdown-inline .search-bar {
-  height: 90px;
-  padding: 0 1rem;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 0.85rem;
   border-color: var(--border-light);
 }
 
 .activity-filter-dropdown {
   display: flex;
   flex-direction: column;
+  justify-content: flex-end;
   gap: 0.35rem;
-  width: 260px;
-  min-width: 260px;
-  max-width: 260px;
-  flex: 0 0 260px;
-}
-
-.activity-filter-dropdown .form-select,
-.search-bar input {
-  min-height: 48px;
-  width: 100%;
-  padding: 0.75rem 1rem;
-  font-size: 0.95rem;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border-light);
-  background: var(--bg-surface);
-  color: var(--text-main);
-  appearance: none;
-  box-shadow: none;
+  width: 280px;
+  min-width: 280px;
+  max-width: 280px;
+  flex: 0 0 280px;
+  margin-left: 2rem;
 }
 
 .activity-filter-dropdown .form-select {
-  padding-right: 2.75rem;
+  min-height: 38px;
+  height: 38px;
+  width: 100%;
+  padding: 0 2.75rem 0 0.85rem;
+  font-size: 0.95rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-light);
+  background-color: var(--bg-surface);
+  color: var(--text-main);
+  appearance: none;
+  box-shadow: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23444' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 1rem center;
   background-size: 10px 6px;
+}
+
+.activity-filter-dropdown .form-select:focus,
+.activity-filter-dropdown .form-select:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 5l4-4 4 4' fill='none' stroke='%23444' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 
 .activity-filter-select {
@@ -3954,6 +3978,11 @@ tbody tr:hover {
 
   .page-scroll-area {
     padding: 0.85rem 1rem 1rem;
+  }
+
+  .page-toolbar-row .filter-dropdown-search {
+    flex: 1 1 100%;
+    width: 100%;
   }
 
   .page-toolbar-row .btn {

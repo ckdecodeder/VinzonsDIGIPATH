@@ -124,7 +124,7 @@ async function main() {
 
   const DocumentType = sequelize.define('DocumentType', {
     id:        { type: PK, primaryKey: true },
-    name:      { type: S },
+    category:  { type: S },
     createdAt: { type: S },
     updatedAt: { type: S },
   }, { tableName: 'document_types', timestamps: false });

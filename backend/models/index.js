@@ -219,8 +219,28 @@ const LogModel = sequelize
   : null;
 
 // ─── Sync all tables to database ──────────────────────────────────────────────
+const migrateDocumentTypeCategory = async () => {
+  await sequelize.query(`
+    ALTER TABLE document_types
+    ADD COLUMN IF NOT EXISTS category TEXT;
+  `);
+  await sequelize.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'document_types' AND column_name = 'name'
+      ) THEN
+        UPDATE document_types SET category = name WHERE category IS NULL;
+        ALTER TABLE document_types DROP COLUMN name;
+      END IF;
+    END$$;
+  `);
+};
+
 const syncModels = async () => {
   if (!sequelize) return;
+  await migrateDocumentTypeCategory();
   // Use sync() without alter — tables were already created correctly by migrate-pg.js
   // alter:true would try to downgrade TEXT → VARCHAR(255), breaking existing data
   await sequelize.sync();

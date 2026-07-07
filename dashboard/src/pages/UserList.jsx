@@ -212,9 +212,9 @@ const UserList = ({
         }
         toolbar={
           <div className="page-toolbar-row">
-            <div className="filter-dropdown-inline">
+            <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
-              <div className="search-bar">
+              <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"

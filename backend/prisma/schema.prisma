@@ -65,7 +65,7 @@ model devices {
 
 model document_types {
   id        String  @id @db.VarChar(255)
-  name      String?
+  category  String?
   createdAt String?
   updatedAt String?
 }

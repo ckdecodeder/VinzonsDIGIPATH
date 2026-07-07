@@ -112,7 +112,8 @@ const AdminDashboard = ({
     },
   ];
 
-  const total = statusCounts.reduce((s, c) => s + c.count, 0) || 1;
+  const statusTotal = statusCounts.reduce((s, c) => s + c.count, 0);
+  const total = statusTotal || 1;
   let cumulative = 0;
 
   const recentTransmissions = [...transmissions]
@@ -286,7 +287,7 @@ const AdminDashboard = ({
                 })}
               </svg>
               <div className="donut-center">
-                <span className="donut-total">{totalDocs}</span>
+                <span className="donut-total">{statusTotal}</span>
                 <span className="donut-label">Total</span>
               </div>
             </div>
