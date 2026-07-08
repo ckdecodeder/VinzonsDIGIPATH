@@ -108,7 +108,29 @@ def ensure_dependencies():
         return
 
     missing_pip = [package for module, package in PIP_PACKAGES if not _module_available(module)]
+
+    # When running inside a virtualenv (e.g. the systemd .venv with
+    # PYTHONNOUSERSITE=1), apt's python3-opencv/python3-numpy are NOT visible.
+    # Install them into THIS interpreter via pip so the USB webcam (OpenCV)
+    # works no matter how the bridge was launched.
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    if in_venv:
+        if not _module_available("numpy"):
+            missing_pip.append("numpy")
+        if not _module_available("cv2"):
+            missing_pip.append("opencv-python-headless")
+
     _pip_install(missing_pip)
+
+    if in_venv:
+        # apt packages can't be seen from inside the venv; pip above covers
+        # cv2/numpy/PIL/requests. picamera2 (CSI camera) needs system packages
+        # and is not required for a USB-webcam setup, so don't block on it.
+        if not _module_available("cv2"):
+            print("[Setup] WARNING: OpenCV (cv2) still unavailable in the venv after pip install.")
+            print("[Setup] Recreate the venv with system packages, e.g.:")
+            print("        python3 -m venv --system-site-packages /opt/digipath-scanner/.venv")
+        return
 
     needs_apt = (
         not _module_available("numpy")
@@ -290,6 +312,18 @@ OFFICE_ID = os.environ.get("DIGIPATH_OFFICE_ID", "OFF-001")
 BACKEND_SCAN_URL = f"{BACKEND_BASE_URL}/devices/scans"
 COMMAND_API_URL = f"{BACKEND_BASE_URL}/devices/{DEVICE_ID}/commands"
 DEVICE_HEADERS = {"x-device-key": DEVICE_API_KEY}
+
+# ---- Groq AI document extraction (optional) ----
+GROQ_API_KEY = os.environ.get("DIGIPATH_GROQ_API_KEY", "").strip()
+GROQ_API_URL = os.environ.get("DIGIPATH_GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions").strip()
+GROQ_VISION_MODEL = os.environ.get("DIGIPATH_GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct").strip()
+GROQ_TEXT_MODEL = os.environ.get("DIGIPATH_GROQ_TEXT_MODEL", "llama-3.3-70b-versatile").strip()
+# AI extraction is on automatically when a key is present; set 0 to disable.
+_ai_extract_default = "1" if GROQ_API_KEY else "0"
+AI_EXTRACT_ENABLED = os.environ.get("DIGIPATH_AI_EXTRACT", _ai_extract_default).strip().lower() not in ("0", "false", "no", "off")
+# Send the captured image to a vision model (best quality). If off, only OCR text is sent.
+AI_USE_VISION = os.environ.get("DIGIPATH_AI_USE_VISION", "1").strip().lower() not in ("0", "false", "no", "off")
+
 HEARTBEAT_INTERVAL_SECS = int(os.environ.get("DIGIPATH_HEARTBEAT_INTERVAL_SECS", "10"))
 DEVICE_NAME = os.environ.get("DIGIPATH_DEVICE_NAME", "Physical Document Scanner")
 DEVICE_MODEL = os.environ.get("DIGIPATH_DEVICE_MODEL", "Raspberry Pi Scanner Bridge")
@@ -312,6 +346,26 @@ STREAM_JPEG_QUALITY = max(40, min(int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALI
 _stream_width = int(os.environ.get("DIGIPATH_STREAM_WIDTH", str(STREAM_RESOLUTION[0])))
 _stream_height = int(os.environ.get("DIGIPATH_STREAM_HEIGHT", str(STREAM_RESOLUTION[1])))
 STREAM_RESOLUTION = (_stream_width, _stream_height)
+
+# Match the high-res still to the live-preview aspect ratio so the captured
+# image shows the SAME framing/view as the live stream (default on).
+CAPTURE_MATCH_PREVIEW = os.environ.get("DIGIPATH_CAPTURE_MATCH_PREVIEW", "1").strip().lower() not in ("0", "false", "no", "off")
+
+def _match_capture_size():
+    if not CAPTURE_MATCH_PREVIEW:
+        return CAMERA_RESOLUTION
+    try:
+        sw, sh = STREAM_RESOLUTION
+        aspect = (sw / sh) if sh else (CAMERA_RESOLUTION[0] / CAMERA_RESOLUTION[1])
+        max_w, max_h = CAMERA_RESOLUTION
+        w, h = max_w, int(round(max_w / aspect))
+        if h > max_h:
+            h, w = max_h, int(round(max_h * aspect))
+        return (max(2, w - (w % 2)), max(2, h - (h % 2)))
+    except Exception:
+        return CAMERA_RESOLUTION
+
+CAPTURE_STILL_SIZE = _match_capture_size()
 STREAM_COLOR_MODE = os.environ.get("DIGIPATH_STREAM_COLOR_MODE", "jpeg").strip().lower()
 # Cap how often frames are pushed over the WebSocket relay. Sending every ISP
 # frame can overflow a dev-tunnel send buffer and stall the stream (black).
@@ -340,6 +394,15 @@ CAMERA_COLOUR_GAIN_RED = os.environ.get("DIGIPATH_CAMERA_COLOUR_GAIN_RED", "").s
 CAMERA_COLOUR_GAIN_BLUE = os.environ.get("DIGIPATH_CAMERA_COLOUR_GAIN_BLUE", "").strip()
 OPENCV_CAMERA_INDEX = int(os.environ.get("DIGIPATH_OPENCV_CAMERA_INDEX", "0"))
 ENABLE_OPENCV_CAMERA = os.environ.get("DIGIPATH_ENABLE_OPENCV_CAMERA", "auto").lower()
+# Grab the still straight from the live preview buffer for instant capture.
+INSTANT_CAPTURE = os.environ.get("DIGIPATH_INSTANT_CAPTURE", "1").strip().lower() not in ("0", "false", "no", "off")
+# Auto-crop to detected document edges. OFF by default so the captured image
+# matches the full live-preview view (no cropping / perspective warp).
+AUTO_CROP = os.environ.get("DIGIPATH_AUTO_CROP", "0").strip().lower() in ("1", "true", "yes", "on")
+# USB webcam capture resolution (read high-res for OCR; preview is downscaled).
+_usb_cap_w = int(os.environ.get("DIGIPATH_USB_CAPTURE_WIDTH", "1920"))
+_usb_cap_h = int(os.environ.get("DIGIPATH_USB_CAPTURE_HEIGHT", "1080"))
+USB_CAPTURE_RESOLUTION = (_usb_cap_w, _usb_cap_h)
 USE_WEBSOCKET = os.environ.get("DIGIPATH_USE_WEBSOCKET", "1").strip().lower() not in ("0", "false", "no", "off")
 _mjpeg_default = "1"
 ENABLE_MJPEG_HTTP = os.environ.get("DIGIPATH_ENABLE_MJPEG_HTTP", _mjpeg_default).strip().lower() not in ("0", "false", "no", "off")
@@ -351,6 +414,12 @@ if not os.path.exists(SCANS_DIR):
 camera = None
 camera_lock = threading.Lock()
 is_capturing = False  # Flag to pause stream during high-res capture
+# Persistent OpenCV capture for USB-webcam live streaming (kept open for speed).
+opencv_stream_cap = None
+opencv_stream_lock = threading.Lock()
+# Latest full-resolution USB frame (raw), kept for high-quality instant capture.
+latest_fullres_frame = None
+latest_fullres_lock = threading.Lock()
 connected_once = False
 last_camera_error = CAMERA_IMPORT_ERROR
 last_camera_success_at = ""
@@ -810,7 +879,13 @@ def should_try_opencv_camera():
         return False
     if ENABLE_OPENCV_CAMERA in ("1", "true", "yes", "on"):
         return True
-    return platform.system().lower() != "linux" or bool(os.environ.get("DIGIPATH_OPENCV_CAMERA_INDEX"))
+    # auto: always on non-Linux, when a camera index is set, or when the Pi
+    # CSI camera (picamera2) is unavailable/failed — i.e. a USB webcam setup.
+    if platform.system().lower() != "linux":
+        return True
+    if os.environ.get("DIGIPATH_OPENCV_CAMERA_INDEX"):
+        return True
+    return (not CAMERA_AVAILABLE) or (camera is None)
 
 def get_camera_backends():
     backends = []
@@ -877,6 +952,154 @@ def capture_opencv_frame(file_path=None, width=None, height=None):
         return None, last_camera_error
     finally:
         cap.release()
+
+def probe_opencv_camera_index(preferred=0, max_index=5):
+    """Find a USB webcam that actually opens AND returns a frame.
+
+    Tries the preferred index first, then 0..max_index. Returns the working
+    index or None. Helps when the webcam is on /dev/video1, video2, etc.
+    """
+    if not CV_AVAILABLE:
+        return None
+
+    backend = cv2.CAP_DSHOW if platform.system().lower() == "windows" and hasattr(cv2, "CAP_DSHOW") else cv2.CAP_ANY
+    order = [preferred] + [i for i in range(0, max_index + 1) if i != preferred]
+
+    for index in order:
+        cap = cv2.VideoCapture(index, backend)
+        try:
+            if not cap.isOpened():
+                continue
+            ok = False
+            for _ in range(5):
+                read_ok, frame = cap.read()
+                if read_ok and frame is not None and getattr(frame, "size", 0):
+                    ok = True
+                    break
+                time.sleep(0.05)
+            if ok:
+                print(f"[Camera] Found working USB webcam at index {index}.")
+                return index
+        except Exception:
+            pass
+        finally:
+            cap.release()
+    return None
+
+def _open_opencv_stream_capture():
+    """Open (once) and return a persistent OpenCV VideoCapture for the USB webcam."""
+    global opencv_stream_cap, last_camera_error
+
+    if opencv_stream_cap is not None and opencv_stream_cap.isOpened():
+        return opencv_stream_cap
+
+    if not should_try_opencv_camera():
+        return None
+
+    backend = cv2.CAP_DSHOW if platform.system().lower() == "windows" and hasattr(cv2, "CAP_DSHOW") else cv2.CAP_ANY
+    cap = cv2.VideoCapture(OPENCV_CAMERA_INDEX, backend)
+    if not cap.isOpened():
+        cap.release()
+        last_camera_error = f"OpenCV camera index {OPENCV_CAMERA_INDEX} did not open."
+        return None
+
+    try:
+        # Read at high resolution so instant capture is OCR-quality; the preview
+        # frames are downscaled before streaming to keep bandwidth/CPU low.
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(USB_CAPTURE_RESOLUTION[0]))
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(USB_CAPTURE_RESOLUTION[1]))
+        cap.set(cv2.CAP_PROP_FPS, float(STREAM_FPS))
+        try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    opencv_stream_cap = cap
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    print(f"[Camera] USB webcam opened via OpenCV index {OPENCV_CAMERA_INDEX} at {actual_w}x{actual_h} for live stream.")
+    return opencv_stream_cap
+
+def release_opencv_stream_capture():
+    global opencv_stream_cap, latest_fullres_frame
+    with opencv_stream_lock:
+        if opencv_stream_cap is not None:
+            try:
+                opencv_stream_cap.release()
+            except Exception:
+                pass
+            opencv_stream_cap = None
+    with latest_fullres_lock:
+        latest_fullres_frame = None
+
+def capture_opencv_stream_frame():
+    """Grab a frame from the persistent USB-webcam capture.
+
+    Keeps the full-resolution frame for instant high-quality capture and returns
+    a downscaled JPEG for the low-bandwidth live preview.
+    """
+    global last_camera_error, opencv_stream_cap, latest_fullres_frame
+
+    with opencv_stream_lock:
+        cap = _open_opencv_stream_capture()
+        if cap is None:
+            return None
+        try:
+            ok, frame = cap.read()
+            if not ok or frame is None or not getattr(frame, "size", 0):
+                # Drop the stale handle so the next call re-opens the device.
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                opencv_stream_cap = None
+                last_camera_error = f"OpenCV camera index {OPENCV_CAMERA_INDEX} returned no frame."
+                return None
+
+            # Keep the latest full-res frame for OCR-quality instant capture.
+            with latest_fullres_lock:
+                latest_fullres_frame = frame
+
+            # Downscale for the live preview to keep the stream fast/light.
+            stream_frame = frame
+            fh, fw = frame.shape[:2]
+            if fw > STREAM_RESOLUTION[0]:
+                stream_frame = cv2.resize(frame, STREAM_RESOLUTION, interpolation=cv2.INTER_AREA)
+
+            ok, encoded = cv2.imencode(".jpg", stream_frame, [int(cv2.IMWRITE_JPEG_QUALITY), STREAM_JPEG_QUALITY])
+            if not ok:
+                last_camera_error = "OpenCV stream frame JPEG encoding failed."
+                return None
+
+            mark_camera_success()
+            return encoded.tobytes()
+        except Exception as e:
+            last_camera_error = f"OpenCV stream error: {e}"
+            try:
+                if opencv_stream_cap is not None:
+                    opencv_stream_cap.release()
+            except Exception:
+                pass
+            opencv_stream_cap = None
+            return None
+
+def grab_fullres_jpeg(quality=92):
+    """Encode the latest full-resolution USB frame as a high-quality JPEG."""
+    if not CV_AVAILABLE:
+        return None
+    with latest_fullres_lock:
+        frame = latest_fullres_frame
+    if frame is None or not getattr(frame, "size", 0):
+        return None
+    try:
+        ok, encoded = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
+        if ok:
+            return encoded.tobytes()
+    except Exception as err:
+        print(f"[Scanner] Full-res encode failed: {err}")
+    return None
 
 def init_camera(retries=3, retry_delay=2.0):
     global camera, last_camera_error, CAMERA_AVAILABLE, CAMERA_IMPORT_ERROR
@@ -1036,7 +1259,7 @@ def capture_via_picamera2_still(file_path):
         with camera_lock:
             camera.stop()
             still_config = camera.create_still_configuration(
-                main={"size": CAMERA_RESOLUTION, "format": "RGB888"},
+                main={"size": CAPTURE_STILL_SIZE, "format": "RGB888"},
             )
             camera.configure(still_config)
             camera.start()
@@ -1157,6 +1380,13 @@ def capture_stream_frame():
             last_camera_error = f"stream frame error: {e}"
         return None
 
+    # No picamera2 (CSI) camera — use the persistent USB webcam via OpenCV for
+    # a fast live stream instead of spawning a CLI process per frame.
+    if should_try_opencv_camera():
+        frame = capture_opencv_stream_frame()
+        if frame:
+            return frame
+
     frame, _ = capture_preview_frame()
     return frame
 
@@ -1252,6 +1482,115 @@ def capture_preview_frame():
         except Exception:
             pass
 
+# ================= AI DOCUMENT EXTRACTION (Groq) =================
+def _parse_json_lenient(text):
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start:end + 1])
+        except Exception:
+            return None
+    return None
+
+def _image_to_data_url(image_path, max_width=1600, quality=85):
+    if "Image" not in globals():
+        return None
+    try:
+        img = Image.open(image_path)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        if img.width > max_width:
+            ratio = max_width / img.width
+            img = img.resize((max_width, int(img.height * ratio)), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{encoded}"
+    except Exception as err:
+        print(f"[AI] Could not encode image for vision model: {err}")
+        return None
+
+AI_EXTRACT_PROMPT = (
+    "You are a document intake assistant for a local government office (Municipality of Vinzons). "
+    "Read the scanned document and extract its contents accurately. "
+    "Return ONLY a JSON object (no markdown) with these exact keys: "
+    "\"title\" (the subject/title of the document, short), "
+    "\"date\" (the document date as written, e.g. 'January 5, 2026', or ''), "
+    "\"sender\" (the name and/or office/position of the sender or originator, or ''), "
+    "\"documentType\" (one of: Memorandum, Letter, Resolution, Ordinance, Report, Invoice, Notice, Other), "
+    "\"summary\" (a concise 2-3 sentence summary of the document), "
+    "\"fullText\" (the complete, cleaned, readable text of the document). "
+    "If a field cannot be determined, use an empty string. Do not invent information."
+)
+
+def ai_extract_document(image_path, ocr_text):
+    """Use Groq to extract structured fields + clean full text from a scan."""
+    if not AI_EXTRACT_ENABLED or not GROQ_API_KEY:
+        return None
+
+    use_vision = (
+        AI_USE_VISION
+        and image_path
+        and os.path.exists(image_path)
+        and "Image" in globals()
+    )
+
+    try:
+        if use_vision:
+            data_url = _image_to_data_url(image_path)
+            if not data_url:
+                use_vision = False
+
+        if use_vision:
+            model = GROQ_VISION_MODEL
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": AI_EXTRACT_PROMPT},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            }]
+        else:
+            if not (ocr_text or "").strip():
+                return None
+            model = GROQ_TEXT_MODEL
+            messages = [
+                {"role": "system", "content": AI_EXTRACT_PROMPT},
+                {"role": "user", "content": f"Document OCR text:\n\n{ocr_text}"},
+            ]
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 2048,
+        }
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        print(f"[AI] Requesting extraction from Groq ({model}, vision={use_vision})...")
+        resp = requests.post(GROQ_API_URL, json=payload, headers=headers, timeout=60)
+        if resp.status_code != 200:
+            print(f"[AI] Groq API error {resp.status_code}: {resp.text[:200]}")
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+        data = _parse_json_lenient(content)
+        if not isinstance(data, dict):
+            print("[AI] Groq returned no parseable JSON.")
+            return None
+        return data
+    except Exception as err:
+        print(f"[AI] Extraction failed: {err}")
+        return None
+
 # ================= OCR & RULESET LOGIC =================
 def extract_text_and_title(image_path):
     extracted_text = ""
@@ -1270,7 +1609,7 @@ def extract_text_and_title(image_path):
                 new_size = (1500, int(img.height * ratio))
                 img = img.resize(new_size, Image.Resampling.LANCZOS)
                 
-            extracted_text = pytesseract.image_to_string(img)
+            extracted_text = pytesseract.image_to_string(img, config="--psm 6 --oem 3")
             print("[OCR] Text extracted successfully.")
         except Exception as e:
             print(f"[OCR] Error: {e}")
@@ -1313,10 +1652,49 @@ def extract_text_and_title(image_path):
                     extracted_sender = sender
 
     print(f"[Ruleset] Found Title: '{extracted_title}', Date: '{extracted_date}', Sender: '{extracted_sender}'")
+
+    # AI extraction (Groq): more reliable than the regex ruleset. When it
+    # returns data, prefer it for the intake fields and cleaned document text.
+    if AI_EXTRACT_ENABLED and GROQ_API_KEY:
+        ai = ai_extract_document(image_path, extracted_text)
+        if ai:
+            ai_title = str(ai.get("title") or "").strip()
+            ai_date = str(ai.get("date") or "").strip()
+            ai_sender = str(ai.get("sender") or "").strip()
+            ai_summary = str(ai.get("summary") or "").strip()
+            ai_full = str(ai.get("fullText") or "").strip()
+
+            if ai_title:
+                extracted_title = ai_title
+            if ai_date:
+                extracted_date = ai_date
+            if ai_sender:
+                extracted_sender = ai_sender
+            # Use the AI's cleaned text when it's richer than raw OCR; keep a
+            # short summary at the top so the intake reviewer sees context.
+            combined = ""
+            if ai_summary:
+                combined += f"SUMMARY: {ai_summary}\n\n"
+            if ai_full and len(ai_full) >= len(extracted_text):
+                combined += ai_full
+            elif extracted_text:
+                combined += extracted_text
+            elif ai_full:
+                combined += ai_full
+            if combined.strip():
+                extracted_text = combined.strip()
+            print(f"[AI] Extracted -> Title:'{extracted_title}', Date:'{extracted_date}', Sender:'{extracted_sender}'")
+        else:
+            print("[AI] No AI result; using ruleset/OCR extraction.")
+
     return extracted_text, extracted_title, extracted_date, extracted_sender
 
 # ================= DOCUMENT EDGE DETECTION & CROPPING =================
 def auto_crop_document(image_path):
+    # Keep the full original camera view (same as the live preview) by default.
+    # Auto-crop is opt-in via DIGIPATH_AUTO_CROP=1.
+    if not AUTO_CROP:
+        return image_path
     if not CV_AVAILABLE:
         return image_path
     
@@ -1399,7 +1777,30 @@ def scan_document():
 
     captured = False
 
-    if camera:
+    # INSTANT capture: reuse the frame that's already live in the preview so the
+    # photo is grabbed the moment Capture is pressed (no camera re-open/warmup).
+    # Prefer the full-resolution USB frame (OCR-quality); fall back to the
+    # downscaled preview JPEG only if the full-res buffer isn't ready yet.
+    if INSTANT_CAPTURE and not camera:
+        snapshot = grab_fullres_jpeg()
+        source = "full-res USB frame"
+        if not snapshot:
+            with latest_stream_lock:
+                snapshot = latest_stream_frame
+            source = "preview buffer (low-res)"
+        if snapshot:
+            try:
+                with open(file_path, "wb") as snap_file:
+                    snap_file.write(snapshot)
+                if os.path.getsize(file_path) > 0:
+                    captured = True
+                    mark_camera_success()
+                    print(f"[Scanner] Instant capture from {source}: {file_path}")
+                    file_path = auto_crop_document(file_path)
+            except OSError as err:
+                print(f"[Scanner] Instant capture write failed: {err}")
+
+    if not captured and camera:
         captured = capture_via_picamera2_still(file_path)
         if captured:
             file_path = auto_crop_document(file_path)
@@ -1410,36 +1811,52 @@ def scan_document():
             file_path = auto_crop_document(file_path)
 
     if not captured and should_try_opencv_camera():
-        result_path, error = capture_opencv_frame(
-            file_path=file_path,
-            width=CAMERA_RESOLUTION[0],
-            height=CAMERA_RESOLUTION[1],
-        )
-        if result_path and os.path.exists(result_path):
-            captured = True
-            print(f"[Scanner] Captured via OpenCV camera index {OPENCV_CAMERA_INDEX}: {file_path}")
-            file_path = auto_crop_document(file_path)
-        elif error:
-            print(f"[Scanner] OpenCV capture error: {error}")
+        # A USB webcam only allows one open handle, so pause the live stream and
+        # release the persistent capture before grabbing the high-res still.
+        is_capturing = True
+        wait_for_stream_idle()
+        release_opencv_stream_capture()
+        try:
+            result_path, error = capture_opencv_frame(
+                file_path=file_path,
+                width=CAMERA_RESOLUTION[0],
+                height=CAMERA_RESOLUTION[1],
+            )
+            if result_path and os.path.exists(result_path):
+                captured = True
+                print(f"[Scanner] Captured via OpenCV camera index {OPENCV_CAMERA_INDEX}: {file_path}")
+                file_path = auto_crop_document(file_path)
+            elif error:
+                print(f"[Scanner] OpenCV capture error: {error}")
+        finally:
+            is_capturing = False
 
     if not captured or not os.path.exists(file_path):
         raise RuntimeError(last_camera_error or "Camera capture failed. Check Pi camera connection and camera software.")
 
-    # Convert to PDF
-    pdf_path = file_path.replace('.jpg', '.pdf')
-    if os.path.exists(file_path) and file_path.endswith('.jpg'):
+    # Keep the original JPG for upload/preview (same view as live stream).
+    # PDF conversion is opt-in only — PDF preview in the dashboard often renders
+    # as a thin/blank bar and is slower to display.
+    jpg_path = file_path
+    save_pdf = os.environ.get("DIGIPATH_SAVE_PDF", "0").strip().lower() in ("1", "true", "yes", "on")
+    if save_pdf and jpg_path.endswith('.jpg'):
+        pdf_path = jpg_path.replace('.jpg', '.pdf')
         try:
-            print(f"[Scanner] Converting {file_path} to PDF...")
-            img = Image.open(file_path)
+            print(f"[Scanner] Converting {jpg_path} to PDF...")
+            img = Image.open(jpg_path)
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             img.save(pdf_path, "PDF", resolution=100.0)
             print(f"[Scanner] Converted to {pdf_path}")
-            file_path = pdf_path # Use PDF for upload
+            file_path = pdf_path
         except Exception as e:
-            print(f"[Scanner] PDF conversion error: {e}")
+            print(f"[Scanner] PDF conversion error: {e}; uploading JPG instead.")
+            file_path = jpg_path
+    else:
+        file_path = jpg_path
 
-    text, title, date, sender = extract_text_and_title(file_path.replace('.pdf', '.jpg') if os.path.exists(file_path.replace('.pdf', '.jpg')) else file_path)
+    ocr_source = jpg_path if os.path.exists(jpg_path) else file_path
+    text, title, date, sender = extract_text_and_title(ocr_source)
     return file_path, text, title, date, sender
 
 # ================= QUEUE TO LOCAL DB =================
@@ -1668,6 +2085,25 @@ def start_stream_server():
     server.serve_forever()
 
 # ================= COMMAND POLLING WORKER =================
+_motor_run_lock = threading.Lock()
+
+def start_sort_sequence_async(sort_layer):
+    """Run the physical sort motor sequence in the background.
+
+    Capture/upload must NOT wait for the slow sorting, so it runs on its own
+    thread. A motor lock inside the worker serializes runs (two scans can't
+    drive the motors at once) without ever blocking the caller.
+    """
+    def _worker():
+        with _motor_run_lock:
+            try:
+                motor_controller.finish_scan_sequence(sort_layer)
+                print(f"[Motor] Background sort finished (layer {sort_layer}).")
+            except Exception as motor_err:
+                print(f"[Motor] Background sort warning: {motor_err}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
 def execute_device_command(cmd):
     if not cmd or not cmd.get("command"):
         return
@@ -1695,16 +2131,18 @@ def execute_device_command(cmd):
                     timeout=10
                 )
                 sort_layer = 1
-                try:
-                    motor_controller.run_scan_sequence()
-                    file_path, text, title, date, sender = scan_document()
-                    sort_layer = motor_controller.resolve_sort_layer(
-                        cmd.get("payload") or {},
-                        text,
-                        title,
-                    )
-                finally:
-                    motor_controller.finish_scan_sequence(sort_layer)
+                # 1) Capture the photo FIRST and instantly (from the live preview
+                #    buffer) so pressing Capture grabs the image right away.
+                file_path, text, title, date, sender = scan_document()
+                sort_layer = motor_controller.resolve_sort_layer(
+                    cmd.get("payload") or {},
+                    text,
+                    title,
+                )
+                # 2) Kick off the physical sort motors in the BACKGROUND so the
+                #    capture/upload does NOT wait for the slow sorting to finish.
+                #    The document is already captured while sorting runs.
+                start_sort_sequence_async(sort_layer)
                 if file_path and os.path.exists(file_path):
                     local_scan_id = queue_scan(file_path, text, title, date, sender, "pending")
                     result = upload_scan_to_backend(file_path, text, title, date, sender, cmd['id'])
@@ -1894,9 +2332,40 @@ if __name__ == "__main__":
     ensure_dependencies()
     load_optional_modules()
 
+    atexit.register(release_opencv_stream_capture)
+
     # Init camera automatically on startup.
     print("[Main] Auto-starting camera...")
     cam_ok = init_camera()
+
+    # No CSI camera? Try a USB webcam via OpenCV so the live stream still works.
+    if not cam_ok:
+        print(
+            f"[Main] Camera diagnostics: opencv(cv2)={CV_AVAILABLE}, "
+            f"picamera2={CAMERA_AVAILABLE}, enableOpenCV={ENABLE_OPENCV_CAMERA}, "
+            f"tryOpenCV={should_try_opencv_camera()}"
+        )
+        if not CV_AVAILABLE:
+            print("[Main] USB webcam BLOCKED: OpenCV (cv2) is not installed on the Pi.")
+            print("[Main] Fix: sudo apt-get install -y python3-opencv   (or: pip3 install opencv-python-headless numpy)")
+        elif should_try_opencv_camera():
+            print(f"[Main] CSI camera unavailable; scanning for a USB webcam (OpenCV)...")
+            found_index = probe_opencv_camera_index(OPENCV_CAMERA_INDEX)
+            if found_index is not None:
+                OPENCV_CAMERA_INDEX = found_index
+                with opencv_stream_lock:
+                    usb_ok = _open_opencv_stream_capture() is not None
+                if usb_ok:
+                    cam_ok = True
+                    mark_camera_success()
+                    print(f"[Main] USB webcam ready for live stream (index {OPENCV_CAMERA_INDEX}).")
+                else:
+                    print(f"[Main] USB webcam opened on index {OPENCV_CAMERA_INDEX} but stream capture failed. {last_camera_error}")
+            else:
+                print("[Main] No USB webcam found on indices 0-5.")
+                print("[Main] Check: is it plugged in? Run  ls /dev/video*  and confirm the user is in the 'video' group.")
+        else:
+            print("[Main] USB webcam fallback disabled by config (DIGIPATH_ENABLE_OPENCV_CAMERA).")
 
     stream_producer_running = True
     producer_thread = threading.Thread(target=stream_frame_producer, daemon=True)

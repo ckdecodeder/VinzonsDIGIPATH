@@ -42,9 +42,15 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
       if (cancelled || generation !== renderGenerationRef.current) return;
 
       const containerWidth = Math.max(
-        Math.round(wrapRef.current?.clientWidth || 640),
-        280,
+        Math.round(wrapRef.current?.clientWidth || 0),
+        0,
       );
+      if (containerWidth < 80) {
+        // Grid layout may report 0 width on first paint — wait for a real size.
+        scheduleRender(120);
+        return;
+      }
+      const renderWidth = Math.max(containerWidth, 280);
 
       // Avoid the resize feedback loop: only the first paint or a real width
       // change should trigger a re-render.
@@ -67,7 +73,7 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
         if (cancelled || generation !== renderGenerationRef.current) return;
 
         const baseViewport = page.getViewport({ scale: 1 });
-        const scale = containerWidth / baseViewport.width;
+        const scale = renderWidth / baseViewport.width;
         const viewport = page.getViewport({ scale });
 
         const canvas = canvasRef.current;
@@ -83,7 +89,7 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
 
         if (cancelled || generation !== renderGenerationRef.current) return;
         renderTaskRef.current = null;
-        lastRenderedWidthRef.current = containerWidth;
+        lastRenderedWidthRef.current = renderWidth;
         hasRenderedRef.current = true;
         setLoading(false);
       } catch (err) {

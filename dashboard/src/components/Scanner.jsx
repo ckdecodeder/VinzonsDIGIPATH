@@ -542,11 +542,17 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       const doc = result.resultDocument;
       setHardwareScannedDoc(doc || null);
       if (doc) {
-        const scannedFile = doc.scannedFiles?.[0];
+        const scannedFile = doc.scannedFiles?.find((f) => !isPdfMedia(f?.url, f?.type))
+          || doc.scannedFiles?.[0];
         const scannedUrl = resolveUploadUrl(
-          doc.scannedImageUrl || scannedFile?.url || scannedFile?.dataUrl || null,
+          (scannedFile?.url && !isPdfMedia(scannedFile.url, scannedFile.type) ? scannedFile.url : null)
+          || (doc.scannedImageUrl && !isPdfMedia(doc.scannedImageUrl) ? doc.scannedImageUrl : null)
+          || scannedFile?.url
+          || doc.scannedImageUrl
+          || scannedFile?.dataUrl
+          || null,
         );
-        const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : '');
+        const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : 'image/jpeg');
         setCapturedImage(scannedUrl);
         setCapturedFileType(scannedType);
         setExtractedText(doc.scannedText || '');
@@ -823,9 +829,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             <h1>Scan Document</h1>
             <p>Scan first, then submit the document for intake review</p>
           </div>
-          <div className={device?.connected ? 'status-badge status-online' : 'status-badge status-offline'}>
-            {device?.connected ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {device?.connected ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
+          <div className={(device?.connected || hardwareScannedDoc) ? 'status-badge status-online' : 'status-badge status-offline'}>
+            {(device?.connected || hardwareScannedDoc) ? <Wifi size={12} /> : <WifiOff size={12} />}
+            {(device?.connected || hardwareScannedDoc) ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
           </div>
         </div>
       }
