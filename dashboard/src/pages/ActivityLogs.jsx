@@ -168,12 +168,13 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
 
   const filtered = logs
     .filter((l) => {
+      const term = search.toLowerCase();
       const matchSearch =
-        l.details.toLowerCase().includes(search.toLowerCase()) ||
-        getUserFullName(l.userId)
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        (l.referenceId || "").toLowerCase().includes(search.toLowerCase());
+        !term ||
+        (l.details || "").toLowerCase().includes(term) ||
+        getUserFullName(l.userId).toLowerCase().includes(term) ||
+        (l.referenceId || "").toLowerCase().includes(term) ||
+        formatActionLabel(l.action).toLowerCase().includes(term);
       const matchAction = filterAction === "All" || l.action === filterAction;
       return matchSearch && matchAction;
     })

@@ -629,7 +629,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       const isPendingConflict = /pending command/i.test(err.message || '');
       setDeviceScanStatus(
         isPendingConflict
-          ? 'May nakabinbing scan pa ang Pi. I-click ang Cancel Scan o hintayin 1 minuto.'
+          ? 'The Pi still has a pending scan. Click Cancel Scan or wait about 1 minute.'
           : (err.message || 'Unable to send scan command.'),
       );
     }

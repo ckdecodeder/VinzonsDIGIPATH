@@ -75,13 +75,19 @@ const getSavedPage = (user) => {
 
 function App() {
   const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('dp_currentUser');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      // Read from sessionStorage so a closed/reopened browser always lands on
+      // the login page, while a simple refresh keeps the active session.
+      const saved = sessionStorage.getItem('dp_currentUser');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
   const [currentPage, setCurrentPage] = useState(() => getSavedPage(
     (() => {
       try {
-        const saved = localStorage.getItem('dp_currentUser');
+        const saved = sessionStorage.getItem('dp_currentUser');
         return saved ? JSON.parse(saved) : null;
       } catch {
         return null;
@@ -312,10 +318,12 @@ function App() {
   }, [currentPage, currentUser]);
   useEffect(() => {
     if (currentUser) {
-      localStorage.setItem('dp_currentUser', JSON.stringify(currentUser));
+      sessionStorage.setItem('dp_currentUser', JSON.stringify(currentUser));
     } else {
-      localStorage.removeItem('dp_currentUser');
+      sessionStorage.removeItem('dp_currentUser');
     }
+    // Remove any legacy localStorage session so it can never auto-restore.
+    localStorage.removeItem('dp_currentUser');
   }, [currentUser]);
 
   useEffect(() => {

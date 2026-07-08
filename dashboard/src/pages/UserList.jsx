@@ -63,13 +63,17 @@ const UserList = ({
     return o ? o.name : "Unknown";
   };
 
-  const filteredUsers = users.filter(
-    (u) =>
-      (u.username || "").toLowerCase().includes(search.toLowerCase()) ||
-      `${u.fname || ""} ${u.lname || ""}`
-        .toLowerCase()
-        .includes(search.toLowerCase()),
-  );
+  const filteredUsers = users.filter((u) => {
+    const term = search.toLowerCase();
+    if (!term) return true;
+    const fullName = `${u.fname || ""} ${u.mname || ""} ${u.lname || ""}`;
+    return (
+      (u.username || "").toLowerCase().includes(term) ||
+      fullName.toLowerCase().includes(term) ||
+      (u.role || "").toLowerCase().includes(term) ||
+      getOfficeName(u.officeId).toLowerCase().includes(term)
+    );
+  });
 
   const totalPages = Math.max(1, Math.ceil(filteredUsers.length / pageSize));
   const paginatedUsers = filteredUsers.slice(
@@ -219,7 +223,7 @@ const UserList = ({
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search users..."
+                  placeholder="Search by name, username, role, or office..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />

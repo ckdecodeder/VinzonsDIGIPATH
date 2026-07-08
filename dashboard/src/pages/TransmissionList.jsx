@@ -182,17 +182,18 @@ const TransmissionList = ({
   const filteredTrans = transmissions
     .filter((t) => {
       const doc = documents.find((d) => d.id === t.documentId);
+      const term = search.toLowerCase();
       const matchSearch =
-        (doc?.subject || "").toLowerCase().includes(search.toLowerCase()) ||
-        (doc?.trackingNumber || "")
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        getOfficeName(t.fromOfficeId)
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        getOfficeName(t.toOfficeId)
-          .toLowerCase()
-          .includes(search.toLowerCase());
+        !term ||
+        (doc?.subject || "").toLowerCase().includes(term) ||
+        (doc?.trackingNumber || "").toLowerCase().includes(term) ||
+        getOfficeName(t.fromOfficeId).toLowerCase().includes(term) ||
+        getOfficeName(t.toOfficeId).toLowerCase().includes(term) ||
+        (t.transmissionType || "").toLowerCase().includes(term) ||
+        getUserFullName(t.sentBy).toLowerCase().includes(term) ||
+        (t.receivedBy
+          ? getUserFullName(t.receivedBy).toLowerCase().includes(term)
+          : false);
       const matchType =
         filterType === "All" || t.transmissionType === filterType;
       return matchSearch && matchType;
@@ -329,7 +330,7 @@ const TransmissionList = ({
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search transmissions..."
+                  placeholder="Search by subject, tracking, office, type, or name..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />

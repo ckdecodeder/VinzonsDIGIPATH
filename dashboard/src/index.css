@@ -76,6 +76,37 @@ html {
   overscroll-behavior: none;
 }
 
+/* Responsive root scaling naman ini */
+@media (max-width: 1600px) {
+  html {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 1366px) {
+  html {
+    font-size: 15px;
+  }
+  :root {
+    --sidebar-width: 250px;
+  }
+}
+
+@media (max-width: 1200px) {
+  html {
+    font-size: 14px;
+  }
+  :root {
+    --sidebar-width: 230px;
+  }
+}
+
+@media (max-width: 1024px) {
+  html {
+    font-size: 13.5px;
+  }
+}
+
 body {
   font-family:
     "Inter",
@@ -102,7 +133,7 @@ body {
   overscroll-behavior: none;
 }
 
-/* ==================== LAYOUT ==================== */
+/* ==================== para sa LAYOUT ito ==================== */
 .layout {
   display: flex;
   width: 100%;
@@ -111,7 +142,7 @@ body {
   overflow: hidden;
 }
 
-/* ==================== SIDEBAR ==================== */
+/* ==================== para sa SIDEBAR ito ==================== */
 .sidebar {
   width: var(--sidebar-width);
   background: var(--sidebar-bg);
@@ -130,6 +161,94 @@ body {
 .sidebar-header {
   padding: 1.5rem;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+/* Mobile navigation elements naman ini */
+.mobile-topbar {
+  display: none;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.mobile-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-main);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.mobile-menu-btn:hover {
+  background: rgba(8, 145, 178, 0.08);
+}
+
+.mobile-topbar-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.mobile-topbar-logo-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 0;
+}
+
+.mobile-topbar-title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text-main);
+  letter-spacing: -0.02em;
+}
+
+.mobile-topbar-subtitle {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--text-muted);
+}
+
+.logo-icon-wrapper.mobile {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.sidebar-close-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.sidebar-backdrop {
+  display: none;
 }
 
 .logo {
@@ -830,7 +949,7 @@ body {
 .stat-card:hover {
   transform: translateY(-2px);
   border-color: rgba(8, 145, 178, 0.2);
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
 }
 
 .stat-card:hover::after {
@@ -851,6 +970,22 @@ body {
 }
 .stat-card.red::after {
   background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+/* Keep only the top accent on hover/select; drop the dark focus outline and
+   colored side border so the card edges stay clean. */
+.stat-card.clickable-row:hover,
+.stat-card.clickable-row:focus,
+.stat-card.clickable-row:focus-within,
+.stat-card:focus,
+.stat-card:focus-visible {
+  outline: none;
+  border-color: var(--border);
+}
+
+.stat-card:focus::after,
+.stat-card:focus-visible::after {
+  opacity: 1;
 }
 
 .stat-icon {
@@ -971,6 +1106,18 @@ body {
   .grid-3,
   .grid-2-1 {
     grid-template-columns: 1fr;
+  }
+
+  /* When stacked in a single column, release the fixed height cap and
+     clipping so the donut chart shows in full instead of being cut off. */
+  .grid-2-1 .card {
+    max-height: none;
+  }
+
+  .grid-2-1 .card > .chart-donut,
+  .grid-2-1 .card > .activity-list,
+  .grid-2-1 .card > .table-container {
+    overflow: visible;
   }
 }
 
@@ -1161,11 +1308,32 @@ body {
   .pagination-toolbar {
     flex-direction: column;
     align-items: stretch;
+    gap: 0.85rem;
+  }
+
+  .pagination-summary {
+    text-align: center;
+  }
+
+  .pagination-controls {
+    width: 100%;
+    justify-content: center;
   }
 
   .pagination-pages {
-    justify-content: space-between;
+    justify-content: center;
+    align-items: center;
     width: 100%;
+    gap: 0.85rem;
+  }
+
+  .pagination-pages button {
+    flex: 0 0 auto;
+  }
+
+  .pagination-pages span {
+    flex-shrink: 0;
+    text-align: center;
   }
 }
 
@@ -2009,6 +2177,13 @@ tbody tr:hover {
 
 .activity-filter-select {
   width: 100%;
+}
+
+.scanner-bridge-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 0.75rem;
+  align-items: end;
 }
 
 .activity-col-timestamp {
@@ -3702,7 +3877,8 @@ body.modal-open .notification-dock {
 
 .report-cover div {
   min-width: 0;
-  text-align: center;
+  text-align: left;
+  padding-left: 4.7rem;
 }
 
 .report-cover span {
@@ -3887,6 +4063,20 @@ body.modal-open .notification-dock {
   .reports-controls-toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  /* Keep the category tabs on a single tidy row that scrolls sideways
+     instead of wrapping into an uneven block. */
+  .reports-category-tabs {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .reports-category-tab {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .reports-date-filter {
@@ -4266,7 +4456,21 @@ body.modal-open .notification-dock {
 }
 
 @media (max-width: 900px) {
-  .document-detail-modal .document-detail-grid,
+  .document-detail-modal .document-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-cover {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.9rem 1rem;
+  }
+
+  .report-cover div {
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 420px) {
   .report-cover {
     grid-template-columns: 1fr;
   }
@@ -4806,11 +5010,70 @@ body.modal-open .notification-dock {
 }
 
 /* ==================== RESPONSIVE ==================== */
-@media (max-width: 768px) {
-  .sidebar {
-    display: none;
+/* Off-canvas drawer sidebar for tablets/phones */
+@media (max-width: 900px) {
+  .mobile-topbar {
+    display: flex;
   }
 
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: min(84vw, 300px);
+    max-width: 300px;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 200;
+    box-shadow: var(--shadow-lg);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar-close-btn {
+    display: inline-flex;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+    z-index: 150;
+    border: none;
+  }
+
+  .main-content {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Notification bell sits in the top-right, level with the logo and
+     hamburger in the mobile top bar. */
+  .mobile-topbar {
+    padding-right: 4.5rem;
+  }
+
+  .notification-dock {
+    top: 0.55rem;
+    right: 1rem;
+    bottom: auto;
+    align-items: flex-end;
+    z-index: 61;
+  }
+
+  .notification-dock-toggle {
+    width: 42px;
+    height: 42px;
+  }
+}
+
+@media (max-width: 768px) {
   .page-content {
     padding: 1rem;
   }
@@ -4821,6 +5084,85 @@ body.modal-open .notification-dock {
 
   .page-header {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-header.page-header--align-bottom {
+    align-items: stretch;
+  }
+
+  .page-header.page-header--align-bottom .page-header-actions {
+    top: 0;
+  }
+
+  .page-header-left h1 {
+    font-size: 1.55rem;
+  }
+
+  .page-header-left p {
+    font-size: 0.88rem;
+    max-width: none;
+  }
+
+  .page-header-actions {
+    width: 100%;
+    gap: 0.6rem;
+  }
+
+  .page-header-actions > .btn {
+    flex: 1 1 0;
+    justify-content: center;
+    min-height: 44px;
+  }
+
+  /* Reports: keep the Preview/Print/Download buttons aligned to the right */
+  .reports-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  /* Activity Logs: stack the search, filter and count so nothing overflows */
+  .activity-filter-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .activity-filter-row .search-bar,
+  .activity-filter-row .filter-dropdown-inline,
+  .activity-filter-row .filter-dropdown-inline .search-bar {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .activity-filter-dropdown {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    flex: 1 1 auto;
+    margin-left: 0;
+  }
+
+  .activity-entries-count {
+    margin-left: 0;
+    text-align: left;
+  }
+
+  /* Device Management: stack the scanner bridge URL + control buttons */
+  .scanner-bridge-controls {
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+  }
+
+  .scanner-bridge-controls > .form-group {
+    grid-column: 1 / -1;
+  }
+
+  .scanner-bridge-controls > .btn {
+    width: 100%;
   }
 
   .page-layout .page-header {
@@ -5271,12 +5613,47 @@ body.modal-open .notification-dock {
     overflow-y: auto;
   }
 
+
   .receptionist-dashboard {
     overflow: visible;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    min-width: 0;
+    padding: 1.15rem 1rem 1rem;
   }
 
   .receptionist-dashboard-body {
     overflow: visible;
+    min-width: 0;
+    min-height: 0;
+  }
+
+
+  .receptionist-dashboard .receptionist-tab-panel {
+    flex: 0 0 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .receptionist-dashboard .receptionist-tab-panel.table-container {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .receptionist-dashboard .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .receptionist-dashboard .page-header.page-header--align-bottom .page-header-actions {
+    top: 0;
+    margin-right: 0;
+    width: 100%;
+  }
+
+  .receptionist-dashboard .page-header-actions .btn {
+    flex: 1 1 0;
+    justify-content: center;
   }
 
   .receptionist-dashboard .receptionist-overview {
@@ -5290,7 +5667,7 @@ body.modal-open .notification-dock {
   }
 }
 
-/* ==================== TAB BAR ==================== */
+/* ==================== para sa TAB BAR ito ==================== */
 .tab-bar {
   display: flex;
   gap: 0.25rem;
@@ -5325,7 +5702,7 @@ body.modal-open .notification-dock {
   color: var(--text-secondary);
 }
 
-/* ==================== OFFICE TRANSFER VISUAL ==================== */
+/* ==================== para sa OFFICE TRANSFER VISUAL ito ==================== */
 .transfer-visual {
   display: flex;
   align-items: center;
@@ -5371,7 +5748,7 @@ body.modal-open .notification-dock {
   flex-shrink: 0;
 }
 
-/* ==================== SCANNER SECTION ==================== */
+/* ==================== para sa SCANNER SECTION ito ==================== */
 @keyframes scan-move {
   0% {
     top: 0%;
@@ -5381,7 +5758,7 @@ body.modal-open .notification-dock {
   }
 }
 
-/* ==================== LOGIN PAGE ==================== */
+/* ==================== para sa LOGIN PAGE ito ==================== */
 .login-page {
   width: 100%;
   min-height: 100vh;
@@ -5593,6 +5970,27 @@ body.modal-open .notification-dock {
 }
 
 @media (max-width: 950px) {
+  /* Let the login screen scroll and top-align so nothing (seal, form)
+     gets clipped when the stacked content is taller than the viewport. */
+  .login-page {
+    align-items: flex-start;
+    justify-content: flex-start;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    height: 100vh;
+    height: 100dvh;
+    padding-top: clamp(1.25rem, 5vw, 2.5rem);
+    padding-bottom: clamp(1.25rem, 5vw, 2.5rem);
+    /* Keep a focused input above the on-screen keyboard: when the browser
+       scrolls a focused field into view it respects this bottom padding. */
+    scroll-padding-bottom: 50vh;
+  }
+
+  .login-form-panel .form-input,
+  .login-tracking-panel .form-input {
+    scroll-margin-bottom: 6rem;
+  }
+
   .login-layout {
     grid-template-columns: 1fr;
     gap: 2rem;
@@ -6067,9 +6465,9 @@ body.modal-open .notification-dock {
 
 @media (max-width: 768px) {
   .notification-dock {
-    top: auto;
+    top: 0.55rem;
     right: 1rem;
-    bottom: 1rem;
+    bottom: auto;
     align-items: flex-end;
   }
 

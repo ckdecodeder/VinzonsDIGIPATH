@@ -316,12 +316,16 @@ const DocumentList = ({
 
   const filteredDocs = documents
     .filter(d => {
-      const matchSearch = (d.subject || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.trackingNumber || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.senderName || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.originOfficeOther || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.documentTypeOther || '').toLowerCase().includes(search.toLowerCase()) ||
-        getCurrentLocation(d).toLowerCase().includes(search.toLowerCase());
+      const term = search.toLowerCase();
+      const matchSearch = !term ||
+        (d.subject || '').toLowerCase().includes(term) ||
+        (d.trackingNumber || '').toLowerCase().includes(term) ||
+        (d.senderName || '').toLowerCase().includes(term) ||
+        (d.originOfficeOther || '').toLowerCase().includes(term) ||
+        (d.documentTypeOther || '').toLowerCase().includes(term) ||
+        getDocumentTypeLabel(d).toLowerCase().includes(term) ||
+        getOfficeName(d.originOfficeId).toLowerCase().includes(term) ||
+        getCurrentLocation(d).toLowerCase().includes(term);
       const matchStatus = filterStatus === 'All' || getWorkflowStatus(d) === filterStatus;
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
       const matchPriority = filterPriority === 'All' || d.priorityLevel === filterPriority;
@@ -828,7 +832,7 @@ const DocumentList = ({
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search by subject, tracking, sender, or office..."
+                  placeholder="Search by subject, tracking, sender, office, type, or location..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
@@ -1121,7 +1125,7 @@ const DocumentList = ({
       </section>
       </PageShell>
 
-      {detailDoc && (() => {
+      {detailDoc && !previewFile && (() => {
         const doc = documents.find(item => item.id === detailDoc.id) || detailDoc;
         const files = getDocumentFiles(doc);
         const timeline = getTimeline(doc);

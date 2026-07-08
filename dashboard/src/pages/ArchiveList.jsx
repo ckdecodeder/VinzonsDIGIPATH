@@ -161,14 +161,22 @@ const ArchiveList = ({
     return { ...a, doc };
   });
 
-  const filtered = enrichedArchives.filter(
-    (a) =>
-      (a.doc?.subject || "").toLowerCase().includes(search.toLowerCase()) ||
-      (a.doc?.trackingNumber || "")
+  const filtered = enrichedArchives.filter((a) => {
+    const term = search.toLowerCase();
+    if (!term) return true;
+    const currentLocation = a.doc
+      ? getOfficeName(a.doc.currentOfficeId || a.doc.originOfficeId)
+      : "";
+    return (
+      (a.doc?.subject || "").toLowerCase().includes(term) ||
+      (a.doc?.trackingNumber || "").toLowerCase().includes(term) ||
+      getUserFullName(a.userId).toLowerCase().includes(term) ||
+      (a.doc ? getDocTypeName(a.doc.documentTypeId) : "")
         .toLowerCase()
-        .includes(search.toLowerCase()) ||
-      getUserFullName(a.userId).toLowerCase().includes(search.toLowerCase()),
-  );
+        .includes(term) ||
+      currentLocation.toLowerCase().includes(term)
+    );
+  });
 
   useEffect(() => {
     setPage(1);
@@ -224,7 +232,7 @@ const ArchiveList = ({
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search archives..."
+                  placeholder="Search by subject, tracking, name, type, or location..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -348,7 +356,7 @@ const ArchiveList = ({
       </div>
       </PageShell>
 
-      {detailArchive &&
+      {detailArchive && !previewFile &&
         (() => {
           const archive =
             archives.find((item) => item.id === detailArchive.id) ||
