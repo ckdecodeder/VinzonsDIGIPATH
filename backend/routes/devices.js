@@ -256,9 +256,27 @@ router.put('/device', adminOnly, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Device connection status is controlled by hardware connect and heartbeat events.' });
   }
 
+  const deviceId = req.body.id || 'DEV-001';
+  const updates = {
+    name: req.body.name || 'Physical Document Scanner',
+    model: req.body.model,
+    type: req.body.type,
+    ip: req.body.ip,
+    bridgeUrl: req.body.bridgeUrl,
+    location: req.body.location,
+    firmware: req.body.firmware,
+    serialNumber: req.body.serialNumber,
+    resolution: req.body.resolution,
+    assignedTo: req.body.assignedTo,
+  };
+
+  Object.keys(updates).forEach((key) => {
+    if (updates[key] === undefined) delete updates[key];
+  });
+
   const device = await Device.findOneAndUpdate(
-    { id: req.body.id || 'DEV-001' },
-    { ...req.body, id: req.body.id || 'DEV-001', name: req.body.name || 'Physical Document Scanner', status: 'Offline' },
+    { id: deviceId },
+    { $set: { ...updates, id: deviceId } },
     { ...updateOptions, upsert: true }
   );
 

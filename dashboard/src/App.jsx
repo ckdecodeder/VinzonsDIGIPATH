@@ -736,6 +736,7 @@ function App() {
           onRefresh={() => loadData({ silent: true })}
           logs={visibleLogs}
           users={users}
+          offices={offices}
           deviceEvents={deviceEvents}
         />
       );

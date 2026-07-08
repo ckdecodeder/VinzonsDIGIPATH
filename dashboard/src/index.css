@@ -2487,6 +2487,42 @@ tbody tr:hover {
   background: var(--bg-elevated);
 }
 
+.scanner-pdf-fit-wrap {
+  width: 100%;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: #fff;
+  overflow: hidden;
+}
+
+.scanner-pdf-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.scanner-pdf-fit-status {
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.scanner-pdf-fit-status-error {
+  color: var(--danger, #ef4444);
+}
+
+.scanner-image-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 72vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  background: #fff;
+}
+
 .sender-notification-options {
   margin-top: 0.75rem;
   padding: 0.75rem;

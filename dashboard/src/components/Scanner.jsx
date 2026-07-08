@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import PageShell from "./PageShell";
+import PdfFitPreview from "./PdfFitPreview";
 import {
   Camera as CameraIcon,
   Scan,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 import { Camera } from "react-camera-pro";
 import Tesseract from "tesseract.js";
+import { resolveUploadUrl, isPdfMedia } from "../utils/mediaUrl";
 import { commandService, bridgeService } from "../api/documentService";
 import { useOptionalRealtime } from "../context/RealtimeContext";
 import { resolveReachableLanBridge } from "../utils/bridgePreview";
@@ -193,7 +195,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         ? 'Live via WebSocket'
         : 'Live via Pi snapshot';
   const selectedPaperGuide = paperGuides.find(item => item.id === paperGuideId) || paperGuides[0];
-  const isCapturedPdf = capturedFileType === 'application/pdf' || /\.pdf($|\?)/i.test(capturedImage || '');
+  const isCapturedPdf = isPdfMedia(capturedImage, capturedFileType);
 
   useEffect(() => {
     if (!isPhysicalSource) {
@@ -518,8 +520,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       setHardwareScannedDoc(doc || null);
       if (doc) {
         const scannedFile = doc.scannedFiles?.[0];
-        const scannedUrl = doc.scannedImageUrl || scannedFile?.url || scannedFile?.dataUrl || null;
-        const scannedType = scannedFile?.type || (/\.pdf($|\?)/i.test(scannedUrl || '') ? 'application/pdf' : '');
+        const scannedUrl = resolveUploadUrl(
+          doc.scannedImageUrl || scannedFile?.url || scannedFile?.dataUrl || null,
+        );
+        const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : '');
         setCapturedImage(scannedUrl);
         setCapturedFileType(scannedType);
         setExtractedText(doc.scannedText || '');
@@ -1019,19 +1023,21 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   Scanned Document
                 </h3>
               </div>
-              {capturedImage && (
+              {capturedImage ? (
                 isCapturedPdf ? (
-                  <iframe
-                    title="Scanned document PDF"
-                    src={capturedImage}
-                    className="scanner-pdf-preview"
-                  />
+                  <PdfFitPreview src={resolveUploadUrl(capturedImage)} />
                 ) : (
-                  <img src={capturedImage} alt="Scanned document" style={{
-                    width: '100%', borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--border-light)',
-                  }} />
+                  <img
+                    src={resolveUploadUrl(capturedImage)}
+                    alt="Scanned document"
+                    className="scanner-image-preview"
+                  />
                 )
+              ) : (
+                <div className="scanner-preview-empty" style={{ minHeight: '220px' }}>
+                  <Image size={28} />
+                  <span>No scanned preview available yet.</span>
+                </div>
               )}
               {extractedText && (
                 <div style={{
@@ -1301,20 +1307,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           <div className="grid-2" style={{ gap: '1.25rem', marginBottom: '1.5rem' }}>
             {/* Scanned Preview */}
             <div>
-              {capturedImage && (
+              {capturedImage ? (
                 isCapturedPdf ? (
-                  <iframe
-                    title="Scanned document PDF"
-                    src={capturedImage}
-                    className="scanner-pdf-preview"
-                  />
+                  <PdfFitPreview src={resolveUploadUrl(capturedImage)} alt="Scanned document review" />
                 ) : (
-                  <img src={capturedImage} alt="Scanned" style={{
-                    width: '100%', borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--border-light)',
-                  }} />
+                  <img src={resolveUploadUrl(capturedImage)} alt="Scanned" className="scanner-image-preview" />
                 )
-              )}
+              ) : null}
             </div>
 
             {/* Details Summary */}

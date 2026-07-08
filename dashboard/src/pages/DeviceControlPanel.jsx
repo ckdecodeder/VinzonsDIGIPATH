@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   BarChart3,
   Clock,
+  Building2,
   Cpu,
   HardDrive,
   Hash,
@@ -21,7 +22,7 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react';
-import { bridgeService } from '../api/documentService';
+import { bridgeService, deviceService } from '../api/documentService';
 import { useOptionalRealtime } from '../context/RealtimeContext';
 import { getWsUrl } from '../ws/realtimeClient';
 import { users as defaultUsers } from '../data/mockData';
@@ -53,7 +54,7 @@ const normalizeBridgeUrl = (value) => {
   }
 };
 
-const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, deviceEvents = [] }) => {
+const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, offices = [], deviceEvents = [] }) => {
   const realtime = useOptionalRealtime();
   const [liveDevice, setLiveDevice] = useState(device);
 
@@ -113,23 +114,42 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
     return '';
   };
   const [manualBridgeUrl, setManualBridgeUrl] = useState('');
-  const [showManualBridgeUrl, setShowManualBridgeUrl] = useState(false);
+  const [bridgeUrlDirty, setBridgeUrlDirty] = useState(false);
   const [isBridgeConnecting, setIsBridgeConnecting] = useState(false);
   const [bridgeActionMessage, setBridgeActionMessage] = useState('');
   const [bridgeStatus, setBridgeStatus] = useState(null);
+  const [deviceForm, setDeviceForm] = useState({
+    name: '',
+    location: '',
+    assignedTo: '',
+  });
+  const [isSavingDevice, setIsSavingDevice] = useState(false);
+  const [deviceSaveMessage, setDeviceSaveMessage] = useState('');
   const autoBridgeUrl = getReportedBridgeUrl();
+
+  useEffect(() => {
+    if (!bridgeUrlDirty && autoBridgeUrl) {
+      setManualBridgeUrl(autoBridgeUrl);
+    }
+  }, [autoBridgeUrl, bridgeUrlDirty]);
+
+  useEffect(() => {
+    setDeviceForm({
+      name: scanner.name || '',
+      location: scanner.location && scanner.location !== 'Not reported' ? scanner.location : '',
+      assignedTo: scanner.assignedTo && scanner.assignedTo !== 'Not reported' ? scanner.assignedTo : '',
+    });
+  }, [scanner.id, scanner.name, scanner.location, scanner.assignedTo]);
+
   const normalizedManualBridgeUrl = normalizeBridgeUrl(manualBridgeUrl);
-  const isManualOverrideActive = showManualBridgeUrl && Boolean(normalizedManualBridgeUrl);
-  const effectiveBridgeUrl = isManualOverrideActive
-    ? normalizedManualBridgeUrl
-    : (autoBridgeUrl || normalizedManualBridgeUrl);
-  const bridgeUrlSource = isManualOverrideActive
+  const effectiveBridgeUrl = normalizedManualBridgeUrl || autoBridgeUrl;
+  const bridgeUrlSource = bridgeUrlDirty && normalizedManualBridgeUrl
     ? 'manual'
     : (autoBridgeUrl ? 'auto' : (normalizedManualBridgeUrl ? 'manual' : 'waiting'));
 
   const getBridgePayload = () => ({
     deviceId: scanner.id || 'DEV-001',
-    ...(effectiveBridgeUrl && (isManualOverrideActive || !autoBridgeUrl) ? { bridgeUrl: effectiveBridgeUrl } : {}),
+    ...(effectiveBridgeUrl ? { bridgeUrl: effectiveBridgeUrl } : {}),
   });
   const hardwareEvents = [...deviceEvents]
     .filter(event => event.recordedBy === 'hardware')
@@ -173,6 +193,27 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
     { label: 'Heartbeat (WebSocket)', method: 'WS', url: `${deviceWsUrl} — { "type": "heartbeat", "payload": { ... } }` },
     { label: 'HTTP fallback', method: 'POST', url: `${getApiBase()}/devices/heartbeat (legacy / testing only)` },
   ];
+
+
+  const handleSaveDeviceSettings = async () => {
+    setIsSavingDevice(true);
+    setDeviceSaveMessage('');
+    try {
+      await deviceService.update({
+        id: scanner.id || 'DEV-001',
+        name: deviceForm.name.trim() || 'Physical Document Scanner',
+        location: deviceForm.location.trim(),
+        assignedTo: deviceForm.assignedTo,
+        bridgeUrl: effectiveBridgeUrl || undefined,
+      });
+      setDeviceSaveMessage('Device settings saved.');
+      await onRefresh?.();
+    } catch (err) {
+      setDeviceSaveMessage(err.message || 'Unable to save device settings.');
+    } finally {
+      setIsSavingDevice(false);
+    }
+  };
 
   const handleBridgeConnect = async () => {
     const payload = getBridgePayload();
@@ -305,59 +346,34 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto auto', gap: '0.75rem', alignItems: 'end' }}>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">Scanner Bridge URL</label>
-            {bridgeUrlSource === 'auto' ? (
-              <>
-                <div className="form-input" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-elevated)', color: 'var(--text-main)' }}>
-                  <Wifi size={15} style={{ color: 'var(--success)', flexShrink: 0 }} />
-                  <span className="td-mono" style={{ fontSize: '0.82rem', wordBreak: 'break-all' }}>{autoBridgeUrl}</span>
-                </div>
-                <p className="field-hint">
-                  Auto-detected from Pi heartbeat. Hindi mo na kailangan i-type — magre-register at magko-connect ang device automatically.
-                </p>
-              </>
-            ) : bridgeUrlSource === 'manual' ? (
-              <>
-                <input
-                  className="form-input"
-                  value={manualBridgeUrl}
-                  onChange={e => setManualBridgeUrl(e.target.value)}
-                  placeholder="http://raspberry-pi-ip:8080"
-                />
-                <p className="field-hint">Manual override lang ito. Mas mainam hintayin ang Pi heartbeat para auto-detect.</p>
-              </>
-            ) : (
-              <>
-                <div className="form-input" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--warning-bg)', color: 'var(--text-secondary)' }}>
-                  <Clock size={15} style={{ flexShrink: 0 }} />
-                  <span style={{ fontSize: '0.82rem' }}>Waiting for Pi heartbeat...</span>
-                </div>
-                <p className="field-hint">
-                  I-on ang Pi at hintayin ang WebSocket heartbeat. Auto-fill ang bridge URL pag naka-connect na.
-                </p>
-              </>
-            )}
-            {!showManualBridgeUrl && bridgeUrlSource !== 'manual' && (
+            <input
+              className="form-input"
+              value={manualBridgeUrl}
+              onChange={(e) => {
+                setBridgeUrlDirty(true);
+                setManualBridgeUrl(e.target.value);
+              }}
+              placeholder="http://raspberry-pi-ip:8080"
+            />
+            <p className="field-hint">
+              {bridgeUrlSource === 'auto'
+                ? 'Auto-filled from Pi heartbeat. Pwede mong i-edit kung iba ang IP o port.'
+                : bridgeUrlSource === 'manual'
+                  ? 'Manual URL ang ginagamit para sa Connect / Check / Disconnect.'
+                  : 'Hintayin ang Pi heartbeat o i-type ang bridge URL manually.'}
+            </p>
+            {autoBridgeUrl && bridgeUrlDirty && (
               <button
                 type="button"
                 className="btn btn-link"
                 style={{ marginTop: '0.35rem', padding: 0, fontSize: '0.75rem' }}
-                onClick={() => setShowManualBridgeUrl(true)}
+                onClick={() => {
+                  setBridgeUrlDirty(false);
+                  setManualBridgeUrl(autoBridgeUrl);
+                }}
               >
-                Manual override (optional)
+                Reset to auto-detected ({autoBridgeUrl})
               </button>
-            )}
-            {showManualBridgeUrl && bridgeUrlSource !== 'manual' && (
-              <div style={{ marginTop: '0.5rem' }}>
-                <input
-                  className="form-input"
-                  value={manualBridgeUrl}
-                  onChange={e => setManualBridgeUrl(e.target.value)}
-                  placeholder="http://raspberry-pi-ip:8080"
-                />
-                <p className="field-hint" style={{ marginTop: '0.35rem' }}>
-                  Kapag may value dito, manual URL ang gagamitin ng Connect/Check/Disconnect.
-                </p>
-              </div>
             )}
           </div>
           <button className="btn btn-primary" onClick={handleBridgeConnect} disabled={isBridgeConnecting}>
@@ -456,9 +472,23 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
           </div>
 
           <div style={{ flex: 1, minWidth: '280px' }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.25rem', color: 'var(--text-main)' }}>
-              {scanner.name}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
+              <input
+                className="form-input"
+                value={deviceForm.name}
+                onChange={(e) => setDeviceForm((prev) => ({ ...prev, name: e.target.value }))}
+                style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: 0 }}
+              />
+              <button className="btn btn-secondary" onClick={handleSaveDeviceSettings} disabled={isSavingDevice}>
+                {isSavingDevice ? <RefreshCcw size={16} className="animate-spin" /> : null}
+                Save
+              </button>
+            </div>
+            {deviceSaveMessage && (
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                {deviceSaveMessage}
+              </p>
+            )}
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
               {isConnected
                 ? `Last heartbeat received within ${heartbeatSeconds} seconds`
@@ -481,7 +511,13 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                 <MapPin size={14} style={{ color: 'var(--text-muted)' }} />
                 <span style={{ color: 'var(--text-muted)' }}>Location:</span>
-                <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{displayValue(scanner.location)}</span>
+                <input
+                  className="form-input"
+                  value={deviceForm.location}
+                  onChange={(e) => setDeviceForm((prev) => ({ ...prev, location: e.target.value }))}
+                  placeholder="Reception Area"
+                  style={{ flex: 1, padding: '0.35rem 0.55rem', fontSize: '0.78rem' }}
+                />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                 <Server size={14} style={{ color: 'var(--text-muted)' }} />
@@ -499,9 +535,19 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
                 <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{displayValue(scanner.resolution)}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
-                <User size={14} style={{ color: 'var(--text-muted)' }} />
-                <span style={{ color: 'var(--text-muted)' }}>Assigned to:</span>
-                <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>{getUserFullName(scanner.assignedTo)}</span>
+                <Building2 size={14} style={{ color: 'var(--text-muted)' }} />
+                <span style={{ color: 'var(--text-muted)' }}>Assigned Office:</span>
+                <select
+                  className="form-select"
+                  value={deviceForm.assignedTo}
+                  onChange={(e) => setDeviceForm((prev) => ({ ...prev, assignedTo: e.target.value }))}
+                  style={{ flex: 1, padding: '0.35rem 0.55rem', fontSize: '0.78rem' }}
+                >
+                  <option value="">Unassigned</option>
+                  {offices.map((office) => (
+                    <option key={office.id} value={office.id}>{office.name}</option>
+                  ))}
+                </select>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                 <Clock size={14} style={{ color: 'var(--text-muted)' }} />

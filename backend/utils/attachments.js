@@ -26,7 +26,7 @@ const extensionFromAttachment = (attachment) => {
   return mimeExtensions[attachment.type] || '.bin';
 };
 
-const getUploadUrl = (req, filename) => `${req.protocol}://${req.get('host')}/uploads/scans/${filename}`;
+const getUploadUrl = (req, filename) => `/uploads/scans/${filename}`;
 
 const persistAttachment = async (req, attachment) => {
   if (!attachment) return attachment;
