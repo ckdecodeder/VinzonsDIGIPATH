@@ -4499,6 +4499,38 @@ body.modal-open .notification-dock {
   }
 }
 
+/* Responsive report preview: keep the official sheet readable on narrow app
+   windows by scaling it to fit and tidying the toolbar/action buttons.
+   Scoped to screen so printed output keeps its true 8.5in layout. */
+@media screen and (max-width: 880px) {
+  .report-preview-modal {
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100vh - 1rem);
+  }
+
+  .report-preview-toolbar {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+  }
+
+  .report-preview-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .report-print-root {
+    padding: 1rem 0.6rem 1.75rem;
+  }
+
+  /* zoom (unlike transform) also shrinks the reserved box, so the fixed 8.5in
+     layout and its measured pagination stay exact while fitting the screen. */
+  .official-report-page {
+    zoom: 0.62;
+    zoom: max(0.4, min(1, calc((100vw - 2.5rem) / 8.5in)));
+  }
+}
+
 @media print {
   @page {
     size: letter;
