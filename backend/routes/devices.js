@@ -529,6 +529,53 @@ router.get('/commands/:id/status', allRoles, asyncHandler(async (req, res) => {
   res.json({ ...command, resultDocument });
 }));
 
+router.post('/commands/cancel', scannerCommandRoles, asyncHandler(async (req, res) => {
+  requireFields(req.body, ['deviceId']);
+  const deviceId = req.body.deviceId.trim();
+  const reason = req.body.reason?.trim() || 'Cancelled by dashboard user.';
+  const executedAt = new Date().toISOString();
+
+  const pendingCommands = await Command.find({
+    deviceId,
+    status: { $in: ['Pending', 'Executing'] },
+  }).lean();
+
+  if (!pendingCommands.length) {
+    return res.json({ ok: true, cancelled: 0, message: 'No pending scanner commands.' });
+  }
+
+  await Command.updateMany(
+    {
+      deviceId,
+      status: { $in: ['Pending', 'Executing'] },
+    },
+    {
+      $set: {
+        status: 'Cancelled',
+        errorMessage: reason,
+        executedAt,
+      },
+    },
+  );
+
+  for (const command of pendingCommands) {
+    broadcastCommandUpdated({
+      ...command,
+      status: 'Cancelled',
+      errorMessage: reason,
+      executedAt,
+    });
+    await createLogEntry(
+      req,
+      'device_command_cancelled',
+      `Cancelled ${command.command} command for ${deviceId}`,
+      command.id,
+    );
+  }
+
+  res.json({ ok: true, cancelled: pendingCommands.length });
+}));
+
 router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['deviceId', 'command']);
   const commandName = req.body.command?.trim().toUpperCase();

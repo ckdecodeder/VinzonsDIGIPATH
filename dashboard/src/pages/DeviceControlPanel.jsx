@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import PageShell from '../components/PageShell';
 import {
   Activity,
@@ -20,9 +20,10 @@ import {
   User,
   Wifi,
   WifiOff,
+  XCircle,
   Zap,
 } from 'lucide-react';
-import { bridgeService, deviceService } from '../api/documentService';
+import { bridgeService, commandService, deviceService } from '../api/documentService';
 import { useOptionalRealtime } from '../context/RealtimeContext';
 import { getWsUrl } from '../ws/realtimeClient';
 import { users as defaultUsers } from '../data/mockData';
@@ -54,6 +55,19 @@ const normalizeBridgeUrl = (value) => {
   }
 };
 
+const resolveDetectedIp = (scanner) => {
+  const candidates = [scanner.ip, scanner.payload?.ip];
+  for (const value of candidates) {
+    const text = String(value || '').trim();
+    if (text && text !== 'Not reported') return text;
+  }
+  return '';
+};
+
+const bridgeUrlFromIp = (ip, port = DEFAULT_BRIDGE_PORT) => (
+  ip ? normalizeBridgeUrl(`http://${ip}:${port}`) : ''
+);
+
 const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, offices = [], deviceEvents = [] }) => {
   const realtime = useOptionalRealtime();
   const [liveDevice, setLiveDevice] = useState(device);
@@ -84,37 +98,41 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
   };
 
   const isConnected = Boolean(scanner.connected);
+  const detectedIp = resolveDetectedIp(scanner);
   const getReportedBridgeUrl = () => {
-    const deviceIp = scanner.ip && scanner.ip !== 'Not reported' ? scanner.ip : '';
-    const ipBridge = deviceIp ? normalizeBridgeUrl(`http://${deviceIp}:${DEFAULT_BRIDGE_PORT}`) : '';
+    const deviceIp = detectedIp;
+    const ipBridge = bridgeUrlFromIp(deviceIp);
+    if (ipBridge) return ipBridge;
 
     const reportedBridge = scanner.bridgeUrl || scanner.payload?.bridgeUrl;
     if (reportedBridge) {
-      const normalized = normalizeBridgeUrl(reportedBridge);
-      if (!ipBridge) return normalized;
-      try {
-        const host = new URL(normalized).hostname;
-        if (host === deviceIp) return normalized;
-      } catch {
-        return ipBridge;
-      }
-      return ipBridge;
+      return normalizeBridgeUrl(reportedBridge);
     }
 
     const reportedStream = scanner.streamUrl || scanner.payload?.streamUrl;
     if (reportedStream && /^https?:\/\//i.test(String(reportedStream))) {
       try {
-        return new URL(reportedStream).origin;
+        const streamOrigin = new URL(reportedStream).origin;
+        if (deviceIp) {
+          try {
+            if (new URL(streamOrigin).hostname === deviceIp) return normalizeBridgeUrl(streamOrigin);
+          } catch {
+            // fall through
+          }
+          return ipBridge;
+        }
+        return normalizeBridgeUrl(streamOrigin);
       } catch {
         const match = String(reportedStream).match(/^(https?:\/\/[^/]+)/i);
         if (match) return normalizeBridgeUrl(match[1]);
       }
     }
-    if (scanner.ip && scanner.ip !== 'Not reported') return normalizeBridgeUrl(`http://${scanner.ip}:${DEFAULT_BRIDGE_PORT}`);
+
     return '';
   };
   const [manualBridgeUrl, setManualBridgeUrl] = useState('');
   const [bridgeUrlDirty, setBridgeUrlDirty] = useState(false);
+  const lastAutoBridgeUrlRef = useRef('');
   const [isBridgeConnecting, setIsBridgeConnecting] = useState(false);
   const [bridgeActionMessage, setBridgeActionMessage] = useState('');
   const [bridgeStatus, setBridgeStatus] = useState(null);
@@ -125,13 +143,28 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
   });
   const [isSavingDevice, setIsSavingDevice] = useState(false);
   const [deviceSaveMessage, setDeviceSaveMessage] = useState('');
+  const [isCancellingCommand, setIsCancellingCommand] = useState(false);
   const autoBridgeUrl = getReportedBridgeUrl();
 
   useEffect(() => {
-    if (!bridgeUrlDirty && autoBridgeUrl) {
-      setManualBridgeUrl(autoBridgeUrl);
+    if (!autoBridgeUrl) return;
+
+    const normalizedAuto = normalizeBridgeUrl(autoBridgeUrl);
+    const normalizedManual = normalizeBridgeUrl(manualBridgeUrl);
+    const previousAuto = lastAutoBridgeUrlRef.current
+      ? normalizeBridgeUrl(lastAutoBridgeUrlRef.current)
+      : '';
+
+    if (!bridgeUrlDirty) {
+      setManualBridgeUrl(normalizedAuto);
+    } else if (previousAuto && normalizedManual === previousAuto && normalizedAuto !== normalizedManual) {
+      // WiFi/IP changed but the field still shows the previous auto-detected URL.
+      setManualBridgeUrl(normalizedAuto);
+      setBridgeUrlDirty(false);
     }
-  }, [autoBridgeUrl, bridgeUrlDirty]);
+
+    lastAutoBridgeUrlRef.current = normalizedAuto;
+  }, [autoBridgeUrl, bridgeUrlDirty, manualBridgeUrl]);
 
   useEffect(() => {
     setDeviceForm({
@@ -300,6 +333,24 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
     }
   };
 
+  const handleCancelPendingScan = async () => {
+    setIsCancellingCommand(true);
+    setBridgeActionMessage('Cancelling pending scanner commands...');
+    try {
+      const result = await commandService.cancelPending(scanner.id || 'DEV-001');
+      setBridgeActionMessage(
+        result.cancelled
+          ? `Cancelled ${result.cancelled} pending scan command(s).`
+          : 'No pending scan commands found.',
+      );
+      await onRefresh?.();
+    } catch (err) {
+      setBridgeActionMessage(`Unable to cancel pending scan. ${err.message || ''}`.trim());
+    } finally {
+      setIsCancellingCommand(false);
+    }
+  };
+
   const samplePayload = `{
   "deviceId": "DEV-001",
   "name": "Physical Document Scanner",
@@ -338,7 +389,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
     >
       <div className="card" style={{ marginBottom: '1.25rem' }}>
         <div className="card-header">
-          <h3 className="card-title">Auto-Connect Bridge</h3>
+          <h3 className="card-title">Scanner Bridge</h3>
           <span className={`status-badge ${isConnected ? 'status-online' : 'status-warning'}`} style={{ fontSize: '0.65rem' }}>
             {isConnected ? 'Live' : 'Ready'}
           </span>
@@ -357,11 +408,22 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
             />
             <p className="field-hint">
               {bridgeUrlSource === 'auto'
-                ? 'Auto-filled from Pi heartbeat. Pwede mong i-edit kung iba ang IP o port.'
+                ? `Auto-detect ang IP (${detectedIp || 'hintayin ang heartbeat'}). Pwede mong i-edit. I-click Connect — hindi auto-connect.`
                 : bridgeUrlSource === 'manual'
-                  ? 'Manual URL ang ginagamit para sa Connect / Check / Disconnect.'
-                  : 'Hintayin ang Pi heartbeat o i-type ang bridge URL manually.'}
+                  ? 'Manual URL ang ginagamit. I-click Connect para kumonekta.'
+                  : 'Hintayin ang Pi heartbeat para ma-detect ang IP, o i-type ang bridge URL manually.'}
             </p>
+            {detectedIp && manualBridgeUrl && (() => {
+              try {
+                return new URL(normalizeBridgeUrl(manualBridgeUrl) || manualBridgeUrl).hostname !== detectedIp;
+              } catch {
+                return false;
+              }
+            })() && (
+              <p className="field-hint" style={{ color: 'var(--warning)' }}>
+                Lumang URL ang naka-fill. Detected IP ngayon: {detectedIp}. I-click &quot;Reset to auto-detected&quot; o Refresh.
+              </p>
+            )}
             {autoBridgeUrl && bridgeUrlDirty && (
               <button
                 type="button"
@@ -387,6 +449,14 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
           <button className="btn btn-secondary" onClick={handleBridgeDisconnect} disabled={isBridgeConnecting}>
             <WifiOff size={16} />
             Disconnect
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleCancelPendingScan}
+            disabled={isCancellingCommand || isBridgeConnecting}
+          >
+            {isCancellingCommand ? <RefreshCcw size={16} className="animate-spin" /> : <XCircle size={16} />}
+            Cancel Pending Scan
           </button>
         </div>
         {bridgeActionMessage && (
@@ -522,7 +592,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                 <Server size={14} style={{ color: 'var(--text-muted)' }} />
                 <span style={{ color: 'var(--text-muted)' }}>IP:</span>
-                <span className="td-mono" style={{ fontSize: '0.75rem' }}>{displayValue(scanner.ip)}</span>
+                <span className="td-mono" style={{ fontSize: '0.75rem' }}>{displayValue(detectedIp || scanner.ip)}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                 <Info size={14} style={{ color: 'var(--text-muted)' }} />

@@ -9,6 +9,9 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
+  const renderTaskRef = useRef(null);
+  const renderGenerationRef = useRef(0);
+  const resizeTimerRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -16,18 +19,33 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
     if (!src) return undefined;
 
     let cancelled = false;
-    let renderTask = null;
+
+    const cancelActiveRender = async () => {
+      const task = renderTaskRef.current;
+      renderTaskRef.current = null;
+      if (!task) return;
+      try {
+        task.cancel();
+        await task.promise.catch(() => {});
+      } catch {
+        // Ignore cancellation errors.
+      }
+    };
 
     const render = async () => {
+      const generation = ++renderGenerationRef.current;
+      await cancelActiveRender();
+      if (cancelled || generation !== renderGenerationRef.current) return;
+
       setLoading(true);
       setError('');
 
       try {
         const doc = await pdfjs.getDocument(src).promise;
-        if (cancelled) return;
+        if (cancelled || generation !== renderGenerationRef.current) return;
 
         const page = await doc.getPage(1);
-        if (cancelled) return;
+        if (cancelled || generation !== renderGenerationRef.current) return;
 
         const containerWidth = Math.max(wrapRef.current?.clientWidth || 640, 280);
         const baseViewport = page.getViewport({ scale: 1 });
@@ -35,30 +53,41 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
         const viewport = page.getViewport({ scale });
 
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        if (!canvas || cancelled || generation !== renderGenerationRef.current) return;
 
         const context = canvas.getContext('2d');
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
 
-        renderTask = page.render({ canvasContext: context, viewport });
-        await renderTask.promise;
+        const task = page.render({ canvasContext: context, viewport, canvas });
+        renderTaskRef.current = task;
+        await task.promise;
 
-        if (!cancelled) setLoading(false);
+        if (cancelled || generation !== renderGenerationRef.current) return;
+        renderTaskRef.current = null;
+        setLoading(false);
       } catch (err) {
-        if (!cancelled) {
-          setError(err.message || 'Could not render PDF preview.');
-          setLoading(false);
-        }
+        if (cancelled || generation !== renderGenerationRef.current) return;
+        if (err?.name === 'RenderingCancelledException') return;
+        setError(err.message || 'Could not render PDF preview.');
+        setLoading(false);
       }
     };
 
-    render();
+    const scheduleRender = (delayMs = 0) => {
+      if (resizeTimerRef.current) {
+        clearTimeout(resizeTimerRef.current);
+      }
+      resizeTimerRef.current = setTimeout(() => {
+        resizeTimerRef.current = null;
+        if (!cancelled) render();
+      }, delayMs);
+    };
+
+    scheduleRender(0);
 
     const observer = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(() => {
-          if (!cancelled) render();
-        })
+      ? new ResizeObserver(() => scheduleRender(150))
       : null;
 
     if (observer && wrapRef.current) {
@@ -67,11 +96,12 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
 
     return () => {
       cancelled = true;
-      try {
-        renderTask?.cancel?.();
-      } catch {
-        // Ignore render cancellation errors.
+      renderGenerationRef.current += 1;
+      if (resizeTimerRef.current) {
+        clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = null;
       }
+      cancelActiveRender();
       observer?.disconnect();
     };
   }, [src]);

@@ -320,6 +320,13 @@ export const commandService = {
     });
   },
 
+  cancelPending(deviceId = 'DEV-001', reason = 'Cancelled by dashboard user.') {
+    return apiRequest('/commands/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, reason }),
+    });
+  },
+
   checkStatus(id) {
     return apiRequest(`/commands/${id}/status`);
   },

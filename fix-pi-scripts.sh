@@ -13,6 +13,7 @@ fix_file() {
 }
 
 for file in \
+  "$SCRIPT_DIR/fix-pi-scripts.sh" \
   "$SCRIPT_DIR/start.sh" \
   "$SCRIPT_DIR/install-pi-deps.sh" \
   "$SCRIPT_DIR/verify-pi-deps.py" \
@@ -20,7 +21,8 @@ for file in \
   "$SCRIPT_DIR/scripts/pi-start-all.sh" \
   "$SCRIPT_DIR/scripts/pi-restart-clean.sh" \
   "$SCRIPT_DIR/scripts/pi-update-network.sh" \
-  "$SCRIPT_DIR/scripts/pi-test-backend.sh"; do
+  "$SCRIPT_DIR/scripts/pi-test-backend.sh" \
+  "$SCRIPT_DIR/scripts/pi-install-network-hook.sh"; do
   fix_file "$file"
 done
 

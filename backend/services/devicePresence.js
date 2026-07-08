@@ -11,12 +11,13 @@ const deviceHeartbeatTimeoutMs = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_MS 
 const scannerBridgePort = String(process.env.SCANNER_BRIDGE_PORT || '8080');
 
 const resolveBridgeUrl = (device, latestHardwareEvent) => {
-  const eventBridge = latestHardwareEvent?.payload?.bridgeUrl;
-  const eventIp = latestHardwareEvent?.payload?.ip;
+  const eventPayload = latestHardwareEvent?.payload || {};
+  const eventIp = eventPayload.ip;
   const deviceIp = (eventIp && eventIp !== 'Not reported')
     ? eventIp
     : (device?.ip && device.ip !== 'Not reported' ? device.ip : null);
   const storedBridge = device?.bridgeUrl;
+  const eventBridge = eventPayload.bridgeUrl;
 
   if (deviceIp) {
     const ipBridge = `http://${deviceIp}:${scannerBridgePort}`;
@@ -137,7 +138,11 @@ const recordHardwareDeviceEvent = async (req, eventType) => {
     status,
     signalStrength: req.body.signalStrength,
     details: req.body.details || `Hardware reported ${eventType}`,
-    payload: req.body.payload,
+    payload: {
+      ...(req.body.payload && typeof req.body.payload === 'object' ? req.body.payload : {}),
+      ...(req.body.ip ? { ip: req.body.ip } : {}),
+      ...(req.body.bridgeUrl ? { bridgeUrl: req.body.bridgeUrl } : {}),
+    },
     recordedBy: 'hardware',
     timestamp: req.body.timestamp || now,
   });

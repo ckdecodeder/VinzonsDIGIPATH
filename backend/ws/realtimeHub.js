@@ -4,6 +4,11 @@ const { URL } = require('url');
 const { getDeviceApiKey } = require('../utils/bridge');
 
 const getJwtSecret = () => process.env.JWT_SECRET || 'dev-only-change-this-secret';
+const getStreamMinIntervalMs = () => {
+  const configured = Number(process.env.REALTIME_STREAM_MIN_INTERVAL_MS);
+  if (Number.isFinite(configured) && configured >= 0) return configured;
+  return 0;
+};
 
 const parseJson = (raw) => {
   try {
@@ -232,9 +237,10 @@ class RealtimeHub {
   }
 
   relayStreamFrame(deviceId, frameBuffer) {
+    const minIntervalMs = getStreamMinIntervalMs();
     const now = Date.now();
     const lastSent = this.streamThrottle.get(deviceId) || 0;
-    if (now - lastSent < 80) return;
+    if (minIntervalMs > 0 && now - lastSent < minIntervalMs) return;
     this.streamThrottle.set(deviceId, now);
 
     const channel = `scanner:${deviceId}:stream`;

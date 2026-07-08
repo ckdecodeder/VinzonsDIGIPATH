@@ -109,6 +109,11 @@ const backendEnvPath = path.join(root, 'backend', '.env');
 let backendEnv = ensureFile(backendEnvPath, path.join(root, 'backend', '.env.example'));
 backendEnv = upsertEnvLine(backendEnv, 'PUBLIC_API_URL', publicRoot);
 backendEnv = upsertEnvLine(backendEnv, 'DEVICE_API_KEY', deviceKey);
+backendEnv = upsertEnvLine(
+  backendEnv,
+  'REALTIME_STREAM_MIN_INTERVAL_MS',
+  cfg.REALTIME_STREAM_MIN_INTERVAL_MS || '0',
+);
 writeFile(backendEnvPath, backendEnv);
 
 // bridge.env (Pi package)
@@ -118,6 +123,18 @@ bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_BACKEND_BASE_URL', apiBase);
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_DEVICE_API_KEY', deviceKey);
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_USE_WEBSOCKET', '1');
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_ENABLE_MJPEG_HTTP', '1');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_FPS', cfg.DIGIPATH_STREAM_FPS || '30');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_WIDTH', cfg.DIGIPATH_STREAM_WIDTH || '640');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_HEIGHT', cfg.DIGIPATH_STREAM_HEIGHT || '360');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_JPEG_QUALITY', cfg.DIGIPATH_STREAM_JPEG_QUALITY || '82');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_FAST', cfg.DIGIPATH_STREAM_FAST || '0');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_COLOR_MODE', cfg.DIGIPATH_STREAM_COLOR_MODE || 'jpeg');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_RESTART_ON_IP_CHANGE', cfg.DIGIPATH_RESTART_ON_IP_CHANGE || '1');
+bridgeEnv = upsertEnvLine(
+  bridgeEnv,
+  'DIGIPATH_IP_RESTART_DEBOUNCE_SECS',
+  cfg.DIGIPATH_IP_RESTART_DEBOUNCE_SECS || '30',
+);
 writeFile(bridgeEnvPath, bridgeEnv);
 
 // pi-update-network.sh BACKEND_URL

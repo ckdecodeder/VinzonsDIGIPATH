@@ -30,13 +30,18 @@ read_env_value() {
   fi
 }
 
-echo "[DigiPath] 1/5 — fix line endings..."
+echo "[DigiPath] 1/6 — fix line endings..."
 if [[ -f "$REPO_ROOT/fix-pi-scripts.sh" ]]; then
   bash "$REPO_ROOT/fix-pi-scripts.sh"
 fi
 
+echo "[DigiPath] 2/6 — WiFi/IP auto-restart hook..."
+if [[ -f "$SCRIPT_DIR/pi-install-network-hook.sh" ]]; then
+  bash "$SCRIPT_DIR/pi-install-network-hook.sh"
+fi
+
 if ! systemctl cat digipath-scanner.service >/dev/null 2>&1; then
-  echo "[DigiPath] 2/5 — first-time install (deps + systemd)..."
+  echo "[DigiPath] 3/6 — first-time install (deps + systemd)..."
   if [[ -f "$REPO_ROOT/install-pi-deps.sh" ]]; then
     bash "$REPO_ROOT/install-pi-deps.sh"
   fi
@@ -50,16 +55,16 @@ if ! systemctl cat digipath-scanner.service >/dev/null 2>&1; then
     echo "[DigiPath] WARNING: No bridge.env backend URL — copy bridge.env from laptop first."
   fi
 else
-  echo "[DigiPath] 2/5 — service already installed (skip full install)."
+  echo "[DigiPath] 3/6 — service already installed (skip full install)."
 fi
 
-echo "[DigiPath] 3/5 — sync backend URL..."
+echo "[DigiPath] 4/6 — sync backend URL..."
 bash "$SCRIPT_DIR/pi-update-network.sh"
 
-echo "[DigiPath] 4/5 — deploy files + restart (one instance only)..."
+echo "[DigiPath] 5/6 — deploy files + restart (one instance only)..."
 bash "$SCRIPT_DIR/pi-restart-clean.sh"
 
-echo "[DigiPath] 5/5 — enable autostart on boot + test..."
+echo "[DigiPath] 6/6 — enable autostart on boot + test..."
 systemctl enable digipath-scanner 2>/dev/null || true
 systemctl is-enabled digipath-scanner 2>/dev/null || true
 

@@ -44,6 +44,10 @@ export const collectLanBridgeCandidates = (device) => {
     add(`http://${device.ip}:8080`);
   }
 
+  if (device?.payload?.ip && device.payload.ip !== 'Not reported') {
+    add(`http://${device.payload.ip}:8080`);
+  }
+
   const envUrl = (import.meta.env.VITE_SCANNER_BRIDGE_URL || '').trim();
   if (envUrl) add(envUrl);
 

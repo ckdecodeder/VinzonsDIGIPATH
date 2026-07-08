@@ -307,12 +307,26 @@ STREAM_RESOLUTION = (640, 360)       # Lower resolution = faster live stream
 CAMERA_WARMUP_SECS = 1
 STREAM_PORT = 8080                   # MJPEG stream port
 STREAM_PORT = int(os.environ.get("DIGIPATH_STREAM_PORT", str(STREAM_PORT)))
-STREAM_FPS = max(1, int(os.environ.get("DIGIPATH_STREAM_FPS", "10")))
-STREAM_JPEG_QUALITY = max(40, min(int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALITY", "82")), 95))
+STREAM_FPS = max(1, min(int(os.environ.get("DIGIPATH_STREAM_FPS", "60")), 120))
+STREAM_JPEG_QUALITY = max(40, min(int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALITY", "70")), 95))
 _stream_width = int(os.environ.get("DIGIPATH_STREAM_WIDTH", str(STREAM_RESOLUTION[0])))
 _stream_height = int(os.environ.get("DIGIPATH_STREAM_HEIGHT", str(STREAM_RESOLUTION[1])))
 STREAM_RESOLUTION = (_stream_width, _stream_height)
 STREAM_COLOR_MODE = os.environ.get("DIGIPATH_STREAM_COLOR_MODE", "jpeg").strip().lower()
+
+
+def uses_isp_jpeg_stream():
+    """libcamera JPEG encoder applies ISP AWB — avoids blue tint on live preview."""
+    return STREAM_COLOR_MODE in ("jpeg", "isp", "native")
+
+
+STREAM_FAST_PATH = (
+    not uses_isp_jpeg_stream()
+    and (
+        STREAM_FPS >= 24
+        or os.environ.get("DIGIPATH_STREAM_FAST", "auto").strip().lower() in ("1", "true", "yes", "on")
+    )
+)
 CAMERA_AWB_MODE = os.environ.get("DIGIPATH_CAMERA_AWB", "auto").strip().lower()
 CAMERA_SATURATION = os.environ.get("DIGIPATH_CAMERA_SATURATION", "").strip()
 CAMERA_BRIGHTNESS = os.environ.get("DIGIPATH_CAMERA_BRIGHTNESS", "").strip()
@@ -343,8 +357,11 @@ latest_stream_lock = threading.Lock()
 stream_producer_running = False
 realtime_ws = None
 realtime_ws_lock = threading.Lock()
+ws_frame_send_lock = threading.Lock()
 ws_connected = False
 ws_connected_once = False
+_active_command_ids = set()
+_active_command_lock = threading.Lock()
 
 # ================= LOCAL DATABASE SETUP =================
 def init_db():
@@ -392,14 +409,55 @@ def upload_scan_to_backend(file_path, text, title, date, sender, command_id=None
 
 # ================= DEVICE PRESENCE / AUTO-CONNECT =================
 def get_local_ip():
+    """Return the Pi's current LAN IPv4 (refreshed every heartbeat / network check)."""
+    def is_lan_ipv4(value):
+        if not value or value.startswith("127.") or value.startswith("169.254."):
+            return False
+        if ":" in value:
+            return False
+        parts = value.split(".")
+        if len(parts) != 4:
+            return False
+        try:
+            return all(0 <= int(part) <= 255 for part in parts)
+        except ValueError:
+            return False
+
+    try:
+        result = subprocess.run(
+            ["hostname", "-I"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        for token in result.stdout.split():
+            ip_address = token.strip()
+            if is_lan_ipv4(ip_address):
+                return ip_address
+    except Exception:
+        pass
+
     try:
         probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.settimeout(1)
         probe.connect(("8.8.8.8", 80))
         ip_address = probe.getsockname()[0]
         probe.close()
-        return ip_address
+        if is_lan_ipv4(ip_address):
+            return ip_address
     except Exception:
-        return "127.0.0.1"
+        pass
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip_address = info[4][0]
+            if is_lan_ipv4(ip_address):
+                return ip_address
+    except Exception:
+        pass
+
+    return "127.0.0.1"
 
 def get_memory_usage_percent():
     try:
@@ -421,13 +479,14 @@ def get_device_payload(event_type):
     cpu_usage = min(round((load_average / max(os.cpu_count() or 1, 1)) * 100), 100)
 
     bridge_url = f"http://{get_local_ip()}:{STREAM_PORT}"
+    local_ip = get_local_ip()
 
     return {
         "deviceId": DEVICE_ID,
         "name": DEVICE_NAME,
         "model": DEVICE_MODEL,
         "type": "Scanner",
-        "ip": get_local_ip(),
+        "ip": local_ip,
         "bridgeUrl": bridge_url,
         "location": DEVICE_LOCATION,
         "firmware": DEVICE_FIRMWARE,
@@ -437,6 +496,7 @@ def get_device_payload(event_type):
         "details": f"Scanner bridge reported {event_type}",
         "payload": {
             "host": socket.gethostname(),
+            "ip": local_ip,
             "platform": platform.platform(),
             "bridgeVersion": BRIDGE_VERSION,
             "backendBaseUrl": BACKEND_BASE_URL,
@@ -507,11 +567,15 @@ def send_ws_frame(frame):
     global ws_connected, realtime_ws
     if not WS_AVAILABLE or not ws_connected or not realtime_ws or not frame:
         return
-    with realtime_ws_lock:
-        try:
+    if not ws_frame_send_lock.acquire(blocking=False):
+        return
+    try:
+        with realtime_ws_lock:
             realtime_ws.send(frame, opcode=websocket.ABNF.OPCODE_BINARY)
-        except Exception:
-            ws_connected = False
+    except Exception:
+        ws_connected = False
+    finally:
+        ws_frame_send_lock.release()
 
 
 def send_ws_presence(event_type):
@@ -571,6 +635,91 @@ def report_device_presence(event_type):
     transport = "websocket+http" if ws_ok else "http"
     print(f"[Device] {event_type} sent via {transport}.")
     return True
+
+
+def request_service_restart(reason):
+    """Full service restart so WS, HTTP server, and IP reporting all refresh."""
+    if os.environ.get("DIGIPATH_RESTART_ON_IP_CHANGE", "1").strip().lower() in ("0", "false", "no", "off"):
+        print(f"[Network] IP change restart disabled; reason={reason}")
+        return False
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "systemctl", "restart", "digipath-scanner.service"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode == 0:
+            print(f"[Network] digipath-scanner restart triggered ({reason}).")
+            return True
+        detail = (result.stderr or result.stdout or "").strip()
+        print(f"[Network] Service restart failed ({result.returncode}): {detail}")
+    except Exception as err:
+        print(f"[Network] Service restart error: {err}")
+    return False
+
+
+def force_presence_refresh():
+    """Reconnect WS + send fresh device_connected with the latest IP."""
+    global connected_once, ws_connected_once, ws_connected, realtime_ws
+
+    connected_once = False
+    ws_connected_once = False
+
+    with realtime_ws_lock:
+        ws = realtime_ws
+        realtime_ws = None
+        ws_connected = False
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+
+    try:
+        report_device_presence("device_connected")
+        return True
+    except Exception as err:
+        print(f"[Network] Presence refresh failed: {err}")
+        return False
+
+
+def network_change_worker():
+    """Restart the scanner service when DHCP gives a new LAN IP after WiFi change."""
+    last_ip = None
+    pending_ip = None
+    pending_count = 0
+    restart_debounce_secs = max(15, int(os.environ.get("DIGIPATH_IP_RESTART_DEBOUNCE_SECS", "30")))
+
+    while True:
+        try:
+            current_ip = get_local_ip()
+            if current_ip == "127.0.0.1":
+                pending_ip = None
+                pending_count = 0
+            elif current_ip == pending_ip:
+                pending_count += 1
+            else:
+                pending_ip = current_ip
+                pending_count = 1
+
+            if pending_count >= 2 and pending_ip:
+                if last_ip and pending_ip != last_ip:
+                    print(f"[Network] IP changed {last_ip} -> {pending_ip}")
+                    force_presence_refresh()
+                    if request_service_restart(f"{last_ip} -> {pending_ip}"):
+                        return
+                    print("[Network] Falling back to heartbeat-only refresh.")
+                    try:
+                        report_device_presence("device_heartbeat")
+                    except Exception as err:
+                        print(f"[Network] Heartbeat after IP change failed: {err}")
+                    time.sleep(restart_debounce_secs)
+                last_ip = pending_ip
+        except Exception as err:
+            print(f"[Network] Monitor error: {err}")
+        time.sleep(3)
 
 
 def device_presence_worker():
@@ -713,12 +862,13 @@ def init_camera(retries=3, retry_delay=2.0):
 
         try:
             camera = Picamera2()
-            config = build_preview_configuration()
+            config = build_stream_configuration()
             camera.configure(config)
             camera.start()
             time.sleep(CAMERA_WARMUP_SECS)
             apply_camera_controls()
-            print(f"[Camera] Initialized at {STREAM_RESOLUTION} @ {STREAM_FPS}fps (AWB={CAMERA_AWB_MODE}, stream={STREAM_COLOR_MODE}).")
+            stream_mode = "preview/ISP jpeg" if uses_isp_jpeg_stream() else ("video/fast RGB" if STREAM_FAST_PATH else f"preview/{STREAM_COLOR_MODE}")
+            print(f"[Camera] Initialized at {STREAM_RESOLUTION} @ {STREAM_FPS}fps ({stream_mode}, AWB={CAMERA_AWB_MODE}).")
             mark_camera_success()
             return True
         except Exception as e:
@@ -784,23 +934,30 @@ def apply_camera_controls():
         print(f"[Camera] Control apply warning: {err}")
 
 
-def build_preview_configuration():
+def build_stream_configuration():
     controls = build_isp_controls()
+    if uses_isp_jpeg_stream():
+        factory = camera.create_preview_configuration
+    else:
+        factory = getattr(camera, "create_video_configuration", None) or camera.create_preview_configuration
     try:
-        return camera.create_preview_configuration(
+        return factory(
             main={"size": STREAM_RESOLUTION, "format": "RGB888"},
             controls=controls,
         )
     except Exception:
-        return camera.create_preview_configuration(
-            main={"size": STREAM_RESOLUTION, "format": "RGB888"},
-        )
+        return factory(main={"size": STREAM_RESOLUTION, "format": "RGB888"})
+
+
+def build_preview_configuration():
+    return build_stream_configuration()
+
 
 def restore_stream_configuration():
     global camera
     if not camera:
         return False
-    preview_config = build_preview_configuration()
+    preview_config = build_stream_configuration()
     camera.stop()
     camera.configure(preview_config)
     camera.start()
@@ -900,8 +1057,10 @@ def capture_via_camera_cli(file_path):
         if CAMERA_AVAILABLE and not camera:
             init_camera(retries=2, retry_delay=1.0)
 
-def encode_stream_jpeg(image_array):
+def encode_stream_jpeg(image_array, fast=False):
     """Encode RGB888 numpy frame to JPEG without swapping red/blue channels."""
+    jpeg_quality = STREAM_JPEG_QUALITY
+    optimize = not fast
     if OCR_AVAILABLE and image_array is not None:
         try:
             if len(image_array.shape) == 3 and image_array.shape[2] >= 3:
@@ -910,7 +1069,7 @@ def encode_stream_jpeg(image_array):
                     rgb = np.clip(rgb, 0, 255).astype(np.uint8)
                 img = Image.fromarray(rgb, mode="RGB")
                 buf = io.BytesIO()
-                img.save(buf, format="JPEG", quality=STREAM_JPEG_QUALITY, optimize=True)
+                img.save(buf, format="JPEG", quality=jpeg_quality, optimize=optimize)
                 return buf.getvalue()
         except Exception:
             pass
@@ -920,11 +1079,10 @@ def encode_stream_jpeg(image_array):
             frame = image_array
             if len(frame.shape) == 3 and frame.shape[2] == 3:
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            ok, encoded = cv2.imencode(
-                ".jpg",
-                frame,
-                [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY, cv2.IMWRITE_JPEG_OPTIMIZE, 1],
-            )
+            params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
+            if not fast:
+                params.extend([cv2.IMWRITE_JPEG_OPTIMIZE, 1])
+            ok, encoded = cv2.imencode(".jpg", frame, params)
             if ok:
                 return encoded.tobytes()
         except Exception:
@@ -952,11 +1110,11 @@ def capture_stream_frame():
             with camera_lock:
                 if is_capturing:
                     return None
-                if STREAM_COLOR_MODE in ("jpeg", "isp", "native"):
+                if uses_isp_jpeg_stream():
                     frame = capture_stream_jpeg_from_camera()
                 else:
-                    image_array = camera.capture_array()
-                    frame = encode_stream_jpeg(image_array)
+                    image_array = camera.capture_array("main")
+                    frame = encode_stream_jpeg(image_array, fast=STREAM_FAST_PATH)
             if frame:
                 mark_camera_success()
                 return frame
@@ -970,8 +1128,11 @@ def capture_stream_frame():
 def stream_frame_producer():
     global latest_stream_frame, stream_producer_running
 
-    interval = max(1.0 / STREAM_FPS, 0.02)
-    print(f"[Stream] Producer running at ~{STREAM_FPS} fps.")
+    isp_mode = uses_isp_jpeg_stream()
+    target_interval = 0 if isp_mode else max(1.0 / STREAM_FPS, 0.001)
+    mode_label = "ISP jpeg (as fast as camera)" if isp_mode else f"target {STREAM_FPS} fps"
+    print(f"[Stream] Producer running — {mode_label} (fast_path={STREAM_FAST_PATH}).")
+    next_tick = time.perf_counter()
     while stream_producer_running:
         frame = capture_stream_frame()
         if frame:
@@ -979,7 +1140,16 @@ def stream_frame_producer():
                 latest_stream_frame = frame
             if USE_WEBSOCKET and WS_AVAILABLE:
                 send_ws_frame(frame)
-        time.sleep(interval)
+
+        if target_interval <= 0:
+            continue
+
+        next_tick += target_interval
+        sleep_for = next_tick - time.perf_counter()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        else:
+            next_tick = time.perf_counter()
 
 def capture_preview_frame():
     global last_camera_error
@@ -1467,76 +1637,89 @@ def execute_device_command(cmd):
     if not cmd or not cmd.get("command"):
         return
 
+    cmd_id = cmd.get("id")
+    if cmd_id:
+        with _active_command_lock:
+            if cmd_id in _active_command_ids:
+                return
+            _active_command_ids.add(cmd_id)
+
     print(f"\n[Command] Received: {cmd['command']}")
 
-    if cmd['command'] == 'SCAN':
-        doc_id = None
-        local_scan_id = None
-        update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
-        try:
+    try:
+        if cmd['command'] == 'SCAN':
+            doc_id = None
+            local_scan_id = None
+            file_path = None
+            update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
+            try:
+                requests.put(
+                    f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+                    json={'status': 'Executing'},
+                    headers=DEVICE_HEADERS,
+                    timeout=10
+                )
+                sort_layer = 1
+                try:
+                    motor_controller.run_scan_sequence()
+                    file_path, text, title, date, sender = scan_document()
+                    sort_layer = motor_controller.resolve_sort_layer(
+                        cmd.get("payload") or {},
+                        text,
+                        title,
+                    )
+                finally:
+                    motor_controller.finish_scan_sequence(sort_layer)
+                if file_path and os.path.exists(file_path):
+                    local_scan_id = queue_scan(file_path, text, title, date, sender, "pending")
+                    result = upload_scan_to_backend(file_path, text, title, date, sender, cmd['id'])
+                    doc_id = result.get('documentId')
+                    mark_scan_status(local_scan_id, "uploaded")
+                    print(f"[Command] Upload success, doc: {doc_id}")
+                    update_data = {'status': 'Executed'}
+                    if doc_id:
+                        update_data['resultDocumentId'] = doc_id
+                else:
+                    update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
+            except Exception as e:
+                print(f"[Command] Upload error: {e}")
+                if local_scan_id:
+                    mark_scan_status(local_scan_id, "pending")
+                update_data = {'status': 'Failed', 'errorMessage': str(e)}
+
             requests.put(
                 f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-                json={'status': 'Executing'},
+                json=update_data,
                 headers=DEVICE_HEADERS,
                 timeout=10
             )
-            sort_layer = 1
-            try:
-                motor_controller.run_scan_sequence()
-                file_path, text, title, date, sender = scan_document()
-                sort_layer = motor_controller.resolve_sort_layer(
-                    cmd.get("payload") or {},
-                    text,
-                    title,
-                )
-            finally:
-                motor_controller.finish_scan_sequence(sort_layer)
-            if os.path.exists(file_path):
-                local_scan_id = queue_scan(file_path, text, title, date, sender, "pending")
-                result = upload_scan_to_backend(file_path, text, title, date, sender, cmd['id'])
-                doc_id = result.get('documentId')
-                mark_scan_status(local_scan_id, "uploaded")
-                print(f"[Command] Upload success, doc: {doc_id}")
-                update_data = {'status': 'Executed'}
-                if doc_id:
-                    update_data['resultDocumentId'] = doc_id
-            else:
-                update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
-        except Exception as e:
-            print(f"[Command] Upload error: {e}")
-            if local_scan_id:
-                mark_scan_status(local_scan_id, "pending")
-            update_data = {'status': 'Failed', 'errorMessage': str(e)}
+            print(f"[Command] Executed {cmd['command']} successfully.")
 
-        requests.put(
-            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-            json=update_data,
-            headers=DEVICE_HEADERS,
-            timeout=10
-        )
-        print(f"[Command] Executed {cmd['command']} successfully.")
+        elif cmd['command'] == 'RESTART':
+            print("[Command] Received RESTART command.")
+            requests.put(
+                f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+                json={'status': 'Executed'},
+                headers=DEVICE_HEADERS,
+                timeout=10
+            )
+            time.sleep(1)
+            subprocess.run(['sudo', 'reboot'])
 
-    elif cmd['command'] == 'RESTART':
-        print("[Command] Received RESTART command.")
-        requests.put(
-            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-            json={'status': 'Executed'},
-            headers=DEVICE_HEADERS,
-            timeout=10
-        )
-        time.sleep(1)
-        subprocess.run(['sudo', 'reboot'])
-
-    elif cmd['command'] == 'SHUTDOWN':
-        print("[Command] Received SHUTDOWN command.")
-        requests.put(
-            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-            json={'status': 'Executed'},
-            headers=DEVICE_HEADERS,
-            timeout=10
-        )
-        time.sleep(1)
-        subprocess.run(['sudo', 'shutdown', '-h', 'now'])
+        elif cmd['command'] == 'SHUTDOWN':
+            print("[Command] Received SHUTDOWN command.")
+            requests.put(
+                f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+                json={'status': 'Executed'},
+                headers=DEVICE_HEADERS,
+                timeout=10
+            )
+            time.sleep(1)
+            subprocess.run(['sudo', 'shutdown', '-h', 'now'])
+    finally:
+        if cmd_id:
+            with _active_command_lock:
+                _active_command_ids.discard(cmd_id)
 
 
 def on_realtime_message(ws, message):
@@ -1611,10 +1794,6 @@ def command_worker():
     global last_command_error
 
     while True:
-        if USE_WEBSOCKET and WS_AVAILABLE and ws_connected:
-            time.sleep(3)
-            continue
-
         try:
             response = requests.get(COMMAND_API_URL, headers=DEVICE_HEADERS, timeout=10)
             if response.status_code == 200:
@@ -1691,6 +1870,9 @@ if __name__ == "__main__":
     # Start automatic backend connection and heartbeat reporting.
     presence_thread = threading.Thread(target=device_presence_worker, daemon=True)
     presence_thread.start()
+
+    network_thread = threading.Thread(target=network_change_worker, daemon=True)
+    network_thread.start()
 
     if USE_WEBSOCKET and WS_AVAILABLE:
         realtime_thread = threading.Thread(target=realtime_worker, daemon=True)

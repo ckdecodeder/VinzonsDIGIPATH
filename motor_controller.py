@@ -81,7 +81,7 @@ class MotorController:
     def __init__(self):
         self.enabled = _env_bool("DIGIPATH_MOTOR_ENABLED", os.environ.get("DIGIPATH_RELAY_ENABLED", "0"))
         self.driver = os.environ.get("DIGIPATH_MOTOR_DRIVER", "tb6600-dual").strip().lower()
-        self.step_delay_us = _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 800)
+        self.step_delay_us = _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 3500)
         self.ena_active_low = _env_bool("DIGIPATH_MOTOR_ENA_ACTIVE_LOW", "1")
         self.layer_count = max(1, min(3, _env_int("DIGIPATH_LAYER_COUNT", 3)))
         self.sort_rule = os.environ.get("DIGIPATH_SORT_RULE", "priority").strip().lower()
@@ -97,15 +97,15 @@ class MotorController:
         )
         self.rotate_dir = _env_int("DIGIPATH_ROTATE_DIR_GPIO", 23)
         self.rotate_ena = _env_int("DIGIPATH_ROTATE_ENA_GPIO", 24)
-        self.rotate_left_steps = _env_int("DIGIPATH_ROTATE_LEFT_STEPS", 400)
+        self.rotate_left_steps = _env_int("DIGIPATH_ROTATE_LEFT_STEPS", 1200)
         self.rotate_left_dir = _env_bool("DIGIPATH_ROTATE_LEFT_DIR", "0")
 
         self.lift_home_steps = _env_int("DIGIPATH_LIFT_HOME_STEPS", 0)
-        self.lift_scan_steps = _env_int("DIGIPATH_LIFT_SCAN_STEPS", _env_int("DIGIPATH_LIFT_UP_STEPS", 800))
+        self.lift_scan_steps = _env_int("DIGIPATH_LIFT_SCAN_STEPS", _env_int("DIGIPATH_LIFT_UP_STEPS", 1600))
         self.layer_steps = {
-            1: _env_int("DIGIPATH_LAYER1_STEPS", 250),
-            2: _env_int("DIGIPATH_LAYER2_STEPS", 500),
-            3: _env_int("DIGIPATH_LAYER3_STEPS", 750),
+            1: _env_int("DIGIPATH_LAYER1_STEPS", 500),
+            2: _env_int("DIGIPATH_LAYER2_STEPS", 1000),
+            3: _env_int("DIGIPATH_LAYER3_STEPS", 1500),
         }
         self.priority_layer_map = {
             "urgent": _env_int("DIGIPATH_SORT_LAYER_URGENT", 1),

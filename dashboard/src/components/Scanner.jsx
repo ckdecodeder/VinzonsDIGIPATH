@@ -23,6 +23,7 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
+  XCircle,
 } from "lucide-react";
 import { Camera } from "react-camera-pro";
 import Tesseract from "tesseract.js";
@@ -49,8 +50,20 @@ const paperGuides = [
 ];
 
 const WS_STREAM_TIMEOUT_MS = 500;
-const DISPLAY_FRAME_MS = 100;
-const SNAPSHOT_INTERVAL_MS = 800;
+const SNAPSHOT_INTERVAL_MS = 400;
+
+const paintWsFrame = (previewImg, frame, wsFrameUrlRef, onReady) => {
+  if (!frame?.length || !previewImg) return;
+  const blob = new Blob([frame], { type: 'image/jpeg' });
+  const nextUrl = URL.createObjectURL(blob);
+  if (wsFrameUrlRef.current) {
+    URL.revokeObjectURL(wsFrameUrlRef.current);
+  }
+  wsFrameUrlRef.current = nextUrl;
+  previewImg.decoding = 'sync';
+  previewImg.src = nextUrl;
+  onReady?.();
+};
 
 const getSubjectFromOcr = (text, fallback = '') => {
   const lines = (text || '')
@@ -72,9 +85,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const commandPollRef = useRef(null);
   const previewImgRef = useRef(null);
   const wsFrameUrlRef = useRef('');
-  const pendingFrameRef = useRef(null);
-  const framePaintRafRef = useRef(null);
-  const lastFramePaintAtRef = useRef(0);
   const previewReadyRef = useRef(false);
   const lanSnapshotStarterRef = useRef(null);
   const realtime = useOptionalRealtime();
@@ -259,7 +269,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     return () => {
       cancelled = true;
     };
-  }, [isPhysicalSource, device?.connected, device?.bridgeUrl, device?.streamUrl, device?.id, streamReloadKey]);
+  }, [isPhysicalSource, device?.connected, device?.bridgeUrl, device?.streamUrl, device?.id, device?.ip, device?.payload?.ip, streamReloadKey]);
 
   const paintPreviewBlob = (blob) => {
     const nextUrl = URL.createObjectURL(blob);
@@ -352,29 +362,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     };
   }, [hasLanBridge, lanBridgeBase, streamReloadKey, device?.id]);
 
-  const scheduleFramePaint = () => {
-    if (framePaintRafRef.current) return;
-    framePaintRafRef.current = requestAnimationFrame(() => {
-      framePaintRafRef.current = null;
-      const now = performance.now();
-      if (now - lastFramePaintAtRef.current < DISPLAY_FRAME_MS) {
-        if (pendingFrameRef.current) scheduleFramePaint();
-        return;
-      }
-
-      const frame = pendingFrameRef.current;
-      pendingFrameRef.current = null;
-      if (!frame?.length || !previewImgRef.current) return;
-
-      lastFramePaintAtRef.current = now;
-      const blob = new Blob([frame], { type: 'image/jpeg' });
-      const nextUrl = URL.createObjectURL(blob);
-      if (wsFrameUrlRef.current) {
-        URL.revokeObjectURL(wsFrameUrlRef.current);
-      }
-      wsFrameUrlRef.current = nextUrl;
-      previewImgRef.current.src = nextUrl;
-
+  const scheduleFramePaint = (frame) => {
+    if (!frame?.length || !previewImgRef.current) return;
+    paintWsFrame(previewImgRef.current, frame, wsFrameUrlRef, () => {
       if (!previewReadyRef.current) {
         previewReadyRef.current = true;
         setPreviewReady(true);
@@ -402,9 +392,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     const offOpen = realtime.subscribe('connection:open', bindStream);
 
     const offFrame = realtime.subscribe('scanner:frame', ({ frame }) => {
-      if (!frame?.length) return;
-      pendingFrameRef.current = frame;
-      scheduleFramePaint();
+      scheduleFramePaint(frame);
       if (streamTimeout) {
         clearTimeout(streamTimeout);
         streamTimeout = null;
@@ -424,11 +412,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       offOpen();
       offFrame();
       if (streamTimeout) clearTimeout(streamTimeout);
-      if (framePaintRafRef.current) {
-        cancelAnimationFrame(framePaintRafRef.current);
-        framePaintRafRef.current = null;
-      }
-      pendingFrameRef.current = null;
       realtime.client.unsubscribe(channel);
       if (wsFrameUrlRef.current) {
         URL.revokeObjectURL(wsFrameUrlRef.current);
@@ -643,7 +626,34 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       }, 2000);
     } catch (err) {
       setIsDeviceScanning(false);
-      setDeviceScanStatus(err.message || 'Unable to send scan command.');
+      const isPendingConflict = /pending command/i.test(err.message || '');
+      setDeviceScanStatus(
+        isPendingConflict
+          ? 'May nakabinbing scan pa ang Pi. I-click ang Cancel Scan o hintayin 1 minuto.'
+          : (err.message || 'Unable to send scan command.'),
+      );
+    }
+  };
+
+  const handleCancelPhysicalScan = async () => {
+    if (commandPollRef.current) {
+      clearInterval(commandPollRef.current);
+      commandPollRef.current = null;
+    }
+
+    setDeviceScanStatus('Cancelling pending scan command...');
+
+    try {
+      const result = await commandService.cancelPending(device?.id || 'DEV-001');
+      setIsDeviceScanning(false);
+      setDeviceScanStatus(
+        result.cancelled
+          ? `Cancelled ${result.cancelled} pending scan command(s). You can capture again.`
+          : 'No pending scan command found. You can try capture again.',
+      );
+    } catch (err) {
+      setIsDeviceScanning(false);
+      setDeviceScanStatus(err.message || 'Unable to cancel scan command.');
     }
   };
 
@@ -883,7 +893,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               value={paperGuideId}
               onChange={e => setPaperGuideId(e.target.value)}
             >
-              {paperGuides.map(guide => (
+              {paperGuides.map((guide) => (
                 <option key={guide.id} value={guide.id}>{guide.label}</option>
               ))}
             </select>
@@ -896,6 +906,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   key={`physical-preview-${streamReloadKey}`}
                   ref={previewImgRef}
                   className="scanner-live-stream"
+                  decoding="sync"
                   src={directStreamUrl || undefined}
                   alt="Physical scanner live preview"
                   onLoad={() => {
@@ -990,6 +1001,17 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
               {isExtracting ? 'Processing...' : isPhysicalSource ? 'Capture with Physical Scanner' : 'Capture Document'}
             </button>
+            {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
+              <button
+                onClick={handleCancelPhysicalScan}
+                disabled={isExtracting}
+                className="btn btn-secondary"
+                style={{ padding: '0.75rem 2rem' }}
+              >
+                <XCircle size={18} />
+                Cancel Scan
+              </button>
+            )}
             {!isPhysicalSource && (
               <button
                 onClick={handlePhysicalScan}

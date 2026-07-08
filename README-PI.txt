@@ -8,6 +8,7 @@ VinzonsDIGIPATH — Raspberry Pi Package
 
 Ginagawa nito LAHAT:
   - fix scripts (USB/Windows copy)
+  - install WiFi/IP auto-restart hook
   - first-time install (kung wala pa ang service)
   - sync backend URL mula sa bridge.env
   - deploy bridge + motor files
@@ -16,10 +17,15 @@ Ginagawa nito LAHAT:
   - test kung nakakaconnect sa backend
 
 Pag nag-on ang Pi → automatic na tumatakbo ang scanner.
+Pag nagpalit ng WiFi at nagbago ang IP → auto-restart ang scanner at bagong IP ang isesend sa dashboard.
 Hindi mo na kailangan i-run manually.
 
 
 Pag nag-copy ka ulit ng files mula sa laptop (USB):
+  sudo bash start.sh
+
+Kung may error na "$'\r': command not found" (Windows line endings):
+  sed -i 's/\r$//' start.sh fix-pi-scripts.sh scripts/*.sh raspberry_pi/*.sh
   sudo bash start.sh
 
 
@@ -54,13 +60,29 @@ fix-pi-scripts.sh               Fix Windows CRLF line endings on Pi
 bridge.env                      Runtime config (synced from network.env)
 raspberry_pi/install_digipath_scanner.sh   Full install + systemd
 scripts/pi-update-network.sh    Apply public backend URL + restart
+scripts/pi-install-network-hook.sh  Auto-restart scanner on WiFi / new IP
 scripts/pi-test-backend.sh      Test Pi → backend (not laptop-only)
 
 
 PREVIEW MODES (automatic)
 -------------------------
 Same WiFi as Pi  → fast LAN preview (MJPEG or snapshot)
-Different network → WebSocket relay via public backend
+Different network → WebSocket relay via public backend (target 60fps, low delay)
+
+Stream tuning in bridge.env:
+  DIGIPATH_STREAM_COLOR_MODE=jpeg
+  DIGIPATH_STREAM_FAST=0
+  DIGIPATH_STREAM_FPS=30
+  DIGIPATH_CAMERA_AWB=auto
+
+Do NOT set STREAM_FAST=1 with COLOR_MODE=jpeg — it causes blue-tint preview.
+For speed over colour, use DIGIPATH_STREAM_COLOR_MODE=array and DIGIPATH_STREAM_FAST=1.
+
+On laptop backend .env:
+  REALTIME_STREAM_MIN_INTERVAL_MS=16
+
+Pi 3B may reach ~20-30fps in practice; Pi 4/5 can get closer to 60fps.
+Dev tunnel adds some latency vs same-LAN WebSocket.
 
 
 3-LAYER SORTING (physical shelves)
