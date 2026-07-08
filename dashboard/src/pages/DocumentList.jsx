@@ -816,7 +816,7 @@ const DocumentList = ({
               <p>Scan, route, acknowledge, sign, file, and archive official documents</p>
             </div>
             {canCreate && (
-              <div className="page-header-actions">
+              <div className="page-header-actions page-header-actions--inline">
                 <button className="btn btn-primary" onClick={() => handleOpenForm()}>
                   <Plus size={16} /> New Document
                 </button>

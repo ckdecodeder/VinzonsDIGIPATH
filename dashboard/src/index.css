@@ -874,6 +874,13 @@ body {
   flex-wrap: wrap;
 }
 
+.page-header-actions--inline > .btn {
+  min-height: 46px;
+  padding: 0 1.65rem;
+  border-radius: var(--radius-lg);
+  white-space: nowrap;
+}
+
 .greeting-time {
   font-size: 0.8rem;
   color: var(--text-muted);
@@ -2071,6 +2078,22 @@ tbody tr:hover {
   padding: 0 1.65rem;
   border-radius: var(--radius-lg);
   white-space: nowrap;
+  margin-left: auto;
+}
+
+.page-toolbar-row.page-toolbar-stacked {
+  flex-direction: column-reverse;
+  align-items: stretch;
+}
+
+.page-toolbar-row.page-toolbar-stacked .filter-dropdown-search {
+  flex: 1 1 100%;
+  width: 100%;
+}
+
+.page-toolbar-row.page-toolbar-stacked .btn {
+  align-self: flex-end;
+  margin-left: 0;
 }
 
 .activity-filter-row {
@@ -5113,6 +5136,17 @@ body.modal-open .notification-dock {
     flex: 1 1 0;
     justify-content: center;
     min-height: 44px;
+  }
+
+  .page-header.page-header--align-bottom .page-header-actions--inline,
+  .page-header-actions--inline {
+    width: auto;
+    align-self: flex-end;
+  }
+
+  .page-header-actions--inline > .btn {
+    flex: 0 0 auto;
+    min-height: 46px;
   }
 
   /* Reports: keep the Preview/Print/Download buttons aligned to the right */

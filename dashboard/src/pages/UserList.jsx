@@ -216,7 +216,7 @@ const UserList = ({
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row">
+          <div className="page-toolbar-row page-toolbar-stacked">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
