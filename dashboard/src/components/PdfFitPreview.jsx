@@ -12,6 +12,8 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
   const renderTaskRef = useRef(null);
   const renderGenerationRef = useRef(0);
   const resizeTimerRef = useRef(null);
+  const lastRenderedWidthRef = useRef(0);
+  const hasRenderedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -19,6 +21,8 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
     if (!src) return undefined;
 
     let cancelled = false;
+    lastRenderedWidthRef.current = 0;
+    hasRenderedRef.current = false;
 
     const cancelActiveRender = async () => {
       const task = renderTaskRef.current;
@@ -37,7 +41,22 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
       await cancelActiveRender();
       if (cancelled || generation !== renderGenerationRef.current) return;
 
-      setLoading(true);
+      const containerWidth = Math.max(
+        Math.round(wrapRef.current?.clientWidth || 640),
+        280,
+      );
+
+      // Avoid the resize feedback loop: only the first paint or a real width
+      // change should trigger a re-render.
+      if (hasRenderedRef.current && containerWidth === lastRenderedWidthRef.current) {
+        return;
+      }
+
+      // Only show the loading overlay before the very first successful paint,
+      // so resize re-renders don't flicker.
+      if (!hasRenderedRef.current) {
+        setLoading(true);
+      }
       setError('');
 
       try {
@@ -47,7 +66,6 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
         const page = await doc.getPage(1);
         if (cancelled || generation !== renderGenerationRef.current) return;
 
-        const containerWidth = Math.max(wrapRef.current?.clientWidth || 640, 280);
         const baseViewport = page.getViewport({ scale: 1 });
         const scale = containerWidth / baseViewport.width;
         const viewport = page.getViewport({ scale });
@@ -65,6 +83,8 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
 
         if (cancelled || generation !== renderGenerationRef.current) return;
         renderTaskRef.current = null;
+        lastRenderedWidthRef.current = containerWidth;
+        hasRenderedRef.current = true;
         setLoading(false);
       } catch (err) {
         if (cancelled || generation !== renderGenerationRef.current) return;
@@ -87,7 +107,13 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
     scheduleRender(0);
 
     const observer = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(() => scheduleRender(150))
+      ? new ResizeObserver((entries) => {
+          const width = Math.round(entries[0]?.contentRect?.width || 0);
+          // Ignore height-only changes (canvas grows vertically after paint)
+          // and sub-pixel jitter that would otherwise cause a render loop.
+          if (Math.abs(width - lastRenderedWidthRef.current) < 2) return;
+          scheduleRender(200);
+        })
       : null;
 
     if (observer && wrapRef.current) {

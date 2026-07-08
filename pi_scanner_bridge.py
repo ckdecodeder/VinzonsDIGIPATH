@@ -313,6 +313,12 @@ _stream_width = int(os.environ.get("DIGIPATH_STREAM_WIDTH", str(STREAM_RESOLUTIO
 _stream_height = int(os.environ.get("DIGIPATH_STREAM_HEIGHT", str(STREAM_RESOLUTION[1])))
 STREAM_RESOLUTION = (_stream_width, _stream_height)
 STREAM_COLOR_MODE = os.environ.get("DIGIPATH_STREAM_COLOR_MODE", "jpeg").strip().lower()
+# Cap how often frames are pushed over the WebSocket relay. Sending every ISP
+# frame can overflow a dev-tunnel send buffer and stall the stream (black).
+# 0 = no cap. Default ~24fps keeps the tunnel healthy without freezing.
+STREAM_WS_MAX_FPS = max(0, min(int(os.environ.get("DIGIPATH_STREAM_WS_MAX_FPS", "24")), 120))
+_ws_frame_min_interval = (1.0 / STREAM_WS_MAX_FPS) if STREAM_WS_MAX_FPS > 0 else 0.0
+_last_ws_frame_sent_at = 0.0
 
 
 def uses_isp_jpeg_stream():
@@ -549,6 +555,26 @@ def get_preview_stream_mode():
     return "unavailable"
 
 
+def _is_ws_closed_error(err):
+    """True only for real connection-closed errors (not transient backpressure)."""
+    if isinstance(err, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError)):
+        return True
+    return "ConnectionClosed" in type(err).__name__ or "closed" in str(err).lower()
+
+
+def _force_ws_reconnect(reason):
+    """Mark the socket dead AND close it so run_forever() returns and reconnects."""
+    global ws_connected, realtime_ws
+    ws_connected = False
+    ws = realtime_ws
+    if ws is not None:
+        try:
+            ws.close()
+        except Exception:
+            pass
+    print(f"[Realtime] Forcing reconnect: {reason}")
+
+
 def send_ws_json(payload):
     global ws_connected, realtime_ws
     if not ws_connected or not realtime_ws:
@@ -558,22 +584,31 @@ def send_ws_json(payload):
             realtime_ws.send(json.dumps(payload))
             return True
         except Exception as err:
-            ws_connected = False
             print(f"[Realtime] Send failed: {err}")
+            if _is_ws_closed_error(err):
+                _force_ws_reconnect(f"json send: {err}")
             return False
 
 
 def send_ws_frame(frame):
-    global ws_connected, realtime_ws
+    global ws_connected, realtime_ws, _last_ws_frame_sent_at
     if not WS_AVAILABLE or not ws_connected or not realtime_ws or not frame:
         return
+    if _ws_frame_min_interval > 0:
+        now = time.perf_counter()
+        if now - _last_ws_frame_sent_at < _ws_frame_min_interval:
+            return
+        _last_ws_frame_sent_at = now
     if not ws_frame_send_lock.acquire(blocking=False):
         return
     try:
         with realtime_ws_lock:
             realtime_ws.send(frame, opcode=websocket.ABNF.OPCODE_BINARY)
-    except Exception:
-        ws_connected = False
+    except Exception as err:
+        # Only tear down on a real close; transient backpressure just drops
+        # this frame so the preview keeps flowing instead of freezing black.
+        if _is_ws_closed_error(err):
+            _force_ws_reconnect(f"frame send: {err}")
     finally:
         ws_frame_send_lock.release()
 

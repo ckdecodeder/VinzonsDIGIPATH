@@ -51,6 +51,7 @@ const paperGuides = [
 
 const WS_STREAM_TIMEOUT_MS = 500;
 const SNAPSHOT_INTERVAL_MS = 400;
+const STREAM_STALE_MS = 4000;
 
 const paintWsFrame = (previewImg, frame, wsFrameUrlRef, onReady) => {
   if (!frame?.length || !previewImg) return;
@@ -87,6 +88,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const wsFrameUrlRef = useRef('');
   const previewReadyRef = useRef(false);
   const lanSnapshotStarterRef = useRef(null);
+  const lastFrameAtRef = useRef(0);
+  const staleReloadAtRef = useRef(0);
   const realtime = useOptionalRealtime();
   const canChooseSourceOffice = currentUser?.role === 'Admin';
   const canChooseDirection = currentUser?.role === 'Admin';
@@ -113,6 +116,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [lanBridgeProbing, setLanBridgeProbing] = useState(false);
   const [directStreamUrl, setDirectStreamUrl] = useState('');
   const [previewMode, setPreviewMode] = useState('ws');
+  const [streamStale, setStreamStale] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isDeviceScanning, setIsDeviceScanning] = useState(false);
@@ -280,10 +284,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     if (previewImgRef.current) {
       previewImgRef.current.src = nextUrl;
     }
+    lastFrameAtRef.current = Date.now();
     if (!previewReadyRef.current) {
       previewReadyRef.current = true;
       setPreviewReady(true);
     }
+    setStreamStale(false);
     setStreamHasError(false);
     setPreviewErrorMessage('');
   };
@@ -291,6 +297,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   useEffect(() => {
     previewReadyRef.current = false;
     setPreviewReady(false);
+    setStreamStale(false);
+    lastFrameAtRef.current = 0;
     setDirectStreamUrl('');
     if (wsFrameUrlRef.current) {
       URL.revokeObjectURL(wsFrameUrlRef.current);
@@ -300,6 +308,36 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       previewImgRef.current.removeAttribute('src');
     }
   }, [streamReloadKey, device?.id, cameraSource]);
+
+  useEffect(() => {
+    // MJPEG (direct) is a continuous browser-managed stream; per-frame timing
+    // is not observable, so skip the watchdog for it.
+    if (!isPhysicalSource || !device?.connected || !previewReady || previewMode === 'direct') {
+      setStreamStale(false);
+      return undefined;
+    }
+
+    const interval = setInterval(() => {
+      const last = lastFrameAtRef.current;
+      if (!last) return;
+      const age = Date.now() - last;
+      if (age < STREAM_STALE_MS) {
+        setStreamStale(false);
+        return;
+      }
+
+      setStreamStale(true);
+
+      // Auto-recover: reload the stream at most once every 8s while stalled.
+      const now = Date.now();
+      if (now - staleReloadAtRef.current > 8000) {
+        staleReloadAtRef.current = now;
+        setStreamReloadKey(value => value + 1);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isPhysicalSource, device?.connected, previewReady, previewMode, directStreamUrl]);
 
   useEffect(() => {
     if (!hasLanBridge) {
@@ -365,6 +403,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const scheduleFramePaint = (frame) => {
     if (!frame?.length || !previewImgRef.current) return;
     paintWsFrame(previewImgRef.current, frame, wsFrameUrlRef, () => {
+      lastFrameAtRef.current = Date.now();
+      setStreamStale(false);
       if (!previewReadyRef.current) {
         previewReadyRef.current = true;
         setPreviewReady(true);
@@ -956,10 +996,29 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               <div className="scanner-scan-line"></div>
             </div>
 
-            {isPhysicalSource && previewReady && (
+            {isPhysicalSource && previewReady && !streamStale && (
               <div className="scanner-preview-warning" style={{ background: 'var(--success-bg, rgba(16, 185, 129, 0.12))', color: 'var(--success, #10b981)' }}>
                 <Wifi size={16} />
                 <span>{previewLabel}</span>
+              </div>
+            )}
+
+            {isPhysicalSource && previewReady && streamStale && (
+              <div className="scanner-preview-empty" style={{ position: 'absolute', inset: 0, zIndex: 3, background: 'rgba(0,0,0,0.55)' }}>
+                <Loader2 size={30} className="animate-spin" />
+                <span>Reconnecting camera stream...</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ marginTop: '0.75rem', padding: '0.4rem 1rem' }}
+                  onClick={() => {
+                    setStreamStale(false);
+                    setPreviewErrorMessage('');
+                    setStreamReloadKey(value => value + 1);
+                  }}
+                >
+                  <RefreshCw size={14} /> Reload preview
+                </button>
               </div>
             )}
 

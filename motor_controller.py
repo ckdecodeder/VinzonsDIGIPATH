@@ -88,7 +88,7 @@ class MotorController:
 
         self.lift_pul = _env_int("DIGIPATH_LIFT_PUL_GPIO", _env_int("DIGIPATH_RELAY1_GPIO", 17))
         self.lift_dir = _env_int("DIGIPATH_LIFT_DIR_GPIO", 18)
-        self.lift_ena = _env_int("DIGIPATH_LIFT_ENA_GPIO", 22)
+        self.lift_ena = _env_int("DIGIPATH_LIFT_ENA_GPIO", 0)
         self.lift_up_dir = _env_bool("DIGIPATH_LIFT_UP_DIR", "1")
 
         self.rotate_pul = _env_int(
@@ -96,12 +96,22 @@ class MotorController:
             _env_int("DIGIPATH_ROTATE_SELECT_GPIO", _env_int("DIGIPATH_RELAY2_GPIO", 27)),
         )
         self.rotate_dir = _env_int("DIGIPATH_ROTATE_DIR_GPIO", 23)
-        self.rotate_ena = _env_int("DIGIPATH_ROTATE_ENA_GPIO", 24)
+        self.rotate_ena = _env_int("DIGIPATH_ROTATE_ENA_GPIO", 0)
         self.rotate_left_steps = _env_int("DIGIPATH_ROTATE_LEFT_STEPS", 1200)
         self.rotate_left_dir = _env_bool("DIGIPATH_ROTATE_LEFT_DIR", "0")
+        # Sorting selector: rotate to a bin per layer, then rotate back.
+        self.rotate_sort_dir = _env_bool("DIGIPATH_ROTATE_SORT_DIR", "0")
+        self.rotate_return = _env_bool("DIGIPATH_ROTATE_RETURN", "1")
+        self.rotate_layer_steps = {
+            1: _env_int("DIGIPATH_ROTATE_LAYER1_STEPS", 400),
+            2: _env_int("DIGIPATH_ROTATE_LAYER2_STEPS", 800),
+            3: _env_int("DIGIPATH_ROTATE_LAYER3_STEPS", 1200),
+        }
 
+        # Home is at the TOP. Positions are measured as steps BELOW the top.
         self.lift_home_steps = _env_int("DIGIPATH_LIFT_HOME_STEPS", 0)
         self.lift_scan_steps = _env_int("DIGIPATH_LIFT_SCAN_STEPS", _env_int("DIGIPATH_LIFT_UP_STEPS", 1600))
+        self.lift_deposit_steps = _env_int("DIGIPATH_LIFT_DEPOSIT_STEPS", self.lift_scan_steps)
         self.layer_steps = {
             1: _env_int("DIGIPATH_LAYER1_STEPS", 500),
             2: _env_int("DIGIPATH_LAYER2_STEPS", 1000),
@@ -201,6 +211,7 @@ class MotorController:
                 "enaGpio": self.lift_ena,
                 "homeSteps": self.lift_home_steps,
                 "scanSteps": self.lift_scan_steps,
+                "depositSteps": self.lift_deposit_steps,
                 "upDirHigh": self.lift_up_dir,
                 "layerSteps": self.layer_steps,
             },
@@ -210,12 +221,16 @@ class MotorController:
                 "enaGpio": self.rotate_ena,
                 "leftSteps": self.rotate_left_steps,
                 "leftDirHigh": self.rotate_left_dir,
+                "sortDirHigh": self.rotate_sort_dir,
+                "layerSteps": self.rotate_layer_steps,
+                "returnAfterSort": self.rotate_return,
             },
             "priorityLayerMap": self.priority_layer_map,
             "lastError": self._last_error,
         }
 
     def _move_lift_to(self, target_steps, label):
+        # Position is steps BELOW the top (home=0). Larger target = further DOWN.
         if not self.enabled or not self._lift:
             return
         target_steps = max(0, int(target_steps))
@@ -223,9 +238,23 @@ class MotorController:
         if delta == 0:
             print(f"[Motor] lift: already at {label} ({target_steps} steps)")
             return
-        direction = self.lift_up_dir if delta > 0 else (not self.lift_up_dir)
+        going_down = delta > 0
+        direction = (not self.lift_up_dir) if going_down else self.lift_up_dir
         self._lift.step(abs(delta), direction, self.step_delay_secs, label)
         self._current_lift_steps = target_steps
+
+    def _rotate_to_bin(self, layer):
+        # Rotate the sorting selector to the bin for this layer, then back.
+        if not self.enabled or not self._rotate:
+            return
+        layer = self._clamp_layer(layer)
+        steps = self.rotate_layer_steps.get(layer, self.rotate_layer_steps[1])
+        if steps <= 0:
+            return
+        self._rotate.step(steps, self.rotate_sort_dir, self.step_delay_secs, f"sort-bin-{layer}")
+        if self.rotate_return:
+            time.sleep(max(_env_int("DIGIPATH_SORT_DROP_MS", 400), 0) / 1000.0)
+            self._rotate.step(steps, not self.rotate_sort_dir, self.step_delay_secs, f"sort-bin-{layer}-return")
 
     def rotate_left(self, steps=None):
         if not self.enabled or not self._rotate:
@@ -234,18 +263,28 @@ class MotorController:
         with self._lock:
             self._rotate.step(count, self.rotate_left_dir, self.step_delay_secs, "rotate-left")
 
+    def rotate_to_bin(self, layer):
+        with self._lock:
+            self._rotate_to_bin(layer)
+
     def lift_to_scan(self):
         with self._lock:
-            self._move_lift_to(self.lift_scan_steps, "lift-to-scan")
+            self._move_lift_to(self.lift_scan_steps, "lift-down-to-scan")
+
+    def lift_to_deposit(self):
+        with self._lock:
+            self._move_lift_to(self.lift_deposit_steps, "lift-down-to-deposit")
+
+    def lift_to_top(self):
+        with self._lock:
+            self._move_lift_to(self.lift_home_steps, "lift-up-to-top")
 
     def lift_to_layer(self, layer):
-        layer = self._clamp_layer(layer)
-        with self._lock:
-            self._move_lift_to(self._layer_steps_for(layer), f"lift-to-layer-{layer}")
+        # Backward-compat: sorting now uses the rotate selector.
+        self.rotate_to_bin(layer)
 
     def return_home(self):
-        with self._lock:
-            self._move_lift_to(self.lift_home_steps, "lift-home")
+        self.lift_to_top()
 
     def resolve_sort_layer(self, payload=None, text="", title=""):
         payload = payload or {}
@@ -279,29 +318,51 @@ class MotorController:
         return layer
 
     def run_scan_sequence(self):
-        """Feed/align document, then lift to camera scan height."""
+        """From TOP, lower the tray DOWN to the camera scan height."""
         if not self.enabled:
             return
-        print("[Motor] Starting scan sequence (feed + scan height)...")
-        self.rotate_left()
-        self.lift_to_scan()
+        print("[Motor] Scan sequence: lowering DOWN to scan height...")
+        with self._lock:
+            self._move_lift_to(self.lift_scan_steps, "lift-down-to-scan")
 
     def finish_scan_sequence(self, sort_layer=1):
-        """Deposit scanned document to sorting layer, then return home."""
+        """After scan: UP to top, DOWN to deposit, ROTATE-sort, then UP to top."""
         if not self.enabled:
             return
         layer = self._clamp_layer(sort_layer)
         self._last_sort_layer = layer
-        print(f"[Motor] Sorting document to layer {layer}...")
-        self.lift_to_layer(layer)
-        time.sleep(max(_env_int("DIGIPATH_LAYER_SETTLE_MS", 300), 0) / 1000.0)
-        self.return_home()
+        print(f"[Motor] Finish: up, down, sort to layer {layer}, return to top...")
+        with self._lock:
+            self._move_lift_to(self.lift_home_steps, "lift-up-to-top")
+            self._move_lift_to(self.lift_deposit_steps, "lift-down-to-deposit")
+            self._rotate_to_bin(layer)
+            time.sleep(max(_env_int("DIGIPATH_LAYER_SETTLE_MS", 300), 0) / 1000.0)
+            self._move_lift_to(self.lift_home_steps, "lift-up-to-top")
         print(f"[Motor] Scan + sort complete (layer {layer}).")
+
+    def self_test(self, steps=200):
+        """Pulse each motor separately to isolate wiring vs software issues."""
+        if not self.enabled or not self._lift or not self._rotate:
+            print(f"[Motor] Self-test skipped — enabled={self.enabled}, "
+                  f"lift={bool(self._lift)}, rotate={bool(self._rotate)}")
+            return
+        steps = max(1, int(steps))
+        with self._lock:
+            print(f"[Motor] SELF-TEST 1/2 — LIFT only (GPIO{self.lift_pul}/{self.lift_dir})")
+            self._lift.step(steps, not self.lift_up_dir, self.step_delay_secs, "test-lift-down")
+            time.sleep(0.6)
+            self._lift.step(steps, self.lift_up_dir, self.step_delay_secs, "test-lift-up")
+            time.sleep(1.0)
+            print(f"[Motor] SELF-TEST 2/2 — ROTATE only (GPIO{self.rotate_pul}/{self.rotate_dir})")
+            self._rotate.step(steps, self.rotate_sort_dir, self.step_delay_secs, "test-rotate-fwd")
+            time.sleep(0.6)
+            self._rotate.step(steps, not self.rotate_sort_dir, self.step_delay_secs, "test-rotate-back")
+        print("[Motor] SELF-TEST done. Both motors should have moved separately.")
 
     def cleanup(self):
         with self._lock:
             try:
-                self.return_home()
+                self._move_lift_to(self.lift_home_steps, "lift-home")
             except Exception:
                 pass
             for channel in (self._lift, self._rotate):
@@ -315,3 +376,45 @@ class MotorController:
 
 
 motor_controller = MotorController()
+
+
+if __name__ == "__main__":
+    import sys
+
+    print("=" * 50)
+    print(" DigiPath Motor Test")
+    print("=" * 50)
+    status = motor_controller.status()
+    print(f" enabled: {status['enabled']}")
+    print(f" lift  PUL=GPIO{status['lift']['pulGpio']} DIR=GPIO{status['lift']['dirGpio']}")
+    print(f" rotate PUL=GPIO{status['rotate']['pulGpio']} DIR=GPIO{status['rotate']['dirGpio']}")
+    print(f" lastError: {status['lastError'] or '(none)'}")
+    print("-" * 50)
+
+    if not motor_controller.enabled:
+        print("Motor DISABLED. Set DIGIPATH_MOTOR_ENABLED=1 and load bridge.env.")
+        sys.exit(1)
+
+    arg = sys.argv[1] if len(sys.argv) > 1 else "both"
+    test_steps = int(sys.argv[2]) if len(sys.argv) > 2 else 300
+
+    try:
+        if arg in ("lift", "both"):
+            print(f"LIFT test — {test_steps} steps down then up...")
+            motor_controller._lift.step(test_steps, not motor_controller.lift_up_dir,
+                                        motor_controller.step_delay_secs, "cli-lift-down")
+            time.sleep(0.8)
+            motor_controller._lift.step(test_steps, motor_controller.lift_up_dir,
+                                        motor_controller.step_delay_secs, "cli-lift-up")
+        if arg == "both":
+            time.sleep(1.2)
+        if arg in ("rotate", "both"):
+            print(f"ROTATE test — {test_steps} steps fwd then back...")
+            motor_controller._rotate.step(test_steps, motor_controller.rotate_sort_dir,
+                                          motor_controller.step_delay_secs, "cli-rotate-fwd")
+            time.sleep(0.8)
+            motor_controller._rotate.step(test_steps, not motor_controller.rotate_sort_dir,
+                                          motor_controller.step_delay_secs, "cli-rotate-back")
+        print("Done. Kung isa lang gumalaw, hardware/wiring ang problema sa hindi gumalaw.")
+    finally:
+        motor_controller.cleanup()
