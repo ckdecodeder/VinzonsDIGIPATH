@@ -1,30 +1,30 @@
 VinzonsDIGIPATH — Raspberry Pi Package
 ======================================
 
-*** ISANG COMMAND LANG (Pi) ***
+*** ONE COMMAND (on the Pi) ***
 -------------------------------
   cd ~/Desktop/VinzonsDIGIPATH-Pi
   sudo bash start.sh
 
-Ginagawa nito LAHAT:
+This runs everything:
   - fix scripts (USB/Windows copy)
   - install WiFi/IP auto-restart hook
-  - first-time install (kung wala pa ang service)
-  - sync backend URL mula sa bridge.env
+  - first-time install (if the service is not installed yet)
+  - sync backend URL from bridge.env
   - deploy bridge + motor files
-  - restart scanner (isang instance lang)
-  - enable AUTO-START sa bawat boot ng Pi
-  - test kung nakakaconnect sa backend
+  - restart scanner (single instance only)
+  - enable AUTO-START on every Pi boot
+  - test backend connectivity
 
-Pag nag-on ang Pi → automatic na tumatakbo ang scanner.
-Pag nagpalit ng WiFi at nagbago ang IP → auto-restart ang scanner at bagong IP ang isesend sa dashboard.
-Hindi mo na kailangan i-run manually.
+When the Pi boots, the scanner starts automatically.
+When WiFi changes and the IP changes, the scanner restarts and sends the new IP to the dashboard.
+You do not need to run anything manually.
 
 
-Pag nag-copy ka ulit ng files mula sa laptop (USB):
+After copying files again from the laptop (USB):
   sudo bash start.sh
 
-Kung may error na "$'\r': command not found" (Windows line endings):
+If you see "$'\r': command not found" (Windows line endings):
   sed -i 's/\r$//' start.sh fix-pi-scripts.sh scripts/*.sh raspberry_pi/*.sh
   sudo bash start.sh
 

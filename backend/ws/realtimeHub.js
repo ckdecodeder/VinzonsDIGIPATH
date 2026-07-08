@@ -9,6 +9,13 @@ const getStreamMinIntervalMs = () => {
   if (Number.isFinite(configured) && configured >= 0) return configured;
   return 0;
 };
+// Drop frames for a client whose send buffer is backed up (slow tunnel/network).
+// Without this, buffered frames pile up and the preview freezes then goes black.
+const getStreamMaxBufferedBytes = () => {
+  const configured = Number(process.env.REALTIME_STREAM_MAX_BUFFERED_BYTES);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return 1_500_000; // ~1.5MB (a few frames) before we start dropping.
+};
 
 const parseJson = (raw) => {
   try {
@@ -244,11 +251,14 @@ class RealtimeHub {
     this.streamThrottle.set(deviceId, now);
 
     const channel = `scanner:${deviceId}:stream`;
+    const maxBuffered = getStreamMaxBufferedBytes();
     for (const client of this.userClients) {
       if (!client.auth || !client.subscriptions.has(channel)) continue;
-      if (client.readyState === client.OPEN) {
-        client.send(frameBuffer, { binary: true });
-      }
+      if (client.readyState !== client.OPEN) continue;
+      // Skip this frame for clients that are behind (slow tunnel). Sending more
+      // would grow the buffer until the stream freezes and turns black.
+      if (client.bufferedAmount > maxBuffered) continue;
+      client.send(frameBuffer, { binary: true });
     }
   }
 

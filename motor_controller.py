@@ -82,6 +82,9 @@ class MotorController:
         self.enabled = _env_bool("DIGIPATH_MOTOR_ENABLED", os.environ.get("DIGIPATH_RELAY_ENABLED", "0"))
         self.driver = os.environ.get("DIGIPATH_MOTOR_DRIVER", "tb6600-dual").strip().lower()
         self.step_delay_us = _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 3500)
+        # Lift up/down is just positioning — run it faster so Capture proceeds
+        # quickly. Rotate/sort stays slow for gentle sorting.
+        self.lift_step_delay_us = _env_int("DIGIPATH_LIFT_STEP_DELAY_US", 900)
         self.ena_active_low = _env_bool("DIGIPATH_MOTOR_ENA_ACTIVE_LOW", "1")
         self.layer_count = max(1, min(3, _env_int("DIGIPATH_LAYER_COUNT", 3)))
         self.sort_rule = os.environ.get("DIGIPATH_SORT_RULE", "priority").strip().lower()
@@ -158,6 +161,10 @@ class MotorController:
     @property
     def step_delay_secs(self):
         return max(self.step_delay_us, 50) / 1_000_000.0
+
+    @property
+    def lift_step_delay_secs(self):
+        return max(self.lift_step_delay_us, 50) / 1_000_000.0
 
     def _init_gpio(self):
         try:
@@ -240,7 +247,7 @@ class MotorController:
             return
         going_down = delta > 0
         direction = (not self.lift_up_dir) if going_down else self.lift_up_dir
-        self._lift.step(abs(delta), direction, self.step_delay_secs, label)
+        self._lift.step(abs(delta), direction, self.lift_step_delay_secs, label)
         self._current_lift_steps = target_steps
 
     def _rotate_to_bin(self, layer):
@@ -415,6 +422,6 @@ if __name__ == "__main__":
             time.sleep(0.8)
             motor_controller._rotate.step(test_steps, not motor_controller.rotate_sort_dir,
                                           motor_controller.step_delay_secs, "cli-rotate-back")
-        print("Done. Kung isa lang gumalaw, hardware/wiring ang problema sa hindi gumalaw.")
+        print("Done. If only one motor moved, check hardware/wiring on the motor that did not move.")
     finally:
         motor_controller.cleanup()

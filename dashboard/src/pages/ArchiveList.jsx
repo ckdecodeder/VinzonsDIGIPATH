@@ -20,6 +20,11 @@ import {
   offices as defaultOffices,
   users as defaultUsers,
 } from "../data/mockData";
+import {
+  getAttachmentSource,
+  isImageAttachment,
+  isPdfAttachment,
+} from "../utils/attachmentDownload";
 
 const ArchiveList = ({
   archives,
@@ -91,27 +96,6 @@ const ArchiveList = ({
       ];
     }
     return [];
-  };
-
-  const getAttachmentSource = (file) => file?.url || file?.dataUrl || "";
-
-  const isImageFile = (file) => {
-    const source = getAttachmentSource(file);
-    return (
-      file.type?.startsWith("image/") ||
-      source.startsWith("data:image/") ||
-      /\.(jpg|jpeg|png|webp)$/i.test(source)
-    );
-  };
-
-  const isPdfFile = (file) => {
-    const source = getAttachmentSource(file);
-    return (
-      file.type === "application/pdf" ||
-      file.name?.toLowerCase().endsWith(".pdf") ||
-      source.startsWith("data:application/pdf") ||
-      /\.pdf$/i.test(source)
-    );
   };
 
   const getArchiveTimeline = (archive, doc) => {
@@ -668,13 +652,13 @@ const ArchiveList = ({
             </div>
             <div className="modal-body">
               <div className="scanned-preview-surface">
-                {isImageFile(previewFile) ? (
+                {isImageAttachment(previewFile) ? (
                   <img
                     src={getAttachmentSource(previewFile)}
                     alt={previewFile.name}
                     className="scanned-preview-image"
                   />
-                ) : isPdfFile(previewFile) ? (
+                ) : isPdfAttachment(previewFile) ? (
                   <iframe
                     src={getAttachmentSource(previewFile)}
                     title={previewFile.name}

@@ -84,6 +84,8 @@ const getSubjectFromOcr = (text, fallback = '') => {
 const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device }) => {
   const camera = useRef(null);
   const commandPollRef = useRef(null);
+  const enrichPollRef = useRef(null);
+  const autoFilledRef = useRef({});
   const previewImgRef = useRef(null);
   const wsFrameUrlRef = useRef('');
   const previewReadyRef = useRef(false);
@@ -155,6 +157,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     return () => {
       if (commandPollRef.current) {
         clearInterval(commandPollRef.current);
+      }
+      if (enrichPollRef.current) {
+        clearInterval(enrichPollRef.current);
       }
     };
   }, []);
@@ -294,6 +299,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setPreviewErrorMessage('');
   };
 
+  // Hard reset: switching device or camera source clears everything to black.
   useEffect(() => {
     previewReadyRef.current = false;
     setPreviewReady(false);
@@ -307,7 +313,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     if (previewImgRef.current) {
       previewImgRef.current.removeAttribute('src');
     }
-  }, [streamReloadKey, device?.id, cameraSource]);
+  }, [device?.id, cameraSource]);
+
+  // Soft reload (stale watchdog): keep the last painted frame visible so the
+  // preview looks frozen under the "Reconnecting" overlay instead of flashing
+  // black. Resubscription happens in the stream effects keyed on streamReloadKey.
+  useEffect(() => {
+    setDirectStreamUrl('');
+  }, [streamReloadKey]);
 
   useEffect(() => {
     // MJPEG (direct) is a continuous browser-managed stream; per-frame timing
@@ -537,7 +550,51 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
   };
 
-  const applyPhysicalScanResult = (result) => {
+  const startEnrichmentPolling = (commandId) => {
+    if (enrichPollRef.current) {
+      clearInterval(enrichPollRef.current);
+      enrichPollRef.current = null;
+    }
+    let attempts = 0;
+    enrichPollRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > 10) {
+        clearInterval(enrichPollRef.current);
+        enrichPollRef.current = null;
+        return;
+      }
+      try {
+        const result = await commandService.checkStatus(commandId);
+        const doc = result?.resultDocument;
+        if (!doc) return;
+
+        const auto = autoFilledRef.current || {};
+        const newSubject = getSubjectFromOcr(doc.scannedText || '', doc.subject) || '';
+        const newSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
+        const newText = doc.scannedText || '';
+
+        // Only fill fields the user hasn't manually changed (still equal to the
+        // value we auto-filled, or still empty). This avoids clobbering edits.
+        const enriched = newText && newText !== auto.scannedText;
+        if (!enriched) return;
+
+        setExtractedText(prev => (prev === auto.scannedText || !prev ? newText : prev));
+        setFormData(prev => ({
+          ...prev,
+          subject: (!prev.subject || prev.subject === auto.subject) && newSubject ? newSubject : prev.subject,
+          senderName: (!prev.senderName || prev.senderName === auto.senderName) && newSender ? newSender : prev.senderName,
+        }));
+        autoFilledRef.current = { subject: newSubject, senderName: newSender, scannedText: newText };
+
+        clearInterval(enrichPollRef.current);
+        enrichPollRef.current = null;
+      } catch {
+        // Keep polling; the enrichment may not be ready yet.
+      }
+    }, 2500);
+  };
+
+  const applyPhysicalScanResult = (result, commandId) => {
     if (result.status === 'Executed') {
       const doc = result.resultDocument;
       setHardwareScannedDoc(doc || null);
@@ -553,12 +610,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           || null,
         );
         const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : 'image/jpeg');
+        const autoSubject = getSubjectFromOcr(doc.scannedText || '', doc.subject) || '';
+        const autoSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
+        autoFilledRef.current = {
+          subject: autoSubject,
+          senderName: autoSender,
+          scannedText: doc.scannedText || '',
+        };
         setCapturedImage(scannedUrl);
         setCapturedFileType(scannedType);
         setExtractedText(doc.scannedText || '');
         setFormData(prev => ({
           ...prev,
-          subject: getSubjectFromOcr(doc.scannedText || '', doc.subject) || prev.subject,
+          subject: autoSubject || prev.subject,
           documentDirection: doc.documentDirection || prev.documentDirection,
           documentTypeId: doc.documentTypeId || prev.documentTypeId,
           documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
@@ -568,7 +632,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
           toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
           dateReceived: doc.dateReceived || prev.dateReceived,
-          senderName: doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : prev.senderName,
+          senderName: autoSender || prev.senderName,
           senderContact: doc.senderContact || prev.senderContact,
           senderEmail: doc.senderEmail || prev.senderEmail,
           notifySender: doc.notifySender ?? prev.notifySender,
@@ -576,6 +640,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
           remarks: doc.remarks || prev.remarks,
         }));
+        // AI extraction may still be running on the Pi. Poll a few more times to
+        // fill in the fields once the enriched document arrives.
+        if (commandId) startEnrichmentPolling(commandId);
       }
       setIsDeviceScanning(false);
       setDeviceScanStatus('');
@@ -657,7 +724,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         attempts += 1;
         try {
           const result = await commandService.checkStatus(command.id);
-          if (applyPhysicalScanResult(result)) {
+          if (applyPhysicalScanResult(result, command.id)) {
             clearInterval(commandPollRef.current);
             commandPollRef.current = null;
           } else if (attempts > 90) {
@@ -772,6 +839,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   };
 
   const handleReset = () => {
+    if (enrichPollRef.current) {
+      clearInterval(enrichPollRef.current);
+      enrichPollRef.current = null;
+    }
+    autoFilledRef.current = {};
     setStep(1);
     setCapturedImage(null);
     setCapturedFileType('');

@@ -323,6 +323,10 @@ _ai_extract_default = "1" if GROQ_API_KEY else "0"
 AI_EXTRACT_ENABLED = os.environ.get("DIGIPATH_AI_EXTRACT", _ai_extract_default).strip().lower() not in ("0", "false", "no", "off")
 # Send the captured image to a vision model (best quality). If off, only OCR text is sent.
 AI_USE_VISION = os.environ.get("DIGIPATH_AI_USE_VISION", "1").strip().lower() not in ("0", "false", "no", "off")
+# Run AI extraction in the BACKGROUND (after upload) so the dashboard proceeds
+# instantly; the document fields are enriched a few seconds later. Set 0 to run
+# AI before upload (form gets AI data immediately, but the UI waits for it).
+AI_EXTRACT_BACKGROUND = os.environ.get("DIGIPATH_AI_BACKGROUND", "1").strip().lower() not in ("0", "false", "no", "off")
 
 HEARTBEAT_INTERVAL_SECS = int(os.environ.get("DIGIPATH_HEARTBEAT_INTERVAL_SECS", "10"))
 DEVICE_NAME = os.environ.get("DIGIPATH_DEVICE_NAME", "Physical Document Scanner")
@@ -1247,6 +1251,74 @@ def wait_for_stream_idle(timeout_secs=2.0):
         time.sleep(0.05)
     return False
 
+def _image_mean_brightness(file_path):
+    """Mean luminance (0-255) of a JPEG, or None if it can't be read."""
+    try:
+        with Image.open(file_path) as img:
+            gray = img.convert("L")
+            histogram = gray.histogram()
+            total = sum(histogram)
+            if not total:
+                return None
+            weighted = sum(i * count for i, count in enumerate(histogram))
+            return weighted / total
+    except Exception:
+        return None
+
+
+DARK_CAPTURE_THRESHOLD = float(os.environ.get("DIGIPATH_DARK_CAPTURE_THRESHOLD", "35"))
+
+
+def _picamera2_capture_still(file_path, force_auto_exposure=False):
+    """Single picamera2 still capture. Returns True on success."""
+    with camera_lock:
+        locked_controls = {}
+        if not force_auto_exposure:
+            # Carry over the exposure/white-balance the live preview already
+            # settled on. A fresh still config restarts auto-exposure, and a
+            # short warmup leaves the capture dark/green (unreadable for OCR).
+            try:
+                meta = camera.capture_metadata() or {}
+                if meta.get("ExposureTime"):
+                    locked_controls["ExposureTime"] = int(meta["ExposureTime"])
+                if meta.get("AnalogueGain"):
+                    locked_controls["AnalogueGain"] = float(meta["AnalogueGain"])
+                colour_gains = meta.get("ColourGains")
+                if colour_gains and len(colour_gains) == 2:
+                    locked_controls["ColourGains"] = (
+                        float(colour_gains[0]),
+                        float(colour_gains[1]),
+                    )
+            except Exception as meta_err:
+                print(f"[Scanner] Could not read live exposure ({meta_err}); using warmup.")
+
+        camera.stop()
+        try:
+            still_config = camera.create_still_configuration(
+                main={"size": CAPTURE_STILL_SIZE, "format": "RGB888"},
+                controls=locked_controls or None,
+            )
+        except TypeError:
+            still_config = camera.create_still_configuration(
+                main={"size": CAPTURE_STILL_SIZE, "format": "RGB888"},
+            )
+        camera.configure(still_config)
+        camera.start()
+        if locked_controls:
+            # Exposure is fixed from the preview, so a tiny settle is enough.
+            try:
+                camera.set_controls(locked_controls)
+            except Exception:
+                pass
+            time.sleep(0.35)
+        else:
+            # No metadata (or forced): give auto-exposure time to converge.
+            time.sleep(1.6)
+        camera.capture_file(file_path)
+        restore_stream_configuration()
+    return True
+
+
 def capture_via_picamera2_still(file_path):
     global camera, is_capturing, last_camera_error
     if not camera:
@@ -1256,16 +1328,15 @@ def capture_via_picamera2_still(file_path):
     wait_for_stream_idle()
 
     try:
-        with camera_lock:
-            camera.stop()
-            still_config = camera.create_still_configuration(
-                main={"size": CAPTURE_STILL_SIZE, "format": "RGB888"},
-            )
-            camera.configure(still_config)
-            camera.start()
-            time.sleep(0.6)
-            camera.capture_file(file_path)
-            restore_stream_configuration()
+        _picamera2_capture_still(file_path, force_auto_exposure=False)
+
+        # Guard against the recurring dark/green capture: if the image came out
+        # too dark to read, re-capture once with a full auto-exposure warmup.
+        brightness = _image_mean_brightness(file_path)
+        if brightness is not None and brightness < DARK_CAPTURE_THRESHOLD:
+            print(f"[Scanner] Capture too dark ({brightness:.1f}); retrying with auto-exposure.")
+            _picamera2_capture_still(file_path, force_auto_exposure=True)
+
         mark_camera_success()
         print(f"[Scanner] Captured via picamera2: {file_path}")
         return True
@@ -1518,17 +1589,40 @@ def _image_to_data_url(image_path, max_width=1600, quality=85):
         return None
 
 AI_EXTRACT_PROMPT = (
-    "You are a document intake assistant for a local government office (Municipality of Vinzons). "
-    "Read the scanned document and extract its contents accurately. "
-    "Return ONLY a JSON object (no markdown) with these exact keys: "
-    "\"title\" (the subject/title of the document, short), "
-    "\"date\" (the document date as written, e.g. 'January 5, 2026', or ''), "
-    "\"sender\" (the name and/or office/position of the sender or originator, or ''), "
-    "\"documentType\" (one of: Memorandum, Letter, Resolution, Ordinance, Report, Invoice, Notice, Other), "
-    "\"summary\" (a concise 2-3 sentence summary of the document), "
-    "\"fullText\" (the complete, cleaned, readable text of the document). "
-    "If a field cannot be determined, use an empty string. Do not invent information."
+    "You are a document intake assistant for the Municipal Government of Vinzons, Camarines Norte, Philippines. "
+    "You are reading a scanned physical document (memo, letter, resolution, etc.). "
+    "Extract its contents accurately and return ONLY a valid JSON object — no markdown, no code fences, no extra text. "
+    "JSON keys and what to put in each:\n"
+    "  \"title\"        — the subject or title line of the document (short, as written; e.g. 'RE: Budget Realignment for FY2026')\n"
+    "  \"date\"         — the document date exactly as written (e.g. 'July 8, 2026' or 'July 8, 2026'); leave '' if not found\n"
+    "  \"sender\"       — full name and/or designation/office of the person who signed or authored the document; leave '' if not found\n"
+    "  \"documentType\" — exactly one of: Memorandum, Executive Order, Communication Letter, Proposal, Resolution, Ordinance, Report, Request, Others\n"
+    "  \"summary\"      — 2-3 sentence plain-English summary of what the document says\n"
+    "  \"fullText\"     — the complete, corrected, readable text of the document (fix obvious OCR errors; preserve paragraph structure)\n"
+    "Rules: never invent information; if a field is unclear use an empty string; "
+    "Philippine name formats and abbreviations (e.g. 'Hon.', 'Engr.', 'Atty.') are normal — preserve them."
 )
+
+# Map the AI's documentType label to a database ID used by the system.
+_DOC_TYPE_MAP = {
+    "memorandum":           "DT-001",
+    "executive order":      "DT-002",
+    "communication letter": "DT-003",
+    "letter":               "DT-003",
+    "proposal":             "DT-004",
+    "resolution":           "DT-005",
+    "ordinance":            "DT-006",
+    "report":               "DT-007",
+    "request":              "DT-008",
+    "others":               "DT-009",
+    "other":                "DT-009",
+    "notice":               "DT-009",
+    "invoice":              "DT-009",
+}
+
+def _map_doc_type_id(label: str) -> str:
+    """Return the DT-XXX id for an AI-returned documentType label, or '' if unknown."""
+    return _DOC_TYPE_MAP.get((label or "").strip().lower(), "")
 
 def ai_extract_document(image_path, ocr_text):
     """Use Groq to extract structured fields + clean full text from a scan."""
@@ -1592,7 +1686,9 @@ def ai_extract_document(image_path, ocr_text):
         return None
 
 # ================= OCR & RULESET LOGIC =================
-def extract_text_and_title(image_path):
+def extract_text_and_title(image_path, run_ai=None):
+    if run_ai is None:
+        run_ai = AI_EXTRACT_ENABLED and not AI_EXTRACT_BACKGROUND
     extracted_text = ""
     extracted_title = "Untitled Document"
     extracted_date = ""
@@ -1655,7 +1751,7 @@ def extract_text_and_title(image_path):
 
     # AI extraction (Groq): more reliable than the regex ruleset. When it
     # returns data, prefer it for the intake fields and cleaned document text.
-    if AI_EXTRACT_ENABLED and GROQ_API_KEY:
+    if run_ai and AI_EXTRACT_ENABLED and GROQ_API_KEY:
         ai = ai_extract_document(image_path, extracted_text)
         if ai:
             ai_title = str(ai.get("title") or "").strip()
@@ -1857,7 +1953,8 @@ def scan_document():
 
     ocr_source = jpg_path if os.path.exists(jpg_path) else file_path
     text, title, date, sender = extract_text_and_title(ocr_source)
-    return file_path, text, title, date, sender
+    # Also return the image path so AI enrichment can run in the background.
+    return file_path, text, title, date, sender, ocr_source
 
 # ================= QUEUE TO LOCAL DB =================
 def queue_scan(file_path, text, title, date, sender, status="pending"):
@@ -2104,6 +2201,93 @@ def start_sort_sequence_async(sort_layer):
 
     threading.Thread(target=_worker, daemon=True).start()
 
+def _do_ai_enrich(document_id, command_id, image_path, ocr_text):
+    """Run Groq AI extraction and patch the document. Returns True on success."""
+    if not (AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id):
+        return False
+    try:
+        ai = ai_extract_document(image_path, ocr_text)
+        if not ai:
+            print("[AI] Background enrich: no AI result.")
+            return False
+        title   = str(ai.get("title")        or "").strip()
+        date    = str(ai.get("date")         or "").strip()
+        sender  = str(ai.get("sender")       or "").strip()
+        summary = str(ai.get("summary")      or "").strip()
+        full    = str(ai.get("fullText")     or "").strip()
+        doc_type_label = str(ai.get("documentType") or "").strip()
+        doc_type_id    = _map_doc_type_id(doc_type_label)
+
+        combined = ""
+        if summary:
+            combined += f"SUMMARY: {summary}\n\n"
+        combined += full or ocr_text or ""
+
+        payload = {
+            "deviceId":       DEVICE_ID,
+            "commandId":      command_id,
+            "extractedTitle": title,
+            "extractedDate":  date,
+            "extractedSender": sender,
+            "scannedText":    combined.strip(),
+        }
+        if doc_type_id:
+            payload["documentTypeId"] = doc_type_id
+
+        resp = requests.put(
+            f"{BACKEND_BASE_URL}/devices/scans/{document_id}",
+            json=payload,
+            headers=DEVICE_HEADERS,
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            print(f"[AI] Enrich applied → title='{title}' date='{date}' sender='{sender}' type='{doc_type_label}' ({doc_type_id})")
+            return True
+        print(f"[AI] Background enrich failed {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as err:
+        print(f"[AI] Background enrich error: {err}")
+        return False
+
+
+def start_ai_enrich_async(document_id, command_id, image_path, ocr_text):
+    """Run Groq AI extraction in the background (no sort follow-up)."""
+    if not (AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id):
+        return
+
+    def _worker():
+        _do_ai_enrich(document_id, command_id, image_path, ocr_text)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def start_ai_then_sort_async(document_id, command_id, image_path, ocr_text, sort_layer):
+    """AI extraction first (so dashboard fields fill in), THEN sort motors.
+
+    Sequence in the background thread:
+      1. AI enrichment  — Groq API call, patches document fields in dashboard
+      2. Sort motors    — only starts after AI is fully done (or skipped)
+
+    The _motor_run_lock also serialises with run_scan_sequence(), so a new
+    scan that arrives while sort is still running will wait at the DOWN step.
+    """
+    def _worker():
+        # Step A: AI enrichment — fill document fields in the dashboard first.
+        if AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id:
+            print("[AI] Starting extraction before sort motors move...")
+            _do_ai_enrich(document_id, command_id, image_path, ocr_text)
+            print("[AI] Extraction done — releasing motors for sort.")
+        # Step B: physical sort — only after AI is done (or not configured).
+        with _motor_run_lock:
+            try:
+                print(f"[Motor] Starting background sort (layer {sort_layer})...")
+                motor_controller.finish_scan_sequence(sort_layer)
+                print(f"[Motor] Background sort finished (layer {sort_layer}).")
+            except Exception as motor_err:
+                print(f"[Motor] Background sort warning: {motor_err}")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
 def execute_device_command(cmd):
     if not cmd or not cmd.get("command"):
         return
@@ -2131,19 +2315,26 @@ def execute_device_command(cmd):
                     timeout=10
                 )
                 sort_layer = 1
-                # 1) Capture the photo FIRST and instantly (from the live preview
-                #    buffer) so pressing Capture grabs the image right away.
-                file_path, text, title, date, sender = scan_document()
+                status_sent = False
+                # 1) Wait for any previous background sort to finish before
+                #    moving the lift — then lower DOWN to the scan height.
+                #    This prevents the lift from fighting the sort motors.
+                try:
+                    with _motor_run_lock:
+                        motor_controller.run_scan_sequence()
+                except Exception as motor_err:
+                    print(f"[Command] Lift-down warning: {motor_err}")
+                # 2) Capture instantly from the live view.
+                file_path, text, title, date, sender, ocr_source = scan_document()
                 sort_layer = motor_controller.resolve_sort_layer(
                     cmd.get("payload") or {},
                     text,
                     title,
                 )
-                # 2) Kick off the physical sort motors in the BACKGROUND so the
-                #    capture/upload does NOT wait for the slow sorting to finish.
-                #    The document is already captured while sorting runs.
-                start_sort_sequence_async(sort_layer)
                 if file_path and os.path.exists(file_path):
+                    # 3) UPLOAD FIRST and mark the command Executed immediately so
+                    #    the dashboard can proceed to the details step right away —
+                    #    BEFORE the slow up + sort motor movement runs.
                     local_scan_id = queue_scan(file_path, text, title, date, sender, "pending")
                     result = upload_scan_to_backend(file_path, text, title, date, sender, cmd['id'])
                     doc_id = result.get('documentId')
@@ -2152,6 +2343,23 @@ def execute_device_command(cmd):
                     update_data = {'status': 'Executed'}
                     if doc_id:
                         update_data['resultDocumentId'] = doc_id
+                    try:
+                        requests.put(
+                            f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+                            json=update_data,
+                            headers=DEVICE_HEADERS,
+                            timeout=10
+                        )
+                        status_sent = True
+                        print("[Command] Marked Executed (UI can proceed). Now sorting in background...")
+                    except Exception as put_err:
+                        print(f"[Command] Status update failed (will retry below): {put_err}")
+                    # 4) AI extraction first so the dashboard fields fill in,
+                    #    THEN sort motors — both in one background thread so
+                    #    the motors never move before AI is done.
+                    start_ai_then_sort_async(
+                        doc_id, cmd['id'], ocr_source, text, sort_layer
+                    )
                 else:
                     update_data = {'status': 'Failed', 'errorMessage': 'Scan produced no file'}
             except Exception as e:
@@ -2160,12 +2368,13 @@ def execute_device_command(cmd):
                     mark_scan_status(local_scan_id, "pending")
                 update_data = {'status': 'Failed', 'errorMessage': str(e)}
 
-            requests.put(
-                f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
-                json=update_data,
-                headers=DEVICE_HEADERS,
-                timeout=10
-            )
+            if not status_sent:
+                requests.put(
+                    f"{BACKEND_BASE_URL}/devices/commands/{cmd['id']}",
+                    json=update_data,
+                    headers=DEVICE_HEADERS,
+                    timeout=10
+                )
             print(f"[Command] Executed {cmd['command']} successfully.")
 
         elif cmd['command'] == 'RESTART':
