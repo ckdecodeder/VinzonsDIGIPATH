@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PageShell from "../components/PageShell";
+import ModalOverlay from "../components/ModalOverlay";
 import {
   Archive,
   Search,
@@ -160,14 +161,22 @@ const ArchiveList = ({
     return { ...a, doc };
   });
 
-  const filtered = enrichedArchives.filter(
-    (a) =>
-      (a.doc?.subject || "").toLowerCase().includes(search.toLowerCase()) ||
-      (a.doc?.trackingNumber || "")
+  const filtered = enrichedArchives.filter((a) => {
+    const term = search.toLowerCase();
+    if (!term) return true;
+    const currentLocation = a.doc
+      ? getOfficeName(a.doc.currentOfficeId || a.doc.originOfficeId)
+      : "";
+    return (
+      (a.doc?.subject || "").toLowerCase().includes(term) ||
+      (a.doc?.trackingNumber || "").toLowerCase().includes(term) ||
+      getUserFullName(a.userId).toLowerCase().includes(term) ||
+      (a.doc ? getDocTypeName(a.doc.documentTypeId) : "")
         .toLowerCase()
-        .includes(search.toLowerCase()) ||
-      getUserFullName(a.userId).toLowerCase().includes(search.toLowerCase()),
-  );
+        .includes(term) ||
+      currentLocation.toLowerCase().includes(term)
+    );
+  });
 
   useEffect(() => {
     setPage(1);
@@ -216,14 +225,14 @@ const ArchiveList = ({
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row">
+          <div className="page-toolbar-row page-toolbar-stacked">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search archives..."
+                  placeholder="Search by subject, tracking, name, type, or location..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -347,7 +356,7 @@ const ArchiveList = ({
       </div>
       </PageShell>
 
-      {detailArchive &&
+      {detailArchive && !previewFile &&
         (() => {
           const archive =
             archives.find((item) => item.id === detailArchive.id) ||
@@ -359,10 +368,7 @@ const ArchiveList = ({
           const timeline = getArchiveTimeline(archive, doc);
 
           return (
-            <div
-              className="modal-overlay"
-              onClick={() => setDetailArchive(null)}
-            >
+            <ModalOverlay onClose={() => setDetailArchive(null)}>
               <div
                 className="modal document-detail-modal"
                 onClick={(e) => e.stopPropagation()}
@@ -546,12 +552,12 @@ const ArchiveList = ({
                   </button>
                 </div>
               </div>
-            </div>
+            </ModalOverlay>
           );
         })()}
 
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Archive a Document</h2>
@@ -631,13 +637,13 @@ const ArchiveList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {previewFile && (
-        <div
-          className="modal-overlay scanned-preview-overlay"
-          onClick={() => setPreviewFile(null)}
+        <ModalOverlay
+          overlayClassName="scanned-preview-overlay"
+          onClose={() => setPreviewFile(null)}
         >
           <div
             className="modal scanned-preview-modal"
@@ -702,7 +708,7 @@ const ArchiveList = ({
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

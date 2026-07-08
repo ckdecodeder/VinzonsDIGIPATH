@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import PageShell from '../components/PageShell';
+import ModalOverlay from '../components/ModalOverlay';
 import {
   Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
   Flag, User, Phone, Mail, MessageSquare, ChevronDown, ChevronUp,
@@ -315,12 +316,16 @@ const DocumentList = ({
 
   const filteredDocs = documents
     .filter(d => {
-      const matchSearch = (d.subject || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.trackingNumber || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.senderName || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.originOfficeOther || '').toLowerCase().includes(search.toLowerCase()) ||
-        (d.documentTypeOther || '').toLowerCase().includes(search.toLowerCase()) ||
-        getCurrentLocation(d).toLowerCase().includes(search.toLowerCase());
+      const term = search.toLowerCase();
+      const matchSearch = !term ||
+        (d.subject || '').toLowerCase().includes(term) ||
+        (d.trackingNumber || '').toLowerCase().includes(term) ||
+        (d.senderName || '').toLowerCase().includes(term) ||
+        (d.originOfficeOther || '').toLowerCase().includes(term) ||
+        (d.documentTypeOther || '').toLowerCase().includes(term) ||
+        getDocumentTypeLabel(d).toLowerCase().includes(term) ||
+        getOfficeName(d.originOfficeId).toLowerCase().includes(term) ||
+        getCurrentLocation(d).toLowerCase().includes(term);
       const matchStatus = filterStatus === 'All' || getWorkflowStatus(d) === filterStatus;
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
       const matchPriority = filterPriority === 'All' || d.priorityLevel === filterPriority;
@@ -415,35 +420,40 @@ const DocumentList = ({
     const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
     const isReceptionist = currentUser?.role === 'Receptionist';
     const pinnedOfficeId = isReceptionist ? currentUser?.officeId : formData.currentOfficeId;
+    const editingDoc = editDoc;
     const normalizedFormData = {
       ...formData,
       documentDirection: isReceptionist ? 'Incoming' : formData.documentDirection,
-      status: editDoc ? getWorkflowStatus(formData.status) : getWorkflowStatus(formData.status),
-      dateReceived: editDoc ? editDoc.dateReceived : formData.dateReceived,
+      status: editingDoc ? getWorkflowStatus(formData.status) : getWorkflowStatus(formData.status),
+      dateReceived: editingDoc ? editingDoc.dateReceived : formData.dateReceived,
       documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
       originOfficeOther: formData.originOfficeOther.trim(),
       originOfficeId: isReceptionist ? currentUser?.officeId : formData.originOfficeId || pinnedOfficeId,
       currentOfficeId: pinnedOfficeId,
     };
 
-    if (editDoc) {
-      await onEdit({
-        ...editDoc,
-        ...normalizedFormData,
-        scannedFiles: [...(editDoc.scannedFiles || []), ...newFiles],
-        scannedImageUrl: newFiles[0]?.dataUrl || editDoc.scannedImageUrl,
-      });
-    } else {
-      await onAdd({
-        ...normalizedFormData,
-        scannedFiles: newFiles,
-        scannedImageUrl: newFiles[0]?.dataUrl || '',
-      });
-    }
+    const payload = editingDoc
+      ? {
+          ...editingDoc,
+          ...normalizedFormData,
+          scannedFiles: [...(editingDoc.scannedFiles || []), ...newFiles],
+          scannedImageUrl: newFiles[0]?.dataUrl || editingDoc.scannedImageUrl,
+        }
+      : {
+          ...normalizedFormData,
+          scannedFiles: newFiles,
+          scannedImageUrl: newFiles[0]?.dataUrl || '',
+        };
 
     setShowForm(false);
     setEditDoc(null);
     setAttachmentFile(null);
+
+    if (editingDoc) {
+      await onEdit(payload);
+    } else {
+      await onAdd(payload);
+    }
   };
 
   const openRouteModal = (doc) => {
@@ -467,12 +477,13 @@ const DocumentList = ({
       return;
     }
 
+    const routingDoc = routeDoc;
+    setRouteDoc(null);
+
     await onRouteDocument({
-      documentId: routeDoc.id,
+      documentId: routingDoc.id,
       ...routeForm,
     });
-
-    setRouteDoc(null);
   };
 
   const handleReceive = async (doc) => {
@@ -533,9 +544,11 @@ const DocumentList = ({
     if (!processingAction) return;
     const config = processingActionLabels[processingAction.action];
     if (config?.required && !processingNote.trim()) return;
-    await onProcessDocument?.(processingAction.doc.id, processingAction.action, processingNote.trim());
+    const { doc, action } = processingAction;
+    const note = processingNote.trim();
     setProcessingAction(null);
     setProcessingNote('');
+    await onProcessDocument?.(doc.id, action, note);
   };
 
   const escapeSlipText = (value) => String(value || '-').replace(/[&<>"']/g, (char) => ({
@@ -803,7 +816,7 @@ const DocumentList = ({
               <p>Scan, route, acknowledge, sign, file, and archive official documents</p>
             </div>
             {canCreate && (
-              <div className="page-header-actions">
+              <div className="page-header-actions page-header-actions--inline">
                 <button className="btn btn-primary" onClick={() => handleOpenForm()}>
                   <Plus size={16} /> New Document
                 </button>
@@ -819,7 +832,7 @@ const DocumentList = ({
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search by subject, tracking, sender, or office..."
+                  placeholder="Search by subject, tracking, sender, office, type, or location..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
@@ -1112,7 +1125,7 @@ const DocumentList = ({
       </section>
       </PageShell>
 
-      {detailDoc && (() => {
+      {detailDoc && !previewFile && (() => {
         const doc = documents.find(item => item.id === detailDoc.id) || detailDoc;
         const files = getDocumentFiles(doc);
         const timeline = getTimeline(doc);
@@ -1121,7 +1134,7 @@ const DocumentList = ({
         const workflowExplanation = getWorkflowExplanation(doc);
 
         return (
-          <div className="modal-overlay" onClick={() => setDetailDoc(null)}>
+          <ModalOverlay onClose={() => setDetailDoc(null)}>
             <div className="modal document-detail-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
@@ -1238,12 +1251,12 @@ const DocumentList = ({
                 </div>
               </div>
             </div>
-          </div>
+          </ModalOverlay>
         );
       })()}
 
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => setShowForm(false)}>
           <div className="modal document-form-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editDoc ? 'Edit Document' : 'New Document'}</h2>
@@ -1487,11 +1500,11 @@ const DocumentList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {rejectDoc && (
-        <div className="modal-overlay" onClick={() => setRejectDoc(null)}>
+        <ModalOverlay onClose={() => setRejectDoc(null)}>
           <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
@@ -1534,14 +1547,14 @@ const DocumentList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {processingAction && (() => {
         const config = processingActionLabels[processingAction.action];
         const doc = processingAction.doc;
         return (
-          <div className="modal-overlay" onClick={() => setProcessingAction(null)}>
+          <ModalOverlay onClose={() => setProcessingAction(null)}>
             <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
@@ -1584,12 +1597,15 @@ const DocumentList = ({
                 </div>
               </form>
             </div>
-          </div>
+          </ModalOverlay>
         );
       })()}
 
       {previewFile && (
-        <div className="modal-overlay scanned-preview-overlay" onClick={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}>
+        <ModalOverlay
+          overlayClassName="scanned-preview-overlay"
+          onClose={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}
+        >
           <div className={`modal scanned-preview-modal ${isPreviewMaximized ? 'maximized' : ''}`} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
@@ -1645,11 +1661,11 @@ const DocumentList = ({
               <button className="btn btn-primary" onClick={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}>Done</button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {routeDoc && (
-        <div className="modal-overlay" onClick={() => setRouteDoc(null)}>
+        <ModalOverlay onClose={() => setRouteDoc(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Route Document</h2>
@@ -1709,7 +1725,7 @@ const DocumentList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

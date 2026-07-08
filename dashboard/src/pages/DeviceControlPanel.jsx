@@ -394,7 +394,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
             {isConnected ? 'Live' : 'Ready'}
           </span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto auto', gap: '0.75rem', alignItems: 'end' }}>
+        <div className="scanner-bridge-controls">
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">Scanner Bridge URL</label>
             <input
@@ -408,10 +408,10 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
             />
             <p className="field-hint">
               {bridgeUrlSource === 'auto'
-                ? `Auto-detect ang IP (${detectedIp || 'hintayin ang heartbeat'}). Pwede mong i-edit. I-click Connect — hindi auto-connect.`
+                ? `Auto-detected IP (${detectedIp || 'waiting for heartbeat'}). You can edit this. Click Connect — it will not auto-connect.`
                 : bridgeUrlSource === 'manual'
-                  ? 'Manual URL ang ginagamit. I-click Connect para kumonekta.'
-                  : 'Hintayin ang Pi heartbeat para ma-detect ang IP, o i-type ang bridge URL manually.'}
+                  ? 'Using a manual URL. Click Connect to establish the connection.'
+                  : 'Wait for the Pi heartbeat to detect the IP, or type the bridge URL manually.'}
             </p>
             {detectedIp && manualBridgeUrl && (() => {
               try {
@@ -421,7 +421,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
               }
             })() && (
               <p className="field-hint" style={{ color: 'var(--warning)' }}>
-                Lumang URL ang naka-fill. Detected IP ngayon: {detectedIp}. I-click &quot;Reset to auto-detected&quot; o Refresh.
+                The filled URL is outdated. Detected IP is now: {detectedIp}. Click &quot;Reset to auto-detected&quot; or Refresh.
               </p>
             )}
             {autoBridgeUrl && bridgeUrlDirty && (

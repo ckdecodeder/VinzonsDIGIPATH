@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import PageShell from '../components/PageShell';
+import ModalOverlay from '../components/ModalOverlay';
 import {
   BarChart3,
   FileText,
@@ -28,6 +29,7 @@ import {
 } from '../data/mockData';
 import { reportService } from '../api/documentService';
 import { sortNewest } from '../utils/sorting';
+import usePhilippinesClock from '../hooks/usePhilippinesClock';
 
 const ReportsPage = ({
   documents,
@@ -47,6 +49,11 @@ const ReportsPage = ({
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+  const [reportTablePage, setReportTablePage] = useState(1);
+  const [transmissionReportTablePage, setTransmissionReportTablePage] = useState(1);
+  const generatedAt = usePhilippinesClock();
+
+  const REPORT_TABLE_PAGE_SIZE = 10;
 
   const categories = [
     { id: 'summary', label: 'Summary', icon: <PieChart size={16} /> },
@@ -77,6 +84,42 @@ const ReportsPage = ({
   const filteredTransmissions = sortNewest(filterByDate(transmissions, 'transmissionDate'), ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']);
   const filteredArchives = sortNewest(filterByDate(archives, 'date'), ['createdAt', 'updatedAt', 'date']);
   const filteredLogs = sortNewest(filterByDate(logs, 'timestamp'), ['timestamp']);
+
+  const reportTableTotalPages = Math.max(1, Math.ceil(filteredDocs.length / REPORT_TABLE_PAGE_SIZE));
+  const paginatedReportDocs = filteredDocs.slice(
+    (reportTablePage - 1) * REPORT_TABLE_PAGE_SIZE,
+    reportTablePage * REPORT_TABLE_PAGE_SIZE,
+  );
+  const reportShowFrom = filteredDocs.length
+    ? (reportTablePage - 1) * REPORT_TABLE_PAGE_SIZE + 1
+    : 0;
+  const reportShowTo = Math.min(filteredDocs.length, reportTablePage * REPORT_TABLE_PAGE_SIZE);
+
+  const transmissionReportTotalPages = Math.max(1, Math.ceil(filteredTransmissions.length / REPORT_TABLE_PAGE_SIZE));
+  const paginatedReportTransmissions = filteredTransmissions.slice(
+    (transmissionReportTablePage - 1) * REPORT_TABLE_PAGE_SIZE,
+    transmissionReportTablePage * REPORT_TABLE_PAGE_SIZE,
+  );
+  const transmissionReportShowFrom = filteredTransmissions.length
+    ? (transmissionReportTablePage - 1) * REPORT_TABLE_PAGE_SIZE + 1
+    : 0;
+  const transmissionReportShowTo = Math.min(
+    filteredTransmissions.length,
+    transmissionReportTablePage * REPORT_TABLE_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setReportTablePage(1);
+    setTransmissionReportTablePage(1);
+  }, [dateFrom, dateTo, activeCategory]);
+
+  useEffect(() => {
+    setReportTablePage((current) => Math.min(current, reportTableTotalPages));
+  }, [reportTableTotalPages]);
+
+  useEffect(() => {
+    setTransmissionReportTablePage((current) => Math.min(current, transmissionReportTotalPages));
+  }, [transmissionReportTotalPages]);
 
   const getOfficeName = (officeId) => {
     const office = offices.find((item) => item.id === officeId);
@@ -223,7 +266,6 @@ const ReportsPage = ({
   const categoryLabel = categories.find(item => item.id === activeCategory)?.label || 'Summary';
   const preparedBy = currentUser ? `${currentUser.fname} ${currentUser.lname}` : 'DigiPath User';
   const coverageText = `${dateFrom || 'Start'} to ${dateTo || 'Present'}`;
-  const generatedAt = new Date().toLocaleString();
   const formatReportDate = (value, withTime = false) => {
     if (!value) return 'Not recorded';
     const date = new Date(value);
@@ -322,10 +364,184 @@ const ReportsPage = ({
   };
 
   const previewTable = getPreviewTable();
+  const detailRows = previewTable.title ? previewTable.rows : [];
+
+  // Reusable report building blocks (shared by the visible sheets and the
+  // hidden measurement layer so heights match exactly).
+  const detailColgroup = previewTable.columnWidths ? (
+    <colgroup>
+      {previewTable.columnWidths.map((width, index) => (
+        <col key={index} style={{ width }} />
+      ))}
+    </colgroup>
+  ) : null;
+
+  const detailThead = (
+    <thead>
+      <tr>
+        {previewTable.headers.map(header => <th key={header}>{header}</th>)}
+      </tr>
+    </thead>
+  );
+
+  const coverBlock = (
+    <>
+      <header className="official-report-header">
+        <img src="/Seal_of_Vinzons.png" alt="Seal of Vinzons" />
+        <div>
+          <p>Republic of the Philippines</p>
+          <p>Province of Camarines Norte</p>
+          <h1>Municipality of Vinzons</h1>
+          <strong>DigiPath Document Tracking System</strong>
+        </div>
+      </header>
+
+      <div className="official-report-title">
+        <h2>{categoryLabel} Report</h2>
+        <p>Official generated report from DigiPath records</p>
+      </div>
+
+      <div className="official-report-meta">
+        <div><span>Prepared By</span><strong>{preparedBy}</strong></div>
+        <div><span>Coverage</span><strong>{coverageText}</strong></div>
+        <div><span>Generated</span><strong>{generatedAt}</strong></div>
+        <div><span>Record Count</span><strong>{activeCategory === 'summary' ? filteredDocs.length : previewTable.rows.length}</strong></div>
+      </div>
+
+      <div className="official-report-section">
+        <h3 className="official-report-section-title">Summary</h3>
+        <div className="official-report-table-wrap">
+          <table className="official-report-table official-report-table--summary">
+            <colgroup>
+              <col style={{ width: '18%' }} />
+              <col style={{ width: '30%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '40%' }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Section</th>
+                <th>Metric</th>
+                <th>Value</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summaryRows.map((row, index) => (
+                <tr key={`${row[0]}-${row[1]}-${index}`}>
+                  {row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+
+  const footerBlock = (
+    <footer className="official-report-footer">
+      <div>
+        <span>Prepared by</span>
+        <strong>{preparedBy}</strong>
+      </div>
+      <div>
+        <span>Verified / Noted by</span>
+        <strong>____________________________</strong>
+      </div>
+    </footer>
+  );
+
+  // Measure the real rendered heights so the preview paginates exactly like a
+  // printed bond paper (Letter, 8.5in x 11in) instead of clipping content.
+  const measureRef = useRef(null);
+  const [rowChunks, setRowChunks] = useState(null);
+  const measureSignature = `${activeCategory}|${dateFrom}|${dateTo}|${detailRows.length}|${previewTable.title}`;
+
+  useLayoutEffect(() => {
+    if (!showPreview) return;
+    const node = measureRef.current;
+    if (!node) return;
+
+    const DPI = 96;
+    const USABLE = 11 * DPI - (0.55 + 0.85) * DPI; // page height minus top/bottom padding
+
+    const coverEl = node.querySelector('[data-m="cover"]');
+    const theadEl = node.querySelector('[data-m="thead"]');
+    const footerEl = node.querySelector('[data-m="footer"]');
+    const rowEls = Array.from(node.querySelectorAll('[data-m="row"]'));
+
+    const coverH = coverEl ? coverEl.offsetHeight : 0;
+    const theadH = theadEl ? theadEl.offsetHeight : 0;
+    const footerH = footerEl ? footerEl.offsetHeight : 0;
+    const rowH = rowEls.map(el => el.offsetHeight);
+
+    const firstHeadH = coverH + theadH;
+    const contHeadH = theadH;
+
+    const chunks = [];
+    if (rowH.length === 0) {
+      chunks.push([0, 0]);
+    } else {
+      let i = 0;
+      let isFirst = true;
+      while (i < rowH.length) {
+        const avail = USABLE - (isFirst ? firstHeadH : contHeadH);
+        const start = i;
+        let used = 0;
+        while (i < rowH.length && used + rowH[i] <= avail) {
+          used += rowH[i];
+          i += 1;
+        }
+        if (i === start) {
+          i += 1; // a single row taller than the page: keep at least one
+        }
+        chunks.push([start, i]);
+        isFirst = false;
+      }
+
+      // Keep the signature footer with content: if it does not fit on the last
+      // sheet, spill trailing rows onto a fresh sheet that carries the footer.
+      const lastHeadH = chunks.length === 1 ? firstHeadH : contHeadH;
+      const last = chunks[chunks.length - 1];
+      let lastUsed = 0;
+      for (let k = last[0]; k < last[1]; k += 1) lastUsed += rowH[k];
+      if (lastUsed + footerH > USABLE - lastHeadH) {
+        let end = last[1];
+        while (end > last[0] + 1 && lastUsed + footerH > USABLE - contHeadH) {
+          end -= 1;
+          lastUsed -= rowH[end];
+        }
+        if (end < last[1]) {
+          chunks[chunks.length - 1] = [last[0], end];
+          chunks.push([end, last[1]]);
+        }
+      }
+    }
+
+    setRowChunks(prev => {
+      if (prev && prev.length === chunks.length && prev.every((c, idx) => c[0] === chunks[idx][0] && c[1] === chunks[idx][1])) {
+        return prev;
+      }
+      return chunks;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPreview, measureSignature]);
+
+  const detailPageDefs = (rowChunks && rowChunks.length)
+    ? rowChunks.map(([start, end]) => ({ rows: detailRows.slice(start, end), startIndex: start }))
+    : [{ rows: detailRows, startIndex: 0 }];
+  const previewTotalPages = detailPageDefs.length;
 
   const handlePrintPreview = () => {
     setShowPreview(true);
-    window.setTimeout(() => window.print(), 80);
+    window.setTimeout(() => {
+      window.print();
+    }, 120);
+  };
+
+  const handlePrintFromPreview = () => {
+    window.print();
   };
 
   return (
@@ -337,16 +553,16 @@ const ReportsPage = ({
               <h1>Reports</h1>
               <p>View categorized reports and analytics</p>
             </div>
-            <div className="page-header-actions">
-              <button className="btn btn-secondary" onClick={() => setShowPreview(true)}>
+            <div className="page-header-actions reports-header-actions">
+              <button type="button" className="btn-report-action btn-report-action--preview" onClick={() => setShowPreview(true)}>
                 <Eye size={16} />
                 Preview
               </button>
-              <button className="btn btn-secondary" onClick={handlePrintPreview}>
+              <button type="button" className="btn-report-action btn-report-action--print" onClick={handlePrintPreview}>
                 <Printer size={16} />
                 Print
               </button>
-              <button className="btn btn-secondary" onClick={handleExport} disabled={isExporting}>
+              <button type="button" className="btn-report-action btn-report-action--download" onClick={handleExport} disabled={isExporting}>
                 {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                 {isExporting ? 'Generating...' : 'Download DOCX'}
               </button>
@@ -589,7 +805,7 @@ const ReportsPage = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredDocs.map(doc => {
+                  {paginatedReportDocs.length ? paginatedReportDocs.map(doc => {
                     const pInfo = getPriorityInfo(doc.priorityLevel);
                     return (
                       <tr key={doc.id}>
@@ -614,15 +830,45 @@ const ReportsPage = ({
                         <td className="reports-date-col reports-date-cell">{formatReportDate(doc.dateReceived)}</td>
                       </tr>
                     );
-                  })}
+                  }) : (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
+                        No documents match the current report filters.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
+            </div>
+            <div className="pagination-toolbar report-table-pagination">
+              <div className="pagination-summary">
+                Showing {reportShowFrom}-{reportShowTo} of {filteredDocs.length} documents
+              </div>
+              <div className="pagination-pages">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={reportTablePage <= 1}
+                  onClick={() => setReportTablePage(prev => Math.max(1, prev - 1))}
+                >
+                  Previous
+                </button>
+                <span>Page {reportTablePage} of {reportTableTotalPages}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={reportTablePage >= reportTableTotalPages}
+                  onClick={() => setReportTablePage(prev => Math.min(reportTableTotalPages, prev + 1))}
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ==================== TRANSMISSIONS ==================== */}
+      {}
       {activeCategory === 'transmissions' && (
         <div>
           <div style={{
@@ -639,6 +885,9 @@ const ReportsPage = ({
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">Transmission Report</h3>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {filteredTransmissions.length} transmissions
+              </span>
             </div>
             <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
               <table>
@@ -654,7 +903,7 @@ const ReportsPage = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredTransmissions.map(t => {
+                  {paginatedReportTransmissions.length ? paginatedReportTransmissions.map(t => {
                     const doc = documents.find(d => d.id === t.documentId);
                     return (
                       <tr key={t.id}>
@@ -673,9 +922,39 @@ const ReportsPage = ({
                         </td>
                       </tr>
                     );
-                  })}
+                  }) : (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1.5rem' }}>
+                        No transmissions match the current report filters.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
+            </div>
+            <div className="pagination-toolbar report-table-pagination">
+              <div className="pagination-summary">
+                Showing {transmissionReportShowFrom}-{transmissionReportShowTo} of {filteredTransmissions.length} transmissions
+              </div>
+              <div className="pagination-pages">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={transmissionReportTablePage <= 1}
+                  onClick={() => setTransmissionReportTablePage(prev => Math.max(1, prev - 1))}
+                >
+                  Previous
+                </button>
+                <span>Page {transmissionReportTablePage} of {transmissionReportTotalPages}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={transmissionReportTablePage >= transmissionReportTotalPages}
+                  onClick={() => setTransmissionReportTablePage(prev => Math.min(transmissionReportTotalPages, prev + 1))}
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -815,7 +1094,7 @@ const ReportsPage = ({
       </PageShell>
 
       {showPreview && (
-        <div className="modal-overlay report-preview-overlay" onClick={() => setShowPreview(false)}>
+        <ModalOverlay overlayClassName="report-preview-overlay" onClose={() => setShowPreview(false)}>
           <div className="modal report-preview-modal" onClick={e => e.stopPropagation()}>
             <div className="report-preview-toolbar">
               <div>
@@ -823,7 +1102,7 @@ const ReportsPage = ({
                 <p>{categoryLabel} - {coverageText}</p>
               </div>
               <div className="report-preview-actions">
-                <button className="btn btn-secondary" onClick={() => window.print()}>
+                <button type="button" className="btn-report-action btn-report-action--print" onClick={handlePrintFromPreview}>
                   <Printer size={16} /> Print
                 </button>
                 <button className="btn-icon" onClick={() => setShowPreview(false)} aria-label="Close preview">
@@ -832,105 +1111,100 @@ const ReportsPage = ({
               </div>
             </div>
             <div className="report-print-root">
-              <section className="official-report-page">
-                <header className="official-report-header">
-                  <img src="/Seal_of_Vinzons.png" alt="Seal of Vinzons" />
-                  <div>
-                    <p>Republic of the Philippines</p>
-                    <p>Province of Camarines Norte</p>
-                    <h1>Municipality of Vinzons</h1>
-                    <strong>DigiPath Document Tracking System</strong>
-                  </div>
-                </header>
+              {detailPageDefs.map((pageDef, pageIndex) => {
+                const isFirstSheet = pageIndex === 0;
+                const isLastSheet = pageIndex === previewTotalPages - 1;
+                const pageRows = pageDef.rows;
+                const rowOffset = pageDef.startIndex;
 
-                <div className="official-report-title">
-                  <h2>{categoryLabel} Report</h2>
-                  <p>Official generated report from DigiPath records</p>
-                </div>
+                return (
+                  <section className="official-report-page" key={pageIndex}>
+                    {isFirstSheet ? (
+                      <>
+                        {coverBlock}
 
-                <div className="official-report-meta">
-                  <div><span>Prepared By</span><strong>{preparedBy}</strong></div>
-                  <div><span>Coverage</span><strong>{coverageText}</strong></div>
-                  <div><span>Generated</span><strong>{generatedAt}</strong></div>
-                  <div><span>Record Count</span><strong>{activeCategory === 'summary' ? filteredDocs.length : previewTable.rows.length}</strong></div>
-                </div>
-
-                <div className="official-report-section">
-                  <h3 className="official-report-section-title">Summary</h3>
-                  <div className="official-report-table-wrap">
-                  <table className="official-report-table official-report-table--summary">
-                  <colgroup>
-                    <col style={{ width: '18%' }} />
-                    <col style={{ width: '30%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '40%' }} />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th>Section</th>
-                      <th>Metric</th>
-                      <th>Value</th>
-                      <th>Notes</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {summaryRows.map((row, index) => (
-                      <tr key={`${row[0]}-${row[1]}-${index}`}>
-                        {row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-                </div>
-
-                {previewTable.title && (
-                  <div className="official-report-section">
-                    <h3 className="official-report-section-title">{previewTable.title}</h3>
-                    <div className="official-report-table-wrap">
-                    <table className="official-report-table">
-                      {previewTable.columnWidths && (
-                        <colgroup>
-                          {previewTable.columnWidths.map((width, index) => (
-                            <col key={index} style={{ width }} />
-                          ))}
-                        </colgroup>
-                      )}
-                      <thead>
-                        <tr>
-                          {previewTable.headers.map(header => <th key={header}>{header}</th>)}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {previewTable.rows.length ? previewTable.rows.map((row, rowIndex) => (
-                          <tr key={rowIndex}>
-                            {row.map((cell, cellIndex) => <td key={cellIndex}>{cell || '-'}</td>)}
-                          </tr>
-                        )) : (
-                          <tr>
-                            <td colSpan={previewTable.headers.length || 1}>No records found for the selected coverage.</td>
-                          </tr>
+                        {previewTable.title && (
+                          <div className="official-report-section">
+                            <h3 className="official-report-section-title">{previewTable.title}</h3>
+                            <div className="official-report-table-wrap">
+                              <table className="official-report-table">
+                                {detailColgroup}
+                                {detailThead}
+                                <tbody>
+                                  {pageRows.length ? pageRows.map((row, rowIndex) => (
+                                    <tr key={rowOffset + rowIndex}>
+                                      {row.map((cell, cellIndex) => <td key={cellIndex}>{cell || '-'}</td>)}
+                                    </tr>
+                                  )) : (
+                                    <tr>
+                                      <td colSpan={previewTable.headers.length || 1}>No records found for the selected coverage.</td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
                         )}
-                      </tbody>
-                    </table>
-                    </div>
-                  </div>
-                )}
+                      </>
+                    ) : (
+                      <div className="official-report-section">
+                        <div className="official-report-table-wrap">
+                          <table className="official-report-table">
+                            {detailColgroup}
+                            {detailThead}
+                            <tbody>
+                              {pageRows.map((row, rowIndex) => (
+                                <tr key={rowOffset + rowIndex}>
+                                  {row.map((cell, cellIndex) => <td key={cellIndex}>{cell || '-'}</td>)}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
 
-                <footer className="official-report-footer">
-                  <div>
-                    <span>Prepared by</span>
-                    <strong>{preparedBy}</strong>
-                  </div>
-                  <div>
-                    <span>Verified / Noted by</span>
-                    <strong>____________________________</strong>
-                  </div>
-                </footer>
-              </section>
+                    {isLastSheet && footerBlock}
+
+                    <div className="official-report-page-number">
+                      Page {pageIndex + 1} of {previewTotalPages}
+                    </div>
+                  </section>
+                );
+              })}
+
+              {/* Hidden measurement layer: mirrors a single sheet's content at
+                  the true print width so we can paginate by real pixel heights. */}
+              <div className="report-measure-layer" ref={measureRef} aria-hidden="true">
+                <div className="official-report-page report-measure-page">
+                  <div data-m="cover">{coverBlock}</div>
+                  {previewTable.title && (
+                    <div className="official-report-section">
+                      <div className="official-report-table-wrap">
+                        <table className="official-report-table">
+                          {detailColgroup}
+                          <thead data-m="thead">
+                            <tr>
+                              {previewTable.headers.map(header => <th key={header}>{header}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {detailRows.map((row, rowIndex) => (
+                              <tr key={rowIndex} data-m="row">
+                                {row.map((cell, cellIndex) => <td key={cellIndex}>{cell || '-'}</td>)}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  <div data-m="footer">{footerBlock}</div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import PageShell from "../components/PageShell";
+import ModalOverlay from "../components/ModalOverlay";
 import { Building2, Users, Search, Plus, X, Edit2, Trash2 } from "lucide-react";
 
 const OfficeList = ({
@@ -65,7 +66,7 @@ const OfficeList = ({
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row">
+          <div className="page-toolbar-row page-toolbar-stacked">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -218,7 +219,7 @@ const OfficeList = ({
       </PageShell>
 
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editOffice ? "Edit Office" : "New Office"}</h2>
@@ -259,7 +260,7 @@ const OfficeList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

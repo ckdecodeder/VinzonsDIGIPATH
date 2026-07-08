@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import formatBadgeCount from '../utils/formatBadgeCount';
 import {
   LayoutDashboard,
   FileText,
@@ -18,6 +19,7 @@ import {
   Bell,
   Loader2,
   X,
+  Menu,
   Clock,
   AlertTriangle,
   CheckCircle2,
@@ -42,6 +44,12 @@ const Layout = ({
   onNotificationSelect,
 }) => {
   const [isNotificationDockOpen, setIsNotificationDockOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  const handleNavigate = (id) => {
+    onNavigate(id);
+    setIsSidebarOpen(false);
+  };
 
   // ==================== ADMIN NAV (was Superadmin) ====================
   const adminNav = [
@@ -140,7 +148,14 @@ const Layout = ({
 
   return (
     <div className="layout">
-      <aside className="sidebar">
+      {isSidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setIsSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
         {/* Logo */}
         <div className="sidebar-header">
           <div className="logo">
@@ -152,6 +167,14 @@ const Layout = ({
               <span className="logo-subtitle">Vinzon's Document System</span>
             </div>
           </div>
+          <button
+            type="button"
+            className="sidebar-close-btn"
+            onClick={() => setIsSidebarOpen(false)}
+            aria-label="Close menu"
+          >
+            <X size={18} />
+          </button>
         </div>
 
         {/* Navigation */}
@@ -163,11 +186,11 @@ const Layout = ({
                 <div
                   key={item.id}
                   className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
-                  onClick={() => onNavigate(item.id)}
+                  onClick={() => handleNavigate(item.id)}
                 >
                   {item.icon}
                   {item.label}
-                  {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
+                  {item.badge > 0 && <span className="nav-badge">{formatBadgeCount(item.badge)}</span>}
                 </div>
               ))}
             </div>
@@ -176,24 +199,43 @@ const Layout = ({
 
         {/* Footer */}
         <div className="sidebar-footer">
-          <div className="user-info">
-            <div className="user-avatar">{userInitials}</div>
+          <button
+            type="button"
+            className="user-info"
+            onClick={onLogout}
+            title="Log out"
+            aria-label={`Log out ${userName}`}
+          >
+            <div className="user-avatar" aria-hidden="true">{userInitials}</div>
             <div className="user-details">
               <div className="user-name">{userName}</div>
               <div className="user-role">{userRole}</div>
             </div>
-            <LogOut
-              size={16}
-              style={{ color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}
-              onClick={onLogout}
-              title="Log out"
-              aria-label="Log out"
-            />
-          </div>
+            <LogOut size={16} className="user-logout-icon" aria-hidden="true" />
+          </button>
         </div>
       </aside>
 
       <main className="main-content">
+        <div className="mobile-topbar">
+          <button
+            type="button"
+            className="mobile-menu-btn"
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Open menu"
+          >
+            <Menu size={22} />
+          </button>
+          <div className="mobile-topbar-logo">
+            <div className="logo-icon-wrapper mobile">
+              <FileText size={16} color="white" />
+            </div>
+            <div className="mobile-topbar-logo-text">
+              <span className="mobile-topbar-title">DigiPath</span>
+              <span className="mobile-topbar-subtitle">Document System</span>
+            </div>
+          </div>
+        </div>
         <div className="page-content" ref={pageContentRef}>
           {(dataError || saveError) && (
             <div className="page-content-alert" style={{
@@ -243,7 +285,7 @@ const Layout = ({
             title={isNotificationDockOpen ? 'Hide notifications' : 'Show notifications'}
           >
             <Bell size={16} />
-            <span>{notifications.length}</span>
+            <span className="notification-dock-badge">{formatBadgeCount(notifications.length)}</span>
           </button>
 
           {isNotificationDockOpen && (

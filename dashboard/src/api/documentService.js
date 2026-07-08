@@ -23,24 +23,54 @@ const saveToStorage = (key, data) => {
   localStorage.setItem(key, JSON.stringify(data));
 };
 
+// Auth session lives in sessionStorage so it survives page refreshes but is
+// cleared automatically when the browser/tab is closed. That way reopening the
+// system always starts at the login page, even if the user forgot to log out.
+const canUseSession = () => typeof sessionStorage !== 'undefined';
+
 const getAuthToken = () => {
-  if (!canUseStorage()) return null;
-  return localStorage.getItem(STORAGE_KEYS.authToken);
+  if (!canUseSession()) return null;
+  return sessionStorage.getItem(STORAGE_KEYS.authToken);
 };
 
 const setAuthToken = (token) => {
-  if (!canUseStorage()) return;
+  if (!canUseSession()) return;
   if (token) {
-    localStorage.setItem(STORAGE_KEYS.authToken, token);
+    sessionStorage.setItem(STORAGE_KEYS.authToken, token);
   } else {
-    localStorage.removeItem(STORAGE_KEYS.authToken);
+    sessionStorage.removeItem(STORAGE_KEYS.authToken);
+  }
+};
+
+const saveCurrentUser = (user) => {
+  if (!canUseSession()) return;
+  if (user) {
+    sessionStorage.setItem(STORAGE_KEYS.currentUser, JSON.stringify(user));
+  } else {
+    sessionStorage.removeItem(STORAGE_KEYS.currentUser);
+  }
+};
+
+const getCurrentUser = () => {
+  if (!canUseSession()) return null;
+  try {
+    const data = sessionStorage.getItem(STORAGE_KEYS.currentUser);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
   }
 };
 
 const clearAuthSession = () => {
-  if (!canUseStorage()) return;
-  localStorage.removeItem(STORAGE_KEYS.currentUser);
-  localStorage.removeItem(STORAGE_KEYS.authToken);
+  if (canUseSession()) {
+    sessionStorage.removeItem(STORAGE_KEYS.currentUser);
+    sessionStorage.removeItem(STORAGE_KEYS.authToken);
+  }
+  // Clean up any legacy session persisted in localStorage by older versions.
+  if (canUseStorage()) {
+    localStorage.removeItem(STORAGE_KEYS.currentUser);
+    localStorage.removeItem(STORAGE_KEYS.authToken);
+  }
 };
 
 const notifyAuthExpired = () => {
@@ -348,7 +378,7 @@ export const authService = {
     });
     const user = result.user || result;
     setAuthToken(result.token || null);
-    saveToStorage(STORAGE_KEYS.currentUser, user);
+    saveCurrentUser(user);
     clearCachedAppData();
     return user;
   },
@@ -358,13 +388,13 @@ export const authService = {
   },
 
   async getCurrentUser() {
-    return getFromStorage(STORAGE_KEYS.currentUser, null);
+    return getCurrentUser();
   },
 };
 
 export const appDataService = {
   async loadAll() {
-    const currentUser = getFromStorage(STORAGE_KEYS.currentUser, null);
+    const currentUser = getCurrentUser();
     const usersRequest = currentUser?.role === 'Admin' || currentUser?.role === 'Mayor'
       ? userService.getAll()
       : Promise.resolve(currentUser ? [currentUser] : []);

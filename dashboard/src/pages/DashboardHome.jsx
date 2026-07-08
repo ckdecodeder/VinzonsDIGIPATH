@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   FileText,
   ArrowRightLeft,
@@ -114,7 +114,52 @@ const AdminDashboard = ({
 
   const statusTotal = statusCounts.reduce((s, c) => s + c.count, 0);
   const total = statusTotal || 1;
-  let cumulative = 0;
+
+  const [chartReady, setChartReady] = useState(false);
+  const [displayTotal, setDisplayTotal] = useState(0);
+  const [hoveredStatus, setHoveredStatus] = useState(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setChartReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    if (!chartReady) return undefined;
+
+    const duration = 900;
+    const start = performance.now();
+    let rafId = 0;
+
+    const tick = (now) => {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - (1 - progress) ** 3;
+      setDisplayTotal(Math.round(eased * statusTotal));
+      if (progress < 1) rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [chartReady, statusTotal]);
+
+  const circ = 2 * Math.PI * 72;
+  let segmentOffset = 0;
+  const donutSegments = statusCounts.map((seg) => {
+    const pct = (seg.count / total) * 100;
+    const dashLen = (pct / 100) * circ;
+    const dashOff = -(segmentOffset / 100) * circ;
+    segmentOffset += pct;
+    return { ...seg, pct, dashLen, dashOff };
+  });
+
+  const showStatus = (seg) => {
+    setHoveredStatus({
+      label: seg.label,
+      count: seg.count,
+      color: seg.color,
+      pct: seg.pct,
+    });
+  };
 
   const recentTransmissions = [...transmissions]
     .sort((a, b) =>
@@ -260,45 +305,74 @@ const AdminDashboard = ({
             </div>
           </div>
           <div className="chart-donut">
-            <div className="donut-ring">
-              <svg width="230" height="230" viewBox="0 0 190 190">
-                {statusCounts.map((seg, i) => {
-                  const pct = (seg.count / total) * 100;
-                  const circ = 2 * Math.PI * 72;
-                  const dashLen = (pct / 100) * circ;
-                  const dashOff = -(cumulative / 100) * circ;
-                  cumulative += pct;
-                  return (
-                    <circle
-                      key={i}
-                      cx="95"
-                      cy="95"
-                      r="72"
-                      fill="none"
-                      stroke={seg.color}
-                      strokeWidth="16"
-                      strokeDasharray={`${dashLen} ${circ - dashLen}`}
-                      strokeDashoffset={dashOff}
-                      strokeLinecap="round"
-                      onClick={() => openStatusInterface(seg.label)}
-                      style={{ transition: "all 0.5s", cursor: "pointer" }}
-                    />
-                  );
-                })}
+            <div className={`donut-ring ${chartReady ? "donut-ring--ready" : ""}`}>
+              <svg width="230" height="230" viewBox="0 0 190 190" aria-hidden="true">
+                {donutSegments.map((seg, i) => (
+                  <circle
+                    key={seg.label}
+                    className={[
+                      "donut-segment",
+                      hoveredStatus && hoveredStatus.label !== seg.label ? "donut-segment--dimmed" : "",
+                      hoveredStatus?.label === seg.label ? "donut-segment--active" : "",
+                    ].filter(Boolean).join(" ")}
+                    cx="95"
+                    cy="95"
+                    r="72"
+                    fill="none"
+                    stroke={seg.color}
+                    strokeWidth="16"
+                    strokeDasharray={
+                      chartReady ? `${seg.dashLen} ${circ - seg.dashLen}` : `0 ${circ}`
+                    }
+                    strokeDashoffset={chartReady ? seg.dashOff : 0}
+                    strokeLinecap="round"
+                    onClick={() => openStatusInterface(seg.label)}
+                    onMouseEnter={() => showStatus(seg)}
+                    onMouseLeave={() => setHoveredStatus(null)}
+                    style={{
+                      transition: chartReady
+                        ? `stroke-dasharray 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.1}s, stroke-dashoffset 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.1}s, opacity 0.2s ease, stroke-width 0.2s ease`
+                        : "none",
+                    }}
+                  />
+                ))}
               </svg>
-              <div className="donut-center">
-                <span className="donut-total">{statusTotal}</span>
-                <span className="donut-label">Total</span>
+              <div className={`donut-center ${hoveredStatus ? "donut-center--hover" : ""}`}>
+                {hoveredStatus ? (
+                  <>
+                    <span
+                      className="donut-total donut-total--hover"
+                      style={{ color: hoveredStatus.color }}
+                    >
+                      {hoveredStatus.count}
+                    </span>
+                    <span className="donut-label donut-label--hover">{hoveredStatus.label}</span>
+                    <span className="donut-pct">{hoveredStatus.pct.toFixed(0)}%</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="donut-total">{displayTotal}</span>
+                    <span className="donut-label">Total</span>
+                  </>
+                )}
               </div>
             </div>
             <div className="donut-legend">
-              {statusCounts.map((seg, i) => (
+              {donutSegments.map((seg, i) => (
                 <button
-                  key={i}
+                  key={seg.label}
                   type="button"
-                  className="legend-item status-legend-button"
+                  className={[
+                    "legend-item",
+                    "status-legend-button",
+                    chartReady ? "legend-item--visible" : "",
+                    hoveredStatus?.label === seg.label ? "status-legend-button--active" : "",
+                  ].filter(Boolean).join(" ")}
                   onClick={() => openStatusInterface(seg.label)}
+                  onMouseEnter={() => showStatus(seg)}
+                  onMouseLeave={() => setHoveredStatus(null)}
                   title={`Show ${seg.label} documents`}
+                  style={{ animationDelay: `${0.25 + i * 0.07}s` }}
                 >
                   <span
                     className="legend-dot"

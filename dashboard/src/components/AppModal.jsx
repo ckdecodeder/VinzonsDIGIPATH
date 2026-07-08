@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
+import ModalOverlay from './ModalOverlay';
 
 const modalIcons = {
   danger: <XCircle size={24} />,
@@ -18,19 +19,6 @@ const AppModal = ({
   onConfirm,
   onCancel,
 }) => {
-  useEffect(() => {
-    if (!open) return undefined;
-
-    const onKeyDown = (event) => {
-      if (event.key === 'Escape') {
-        (onCancel || onConfirm)?.();
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onCancel, onConfirm]);
-
   if (!open) return null;
 
   const variant = modalIcons[type] ? type : 'info';
@@ -38,7 +26,7 @@ const AppModal = ({
   const handleCancel = () => (onCancel || onConfirm)?.();
 
   return (
-    <div className="modal-overlay app-dialog-overlay" onClick={handleCancel}>
+    <ModalOverlay onClose={handleCancel} overlayClassName="app-dialog-overlay">
       <div
         className={`modal app-dialog app-dialog-${variant}`}
         role="dialog"
@@ -70,7 +58,7 @@ const AppModal = ({
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 };
 

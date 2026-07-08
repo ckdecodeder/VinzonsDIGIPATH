@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, ArrowRight, CheckCircle2, Clock, Eye, EyeOff, FileText, Flag, Loader2, LogIn, MapPin, RefreshCw, Search, X } from 'lucide-react';
 import { authService, trackingService } from '../api/documentService';
+import ModalOverlay from '../components/ModalOverlay';
 
 const LoginPage = ({ onLogin, systemMessage = '' }) => {
   const [username, setUsername] = useState('');
@@ -330,7 +331,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
       </div>
 
       {isTrackingModalOpen && (trackingResult || trackingError) && (
-        <div className="modal-overlay login-tracking-overlay" onClick={() => setIsTrackingModalOpen(false)}>
+        <ModalOverlay overlayClassName="login-tracking-overlay" onClose={() => setIsTrackingModalOpen(false)}>
           <div className="modal login-tracking-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
@@ -432,7 +433,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );

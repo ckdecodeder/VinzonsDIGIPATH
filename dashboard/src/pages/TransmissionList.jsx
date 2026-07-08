@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PageShell from "../components/PageShell";
+import ModalOverlay from "../components/ModalOverlay";
 import {
   ArrowRightLeft,
   Search,
@@ -181,17 +182,18 @@ const TransmissionList = ({
   const filteredTrans = transmissions
     .filter((t) => {
       const doc = documents.find((d) => d.id === t.documentId);
+      const term = search.toLowerCase();
       const matchSearch =
-        (doc?.subject || "").toLowerCase().includes(search.toLowerCase()) ||
-        (doc?.trackingNumber || "")
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        getOfficeName(t.fromOfficeId)
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        getOfficeName(t.toOfficeId)
-          .toLowerCase()
-          .includes(search.toLowerCase());
+        !term ||
+        (doc?.subject || "").toLowerCase().includes(term) ||
+        (doc?.trackingNumber || "").toLowerCase().includes(term) ||
+        getOfficeName(t.fromOfficeId).toLowerCase().includes(term) ||
+        getOfficeName(t.toOfficeId).toLowerCase().includes(term) ||
+        (t.transmissionType || "").toLowerCase().includes(term) ||
+        getUserFullName(t.sentBy).toLowerCase().includes(term) ||
+        (t.receivedBy
+          ? getUserFullName(t.receivedBy).toLowerCase().includes(term)
+          : false);
       const matchType =
         filterType === "All" || t.transmissionType === filterType;
       return matchSearch && matchType;
@@ -328,7 +330,7 @@ const TransmissionList = ({
                 <Search size={16} color="var(--text-muted)" />
                 <input
                   type="text"
-                  placeholder="Search transmissions..."
+                  placeholder="Search by subject, tracking, office, type, or name..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -357,7 +359,7 @@ const TransmissionList = ({
         }
       >
       <div className="table-container">
-        <table>
+        <table className="transmissions-table">
           <thead>
             <tr>
               <th className="transmissions-col-id">ID</th>
@@ -418,10 +420,7 @@ const TransmissionList = ({
                       </div>
                     </td>
                     <td className="transmissions-col-type">
-                      <span
-                        className={`filter-chip active`}
-                        style={{ cursor: "default", fontSize: "0.7rem" }}
-                      >
+                      <span className="transmissions-type-chip">
                         {t.transmissionType}
                       </span>
                     </td>
@@ -528,10 +527,7 @@ const TransmissionList = ({
           const timeline = getTransmissionTimeline(transmission);
 
           return (
-            <div
-              className="modal-overlay"
-              onClick={() => setDetailTransmission(null)}
-            >
+            <ModalOverlay onClose={() => setDetailTransmission(null)}>
               <div
                 className="modal document-detail-modal"
                 onClick={(e) => e.stopPropagation()}
@@ -721,13 +717,13 @@ const TransmissionList = ({
                   </button>
                 </div>
               </div>
-            </div>
+            </ModalOverlay>
           );
         })()}
 
       {/* Form Modal */}
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => setShowForm(false)}>
           <div
             className="modal document-form-modal"
             onClick={(e) => e.stopPropagation()}
@@ -959,7 +955,7 @@ const TransmissionList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );
