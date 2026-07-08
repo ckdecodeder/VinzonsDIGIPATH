@@ -130,6 +130,7 @@ const DeviceModel = sequelize
       type:         { type: DataTypes.TEXT },
       status:       { type: DataTypes.TEXT },
       ip:           { type: DataTypes.TEXT },
+      bridgeUrl:    { type: DataTypes.TEXT },
       location:     { type: DataTypes.TEXT },
       lastActive:   { type: DataTypes.STRING },
       firmware:     { type: DataTypes.TEXT },
@@ -238,9 +239,17 @@ const migrateDocumentTypeCategory = async () => {
   `);
 };
 
+const migrateDeviceBridgeUrl = async () => {
+  await sequelize.query(`
+    ALTER TABLE devices
+    ADD COLUMN IF NOT EXISTS "bridgeUrl" TEXT;
+  `);
+};
+
 const syncModels = async () => {
   if (!sequelize) return;
   await migrateDocumentTypeCategory();
+  await migrateDeviceBridgeUrl();
   // Use sync() without alter — tables were already created correctly by migrate-pg.js
   // alter:true would try to downgrade TEXT → VARCHAR(255), breaking existing data
   await sequelize.sync();

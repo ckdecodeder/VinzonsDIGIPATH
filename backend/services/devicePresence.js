@@ -5,8 +5,44 @@ const {
   appendDocumentTimeline,
   createTimelineEvent,
 } = require('../utils/helpers');
+const { isDeviceWsConnected } = require('../utils/realtime');
 
 const deviceHeartbeatTimeoutMs = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_MS || 12000);
+const scannerBridgePort = String(process.env.SCANNER_BRIDGE_PORT || '8080');
+
+const resolveBridgeUrl = (device, latestHardwareEvent) => {
+  const eventBridge = latestHardwareEvent?.payload?.bridgeUrl;
+  const eventIp = latestHardwareEvent?.payload?.ip;
+  const deviceIp = (eventIp && eventIp !== 'Not reported')
+    ? eventIp
+    : (device?.ip && device.ip !== 'Not reported' ? device.ip : null);
+  const storedBridge = device?.bridgeUrl;
+
+  if (deviceIp) {
+    const ipBridge = `http://${deviceIp}:${scannerBridgePort}`;
+    if (eventBridge) {
+      try {
+        if (new URL(eventBridge).hostname === deviceIp) {
+          return eventBridge;
+        }
+      } catch {
+        // ignore invalid event URL
+      }
+    }
+    if (storedBridge) {
+      try {
+        if (new URL(storedBridge).hostname === deviceIp) {
+          return storedBridge;
+        }
+      } catch {
+        // ignore invalid stored URL
+      }
+    }
+    return ipBridge;
+  }
+
+  return eventBridge || storedBridge || null;
+};
 
 const hardwarePresenceEvents = [
   'device_connected',
@@ -66,12 +102,14 @@ const getDeviceSnapshot = async (deviceId = 'DEV-001') => {
     connected,
     configured: true,
     connectionState: connected ? 'connected' : 'stale_or_disconnected',
+    streamWsConnected: isDeviceWsConnected(deviceId),
     heartbeatTimeoutMs: deviceHeartbeatTimeoutMs,
     lastActive: latestHardwareEvent.timestamp,
     lastSignalAt: latestHardwareEvent.timestamp,
     lastEventType: latestHardwareEvent.eventType,
     payload: latestHardwareEvent.payload,
     streamUrl: latestHardwareEvent.payload?.streamUrl,
+    bridgeUrl: resolveBridgeUrl(device, latestHardwareEvent),
     scanCount: hardwareScanCount,
   };
 };
@@ -137,6 +175,7 @@ const recordHardwareDeviceEvent = async (req, eventType) => {
         type: req.body.type || 'Scanner',
         status,
         ip: req.body.ip || req.ip,
+        bridgeUrl: req.body.bridgeUrl || req.body.payload?.bridgeUrl,
         location: req.body.location,
         lastActive: event.timestamp,
         firmware: req.body.firmware,

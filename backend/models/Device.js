@@ -7,6 +7,7 @@ const deviceSchema = new mongoose.Schema({
   type: { type: String },
   status: { type: String, enum: ['Online', 'Offline', 'Maintenance'], default: 'Offline' },
   ip: { type: String },
+  bridgeUrl: { type: String },
   location: { type: String },
   lastActive: { type: String },
   firmware: { type: String },

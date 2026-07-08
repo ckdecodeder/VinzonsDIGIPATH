@@ -5,10 +5,21 @@ const getAuthToken = () => {
   return localStorage.getItem('dp_authToken');
 };
 
-export const getWsUrl = () => {
-  if (typeof window === 'undefined') return 'ws://127.0.0.1:5000/ws';
+const isLocalViteDev = () => {
+  if (typeof window === 'undefined') return false;
+  const { hostname, port } = window.location;
+  const onDevServer = port === '5173' || port === '4173';
+  const onLoopback = hostname === 'localhost' || hostname === '127.0.0.1';
+  const onLan = /^192\.168\.|^10\.|^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
+  return onDevServer && (onLoopback || onLan);
+};
 
-  const apiBase = getApiBase();
+const isLocalApiBase = (apiBase = '') => (
+  apiBase.startsWith('/')
+  || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(apiBase)
+);
+
+const apiBaseToWsUrl = (apiBase) => {
   if (apiBase.startsWith('/')) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/ws`;
@@ -22,6 +33,27 @@ export const getWsUrl = () => {
     return `ws://${root.slice('http://'.length)}/ws`;
   }
   return `ws://${root}/ws`;
+};
+
+export const getWsUrl = () => {
+  if (typeof window === 'undefined') return 'ws://127.0.0.1:5000/ws';
+
+  const explicit = import.meta.env.VITE_WS_URL?.trim();
+  if (explicit) {
+    const normalized = explicit.replace(/\/$/, '');
+    return normalized.endsWith('/ws') ? normalized : `${normalized}/ws`;
+  }
+
+  const apiBase = getApiBase();
+
+  // Local Vite + local API: proxy WS to laptop backend.
+  if (isLocalViteDev() && isLocalApiBase(apiBase)) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws`;
+  }
+
+  // Remote/tunnel API: use the SAME public WS host as the Pi (required for camera relay).
+  return apiBaseToWsUrl(apiBase);
 };
 
 export class RealtimeClient {
@@ -42,7 +74,11 @@ export class RealtimeClient {
     this.shouldConnect = true;
     this.clearReconnect();
 
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    if (this.ws?.readyState === WebSocket.CONNECTING) {
       return;
     }
 
@@ -107,9 +143,21 @@ export class RealtimeClient {
     this.clearReconnect();
     this.connected = false;
     this.authenticated = false;
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+
+    const ws = this.ws;
+    this.ws = null;
+    if (!ws) return;
+
+    ws.onclose = null;
+    ws.onerror = null;
+
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.close(1000, 'Client disconnect');
+      return;
+    }
+
+    if (ws.readyState === WebSocket.CONNECTING) {
+      ws.onopen = () => ws.close(1000, 'Client disconnect');
     }
   }
 

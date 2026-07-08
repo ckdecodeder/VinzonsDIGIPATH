@@ -1,15 +1,14 @@
 """
-VinzonsDIGIPATH - Raspberry Pi Scanner Bridge with MJPEG Streaming
-=================================================================
+VinzonsDIGIPATH - Raspberry Pi Scanner Bridge
+=============================================
 This script runs on the Raspberry Pi 3B and provides:
-1. MJPEG live camera stream (port 8080) for the web app
-2. Command polling worker - listens for SCAN commands from the web app
-3. Background upload worker - uploads scanned documents to the backend
+1. WebSocket camera stream relay to the backend (primary preview path)
+2. Local bridge HTTP API on port 8080 (/status, /connect, /snapshot.jpg)
+3. Command handling and background upload to the backend
 4. Automatic device connection and heartbeat reporting
 
 Install requirements:
-  sudo apt install -y tesseract-ocr
-  pip3 install picamera2 pytesseract Pillow requests
+  sudo bash install-pi-deps.sh
 
 Configuration (pick one):
   1. Create bridge.env next to this script (easiest for Geany / double-click runs)
@@ -18,11 +17,13 @@ Configuration (pick one):
 
 See bridge.env.example for the settings to copy.
 Set DIGIPATH_AUTO_INSTALL=0 to skip automatic dependency install on startup.
+Set DIGIPATH_ENABLE_MJPEG_HTTP=1 only if you still want /stream.mjpg locally.
 """
 
 import importlib
 import importlib.util
 import os
+import shutil
 import sys
 import subprocess
 
@@ -44,6 +45,7 @@ APT_PACKAGES = (
     "python3-opencv",
     "python3-numpy",
     "python3-picamera2",
+    "python3-gpiozero",
     "tesseract-ocr",
     "rpicam-apps",
     "libgl1",
@@ -58,11 +60,45 @@ def _module_available(module_name):
 def _run_command(cmd, label):
     print(f"[Setup] {label}...")
     try:
-        subprocess.run(cmd, check=True)
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        if result.stdout.strip():
+            print(result.stdout.strip())
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError) as err:
+    except subprocess.CalledProcessError as err:
+        detail = (err.stderr or err.stdout or str(err)).strip()
+        print(f"[Setup] Failed: {detail or err}")
+        return False
+    except FileNotFoundError as err:
         print(f"[Setup] Failed: {err}")
         return False
+
+
+def _is_root():
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _can_passwordless_sudo():
+    if not shutil.which("sudo"):
+        return False
+    try:
+        return subprocess.run(
+            ["sudo", "-n", "true"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).returncode == 0
+    except (subprocess.SubprocessError, OSError):
+        return False
+
+
+def _pip_install(packages):
+    if not packages:
+        return True
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *packages]
+    in_venv = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    if sys.platform.startswith("linux") and not in_venv:
+        pip_cmd.append("--break-system-packages")
+    return _run_command(pip_cmd, f"Installing pip packages: {', '.join(packages)}")
 
 
 def ensure_dependencies():
@@ -72,29 +108,50 @@ def ensure_dependencies():
         return
 
     missing_pip = [package for module, package in PIP_PACKAGES if not _module_available(module)]
-    if missing_pip:
-        pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *missing_pip]
-        if sys.platform.startswith("linux"):
-            pip_cmd.append("--break-system-packages")
-        _run_command(pip_cmd, f"Installing pip packages: {', '.join(missing_pip)}")
+    _pip_install(missing_pip)
 
-    import shutil as _shutil
     needs_apt = (
         not _module_available("numpy")
         or not _module_available("cv2")
         or not _module_available("picamera2")
         or not _module_available("PIL")
     )
-    if needs_apt and _shutil.which("apt-get"):
-        _run_command(["sudo", "apt-get", "update"], "Updating apt package index")
-        _run_command(
-            ["sudo", "apt-get", "install", "-y", *APT_PACKAGES],
-            "Installing apt packages for camera, numpy, and OpenCV",
-        )
+    if not needs_apt:
+        return
 
     local_installer = os.path.join(SCRIPT_DIR, "install-pi-deps.sh")
-    if needs_apt and os.path.isfile(local_installer) and not _shutil.which("apt-get"):
-        print(f"[Setup] Run manually: bash {local_installer}")
+    can_install_system = _is_root() or _can_passwordless_sudo()
+
+    if os.path.isfile(local_installer) and can_install_system:
+        installer_cmd = ["bash", local_installer] if _is_root() else ["sudo", "-n", "bash", local_installer]
+        if _run_command(installer_cmd, "Running install-pi-deps.sh"):
+            return
+
+    if shutil.which("apt-get") and can_install_system:
+        apt_prefix = [] if _is_root() else ["sudo", "-n"]
+        if _run_command([*apt_prefix, "apt-get", "update"], "Updating apt package index"):
+            _run_command(
+                [*apt_prefix, "apt-get", "install", "-y", *APT_PACKAGES],
+                "Installing apt packages for camera, numpy, and OpenCV",
+            )
+        return
+
+    missing_system = []
+    if not _module_available("numpy"):
+        missing_system.append("python3-numpy")
+    if not _module_available("cv2"):
+        missing_system.append("python3-opencv")
+    if not _module_available("picamera2"):
+        missing_system.append("python3-picamera2")
+    if not _module_available("PIL"):
+        missing_system.append("python3-pil")
+
+    print("[Setup] Missing system packages:", ", ".join(missing_system) or "unknown")
+    print("[Setup] Auto-install needs root/sudo. Run once on the Pi:")
+    if os.path.isfile(local_installer):
+        print(f"        sudo bash {local_installer}")
+    else:
+        print(f"        sudo apt-get install -y {' '.join(APT_PACKAGES)}")
 
 
 def load_optional_modules():
@@ -150,7 +207,6 @@ import re
 import io
 import atexit
 import platform
-import shutil
 import socket
 import tempfile
 from datetime import datetime
@@ -219,6 +275,8 @@ WS_AVAILABLE = False
 load_local_env()
 ensure_dependencies()
 
+from motor_controller import motor_controller
+
 import requests
 
 load_optional_modules()
@@ -236,7 +294,7 @@ HEARTBEAT_INTERVAL_SECS = int(os.environ.get("DIGIPATH_HEARTBEAT_INTERVAL_SECS",
 DEVICE_NAME = os.environ.get("DIGIPATH_DEVICE_NAME", "Physical Document Scanner")
 DEVICE_MODEL = os.environ.get("DIGIPATH_DEVICE_MODEL", "Raspberry Pi Scanner Bridge")
 DEVICE_LOCATION = os.environ.get("DIGIPATH_DEVICE_LOCATION", "Reception Area")
-BRIDGE_VERSION = "bridge-1.2"
+BRIDGE_VERSION = "bridge-1.8"
 DEVICE_FIRMWARE = os.environ.get("DIGIPATH_DEVICE_FIRMWARE", BRIDGE_VERSION)
 DEVICE_SERIAL = os.environ.get("DIGIPATH_DEVICE_SERIAL", socket.gethostname())
 LOCAL_DB = "local_scans.db"
@@ -245,18 +303,26 @@ DUMMY_IMAGE_PATH = "dummy_test.jpg"
 
 # Camera settings
 CAMERA_RESOLUTION = (3280, 2464)     # Max resolution for Pi Camera v2 (capture)
-STREAM_RESOLUTION = (960, 540)       # Lower resolution = faster live stream
+STREAM_RESOLUTION = (640, 360)       # Lower resolution = faster live stream
 CAMERA_WARMUP_SECS = 1
 STREAM_PORT = 8080                   # MJPEG stream port
 STREAM_PORT = int(os.environ.get("DIGIPATH_STREAM_PORT", str(STREAM_PORT)))
-STREAM_FPS = max(1, int(os.environ.get("DIGIPATH_STREAM_FPS", "20")))
-STREAM_JPEG_QUALITY = max(40, min(int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALITY", "78")), 95))
+STREAM_FPS = max(1, int(os.environ.get("DIGIPATH_STREAM_FPS", "10")))
+STREAM_JPEG_QUALITY = max(40, min(int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALITY", "82")), 95))
 _stream_width = int(os.environ.get("DIGIPATH_STREAM_WIDTH", str(STREAM_RESOLUTION[0])))
 _stream_height = int(os.environ.get("DIGIPATH_STREAM_HEIGHT", str(STREAM_RESOLUTION[1])))
 STREAM_RESOLUTION = (_stream_width, _stream_height)
+STREAM_COLOR_MODE = os.environ.get("DIGIPATH_STREAM_COLOR_MODE", "jpeg").strip().lower()
+CAMERA_AWB_MODE = os.environ.get("DIGIPATH_CAMERA_AWB", "auto").strip().lower()
+CAMERA_SATURATION = os.environ.get("DIGIPATH_CAMERA_SATURATION", "").strip()
+CAMERA_BRIGHTNESS = os.environ.get("DIGIPATH_CAMERA_BRIGHTNESS", "").strip()
+CAMERA_COLOUR_GAIN_RED = os.environ.get("DIGIPATH_CAMERA_COLOUR_GAIN_RED", "").strip()
+CAMERA_COLOUR_GAIN_BLUE = os.environ.get("DIGIPATH_CAMERA_COLOUR_GAIN_BLUE", "").strip()
 OPENCV_CAMERA_INDEX = int(os.environ.get("DIGIPATH_OPENCV_CAMERA_INDEX", "0"))
 ENABLE_OPENCV_CAMERA = os.environ.get("DIGIPATH_ENABLE_OPENCV_CAMERA", "auto").lower()
 USE_WEBSOCKET = os.environ.get("DIGIPATH_USE_WEBSOCKET", "1").strip().lower() not in ("0", "false", "no", "off")
+_mjpeg_default = "1"
+ENABLE_MJPEG_HTTP = os.environ.get("DIGIPATH_ENABLE_MJPEG_HTTP", _mjpeg_default).strip().lower() not in ("0", "false", "no", "off")
 
 if not os.path.exists(SCANS_DIR):
     os.makedirs(SCANS_DIR)
@@ -354,12 +420,15 @@ def get_device_payload(event_type):
     load_average = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0
     cpu_usage = min(round((load_average / max(os.cpu_count() or 1, 1)) * 100), 100)
 
+    bridge_url = f"http://{get_local_ip()}:{STREAM_PORT}"
+
     return {
         "deviceId": DEVICE_ID,
         "name": DEVICE_NAME,
         "model": DEVICE_MODEL,
         "type": "Scanner",
         "ip": get_local_ip(),
+        "bridgeUrl": bridge_url,
         "location": DEVICE_LOCATION,
         "firmware": DEVICE_FIRMWARE,
         "serialNumber": DEVICE_SERIAL,
@@ -380,7 +449,10 @@ def get_device_payload(event_type):
             "opencvCameraIndex": OPENCV_CAMERA_INDEX,
             "cameraError": last_camera_error,
             "lastCameraSuccessAt": last_camera_success_at,
-            "streamUrl": f"http://{get_local_ip()}:{STREAM_PORT}/stream.mjpg",
+            "bridgeUrl": bridge_url,
+            "streamUrl": get_preview_stream_url(),
+            "streamMode": get_preview_stream_mode(),
+            "websocketConnected": ws_connected,
             "diskUsage": disk_usage,
             "cpuLoad": round(load_average, 2),
             "cpuUsage": cpu_usage,
@@ -390,6 +462,9 @@ def get_device_payload(event_type):
     }
 
 def get_realtime_ws_url():
+    override = os.environ.get("DIGIPATH_REALTIME_WS_URL", "").strip()
+    if override:
+        return override.rstrip("/")
     base = BACKEND_BASE_URL.rstrip("/")
     if base.endswith("/api"):
         base = base[:-4]
@@ -398,6 +473,20 @@ def get_realtime_ws_url():
     if base.startswith("http://"):
         return "ws://" + base[len("http://"):] + "/ws/device"
     return f"ws://{base}/ws/device"
+
+
+def get_preview_stream_url():
+    if USE_WEBSOCKET:
+        return get_realtime_ws_url()
+    return f"http://{get_local_ip()}:{STREAM_PORT}/stream.mjpg"
+
+
+def get_preview_stream_mode():
+    if USE_WEBSOCKET and WS_AVAILABLE:
+        return "websocket"
+    if ENABLE_MJPEG_HTTP:
+        return "mjpeg"
+    return "unavailable"
 
 
 def send_ws_json(payload):
@@ -459,28 +548,40 @@ def post_device_presence(event_type):
     response.raise_for_status()
     return response.json()
 
+
+def report_device_presence(event_type):
+    """Send connect/heartbeat/disconnect. WebSocket for realtime + HTTP to persist in backend DB."""
+    global connected_once, last_presence_ok, last_presence_error, last_presence_at
+
+    ws_ok = False
+    if USE_WEBSOCKET and WS_AVAILABLE and ws_connected:
+        ws_ok = send_ws_presence(event_type)
+
+    # Always persist via HTTP so dashboard Connected status stays fresh even if WS ack is delayed.
+    post_device_presence(event_type)
+
+    if event_type == "device_connected":
+        connected_once = True
+    elif event_type == "device_disconnected":
+        connected_once = False
+
+    last_presence_ok = True
+    last_presence_error = ""
+    last_presence_at = datetime.now().isoformat()
+    transport = "websocket+http" if ws_ok else "http"
+    print(f"[Device] {event_type} sent via {transport}.")
+    return True
+
+
 def device_presence_worker():
     global connected_once, last_presence_ok, last_presence_error, last_presence_at, ws_connected_once
 
     while True:
         try:
-            use_ws = USE_WEBSOCKET and WS_AVAILABLE and ws_connected
             if not connected_once and not ws_connected_once:
-                if use_ws:
-                    send_ws_presence("device_connected")
-                else:
-                    post_device_presence("device_connected")
-                connected_once = True
-                print("[Device] Auto-connected to backend.")
+                report_device_presence("device_connected")
             else:
-                if use_ws:
-                    send_ws_presence("device_heartbeat")
-                else:
-                    post_device_presence("device_heartbeat")
-                print("[Device] Heartbeat sent.")
-            last_presence_ok = True
-            last_presence_error = ""
-            last_presence_at = datetime.now().isoformat()
+                report_device_presence("device_heartbeat")
         except Exception as e:
             connected_once = False
             ws_connected_once = False
@@ -491,6 +592,7 @@ def device_presence_worker():
 
         time.sleep(HEARTBEAT_INTERVAL_SECS)
 
+
 def send_disconnect():
     global connected_once, last_presence_ok, last_presence_error, last_presence_at
 
@@ -498,11 +600,7 @@ def send_disconnect():
         return
 
     try:
-        post_device_presence("device_disconnected")
-        connected_once = False
-        last_presence_ok = True
-        last_presence_error = ""
-        last_presence_at = datetime.now().isoformat()
+        report_device_presence("device_disconnected")
         print("[Device] Disconnect event sent.")
     except Exception as e:
         last_presence_ok = False
@@ -615,19 +713,12 @@ def init_camera(retries=3, retry_delay=2.0):
 
         try:
             camera = Picamera2()
-            try:
-                config = camera.create_preview_configuration(
-                    main={"size": STREAM_RESOLUTION, "format": "RGB888"},
-                    controls={"FrameRate": float(STREAM_FPS)},
-                )
-            except Exception:
-                config = camera.create_preview_configuration(
-                    main={"size": STREAM_RESOLUTION, "format": "RGB888"},
-                )
+            config = build_preview_configuration()
             camera.configure(config)
             camera.start()
             time.sleep(CAMERA_WARMUP_SECS)
-            print(f"[Camera] Initialized at {STREAM_RESOLUTION} @ {STREAM_FPS}fps for streaming.")
+            apply_camera_controls()
+            print(f"[Camera] Initialized at {STREAM_RESOLUTION} @ {STREAM_FPS}fps (AWB={CAMERA_AWB_MODE}, stream={STREAM_COLOR_MODE}).")
             mark_camera_success()
             return True
         except Exception as e:
@@ -640,14 +731,198 @@ def init_camera(retries=3, retry_delay=2.0):
     print("[Camera] Camera auto-start failed. Check ribbon cable, camera enable, and that only one bridge instance is running.")
     return False
 
+def build_isp_controls():
+    """libcamera ISP controls for natural colour (fixes blue/yellow cast on stream)."""
+    controls = {"FrameRate": float(STREAM_FPS)}
+    try:
+        from libcamera import controls as lc
+
+        awb_map = {
+            "auto": lc.AwbModeEnum.Auto,
+            "daylight": lc.AwbModeEnum.Daylight,
+            "cloudy": lc.AwbModeEnum.Cloudy,
+            "shade": lc.AwbModeEnum.Shade,
+            "tungsten": lc.AwbModeEnum.Tungsten,
+            "fluorescent": lc.AwbModeEnum.Fluorescent,
+            "indoor": lc.AwbModeEnum.Indoor,
+        }
+        if CAMERA_AWB_MODE in awb_map:
+            controls["AwbMode"] = awb_map[CAMERA_AWB_MODE]
+    except Exception:
+        pass
+
+    if CAMERA_SATURATION:
+        try:
+            controls["Saturation"] = float(CAMERA_SATURATION)
+        except ValueError:
+            pass
+    if CAMERA_BRIGHTNESS:
+        try:
+            controls["Brightness"] = float(CAMERA_BRIGHTNESS)
+        except ValueError:
+            pass
+    if CAMERA_COLOUR_GAIN_RED and CAMERA_COLOUR_GAIN_BLUE:
+        try:
+            controls["AwbEnable"] = False
+            controls["ColourGains"] = (float(CAMERA_COLOUR_GAIN_RED), float(CAMERA_COLOUR_GAIN_BLUE))
+        except ValueError:
+            pass
+
+    return controls
+
+
+def apply_camera_controls():
+    global camera
+    if not camera:
+        return
+    controls = build_isp_controls()
+    if not controls:
+        return
+    try:
+        camera.set_controls(controls)
+    except Exception as err:
+        print(f"[Camera] Control apply warning: {err}")
+
+
+def build_preview_configuration():
+    controls = build_isp_controls()
+    try:
+        return camera.create_preview_configuration(
+            main={"size": STREAM_RESOLUTION, "format": "RGB888"},
+            controls=controls,
+        )
+    except Exception:
+        return camera.create_preview_configuration(
+            main={"size": STREAM_RESOLUTION, "format": "RGB888"},
+        )
+
+def restore_stream_configuration():
+    global camera
+    if not camera:
+        return False
+    preview_config = build_preview_configuration()
+    camera.stop()
+    camera.configure(preview_config)
+    camera.start()
+    time.sleep(CAMERA_WARMUP_SECS)
+    apply_camera_controls()
+    return True
+
+def release_picamera2():
+    global camera
+    with camera_lock:
+        if not camera:
+            return
+        try:
+            camera.stop()
+            camera.close()
+        except Exception as err:
+            print(f"[Camera] Release error: {err}")
+        camera = None
+    time.sleep(0.6)
+
+def wait_for_stream_idle(timeout_secs=2.0):
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
+        if not is_capturing:
+            acquired = camera_lock.acquire(timeout=0.05)
+            if acquired:
+                camera_lock.release()
+                return True
+        time.sleep(0.05)
+    return False
+
+def capture_via_picamera2_still(file_path):
+    global camera, is_capturing, last_camera_error
+    if not camera:
+        return False
+
+    is_capturing = True
+    wait_for_stream_idle()
+
+    try:
+        with camera_lock:
+            camera.stop()
+            still_config = camera.create_still_configuration(
+                main={"size": CAMERA_RESOLUTION, "format": "RGB888"},
+            )
+            camera.configure(still_config)
+            camera.start()
+            time.sleep(0.6)
+            camera.capture_file(file_path)
+            restore_stream_configuration()
+        mark_camera_success()
+        print(f"[Scanner] Captured via picamera2: {file_path}")
+        return True
+    except Exception as err:
+        last_camera_error = f"picamera2 capture error: {err}"
+        print(f"[Scanner] {last_camera_error}")
+        try:
+            with camera_lock:
+                if camera:
+                    restore_stream_configuration()
+        except Exception:
+            pass
+        return False
+    finally:
+        is_capturing = False
+
+def capture_via_camera_cli(file_path):
+    global is_capturing, last_camera_error
+    camera_cli = get_camera_cli()
+    if not camera_cli:
+        return False
+
+    is_capturing = True
+    wait_for_stream_idle()
+    release_picamera2()
+    try:
+        result = subprocess.run([
+            camera_cli, '-o', file_path,
+            '--width', str(CAMERA_RESOLUTION[0]),
+            '--height', str(CAMERA_RESOLUTION[1]),
+            '--nopreview', '-t', str(max(CAMERA_WARMUP_SECS * 1000, 1200)),
+        ], capture_output=True, text=True, timeout=20)
+        if result.returncode == 0 and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            mark_camera_success()
+            print(f"[Scanner] Captured via {camera_cli}: {file_path}")
+            return True
+        error = (result.stderr or result.stdout or f"{camera_cli} returned {result.returncode}").strip()
+        print(f"[Scanner] {camera_cli} error: {error}")
+        last_camera_error = f"{camera_cli} capture error: {error}"
+        return False
+    except (FileNotFoundError, subprocess.TimeoutExpired) as err:
+        last_camera_error = f"{camera_cli} capture failed: {err}"
+        print(f"[Scanner] {last_camera_error}")
+        return False
+    finally:
+        is_capturing = False
+        if CAMERA_AVAILABLE and not camera:
+            init_camera(retries=2, retry_delay=1.0)
+
 def encode_stream_jpeg(image_array):
+    """Encode RGB888 numpy frame to JPEG without swapping red/blue channels."""
+    if OCR_AVAILABLE and image_array is not None:
+        try:
+            if len(image_array.shape) == 3 and image_array.shape[2] >= 3:
+                rgb = image_array[:, :, :3]
+                if CV_AVAILABLE and rgb.dtype != np.uint8:
+                    rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+                img = Image.fromarray(rgb, mode="RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=STREAM_JPEG_QUALITY, optimize=True)
+                return buf.getvalue()
+        except Exception:
+            pass
+
     if CV_AVAILABLE:
         try:
-            if len(image_array.shape) == 3 and image_array.shape[2] == 3:
-                image_array = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+            frame = image_array
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             ok, encoded = cv2.imencode(
                 ".jpg",
-                image_array,
+                frame,
                 [cv2.IMWRITE_JPEG_QUALITY, STREAM_JPEG_QUALITY, cv2.IMWRITE_JPEG_OPTIMIZE, 1],
             )
             if ok:
@@ -655,13 +930,16 @@ def encode_stream_jpeg(image_array):
         except Exception:
             pass
 
-    if OCR_AVAILABLE:
-        img = Image.fromarray(image_array)
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=STREAM_JPEG_QUALITY, optimize=True)
-        return buf.getvalue()
-
     return None
+
+
+def capture_stream_jpeg_from_camera():
+    """Use libcamera JPEG encoder (ISP colour correction) — most accurate colours."""
+    stream = io.BytesIO()
+    camera.capture_file(stream, format="jpeg")
+    frame = stream.getvalue()
+    return frame if frame else None
+
 
 def capture_stream_frame():
     global last_camera_error
@@ -672,13 +950,19 @@ def capture_stream_frame():
     if camera:
         try:
             with camera_lock:
-                image_array = camera.capture_array()
-            frame = encode_stream_jpeg(image_array)
+                if is_capturing:
+                    return None
+                if STREAM_COLOR_MODE in ("jpeg", "isp", "native"):
+                    frame = capture_stream_jpeg_from_camera()
+                else:
+                    image_array = camera.capture_array()
+                    frame = encode_stream_jpeg(image_array)
             if frame:
                 mark_camera_success()
                 return frame
         except Exception as e:
             last_camera_error = f"stream frame error: {e}"
+        return None
 
     frame, _ = capture_preview_frame()
     return frame
@@ -706,6 +990,8 @@ def capture_preview_frame():
     if camera and not is_capturing:
         try:
             with camera_lock:
+                if is_capturing:
+                    return None, "Camera is busy capturing a scan."
                 stream = io.BytesIO()
                 camera.capture_file(stream, format='jpeg')
                 frame = stream.getvalue()
@@ -715,6 +1001,7 @@ def capture_preview_frame():
         except Exception as e:
             last_camera_error = f"picamera2 preview error: {e}"
             print(f"[Preview] {last_camera_error}")
+        return None, last_camera_error or "picamera2 preview unavailable."
 
     camera_cli = get_camera_cli()
     if not camera_cli:
@@ -899,7 +1186,7 @@ def auto_crop_document(image_path):
 
 # ================= DOCUMENT CAPTURE (HIGH-RES) =================
 def scan_document():
-    global is_capturing
+    global is_capturing, last_camera_error
     print("\n[Scanner] Capturing document...")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_name = f"scan_{timestamp}.jpg"
@@ -907,68 +1194,17 @@ def scan_document():
 
     captured = False
 
-    # Method 1: Use the running picamera2 instance
-    if CAMERA_AVAILABLE and camera:
-        try:
-            is_capturing = True
-            time.sleep(0.3)  # Let stream pause
-
-            with camera_lock:
-                # Switch to high-res for capture
-                camera.stop()
-                hi_config = camera.create_still_configuration(
-                    main={"size": CAMERA_RESOLUTION, "format": "RGB888"}
-                )
-                camera.configure(hi_config)
-                camera.start()
-                time.sleep(0.5)  # Reduced settling time
-                camera.capture_file(file_path)
-
-                # Switch back to stream resolution
-                camera.stop()
-                lo_config = camera.create_still_configuration(
-                    main={"size": STREAM_RESOLUTION, "format": "RGB888"}
-                )
-                camera.configure(lo_config)
-                camera.start()
-
-            is_capturing = False
-            captured = True
-            mark_camera_success()
-            print(f"[Scanner] Captured via picamera2: {file_path}")
-            
-            # Apply automatic cropping
+    if camera:
+        captured = capture_via_picamera2_still(file_path)
+        if captured:
             file_path = auto_crop_document(file_path)
-        except Exception as e:
-            is_capturing = False
-            print(f"[Scanner] picamera2 capture error: {e}")
 
-    # Method 2: Raspberry Pi camera CLI fallback
-    if not captured:
-        camera_cli = get_camera_cli()
-        if not camera_cli:
-            print("[Scanner] No camera CLI available. Install rpicam-apps or libcamera-apps.")
-        else:
-            try:
-                result = subprocess.run([
-                    camera_cli, '-o', file_path,
-                    '--width', str(CAMERA_RESOLUTION[0]),
-                    '--height', str(CAMERA_RESOLUTION[1]),
-                    '--nopreview', '-t', str(CAMERA_WARMUP_SECS * 1000),
-                ], capture_output=True, text=True, timeout=15)
-                if result.returncode == 0 and os.path.exists(file_path):
-                    captured = True
-                    mark_camera_success()
-                    print(f"[Scanner] Captured via {camera_cli}: {file_path}")
-                    # Apply automatic cropping
-                    file_path = auto_crop_document(file_path)
-                else:
-                    print(f"[Scanner] {camera_cli} error: {result.stderr}")
-            except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-                print(f"[Scanner] Camera CLI not available: {e}")
+    if not captured and get_camera_cli():
+        captured = capture_via_camera_cli(file_path)
+        if captured:
+            file_path = auto_crop_document(file_path)
 
-    # Method 3: OpenCV webcam/USB camera fallback.
-    if not captured:
+    if not captured and should_try_opencv_camera():
         result_path, error = capture_opencv_frame(
             file_path=file_path,
             width=CAMERA_RESOLUTION[0],
@@ -1022,7 +1258,7 @@ def mark_scan_status(scan_id, status):
     conn.commit()
     conn.close()
 
-# ================= MJPEG STREAMING SERVER =================
+# ================= LOCAL BRIDGE HTTP SERVER =================
 class StreamHandler(BaseHTTPRequestHandler):
     def send_json(self, status_code, payload):
         import json
@@ -1038,6 +1274,15 @@ class StreamHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
 
         if path == '/stream.mjpg':
+            if not ENABLE_MJPEG_HTTP:
+                self.send_json(410, {
+                    "ok": False,
+                    "message": "MJPEG preview is disabled. Use WebSocket stream via the backend.",
+                    "streamMode": get_preview_stream_mode(),
+                    "streamUrl": get_preview_stream_url(),
+                })
+                return
+
             self.send_response(200)
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -1073,7 +1318,13 @@ class StreamHandler(BaseHTTPRequestHandler):
                 print(f"[Stream] Client disconnected: {e}")
 
         elif path == '/snapshot.jpg':
-            frame, error = capture_preview_frame()
+            frame = None
+            error = ""
+            with latest_stream_lock:
+                if latest_stream_frame:
+                    frame = latest_stream_frame
+            if not frame:
+                frame, error = capture_preview_frame()
             if frame:
                 self.send_response(200)
                 self.send_header('Content-Type', 'image/jpeg')
@@ -1105,13 +1356,19 @@ class StreamHandler(BaseHTTPRequestHandler):
                 "capturing": is_capturing,
                 "deviceId": DEVICE_ID,
                 "backendBaseUrl": BACKEND_BASE_URL,
+                "realtimeWsUrl": get_realtime_ws_url(),
                 "bridgeUrl": f"http://{get_local_ip()}:{STREAM_PORT}",
-                "streamUrl": f"http://{get_local_ip()}:{STREAM_PORT}/stream.mjpg",
-                "backendConnected": last_presence_ok,
+                "streamUrl": get_preview_stream_url(),
+                "streamMode": get_preview_stream_mode(),
+                "mjpegEnabled": ENABLE_MJPEG_HTTP,
+                "websocketEnabled": USE_WEBSOCKET and WS_AVAILABLE,
+                "websocketConnected": ws_connected,
+                "backendConnected": last_presence_ok and (ws_connected if USE_WEBSOCKET and WS_AVAILABLE else True),
                 "autoConnected": connected_once,
                 "lastPresenceAt": last_presence_at,
                 "lastPresenceError": last_presence_error,
                 "lastCommandError": last_command_error,
+                "motor": motor_controller.status(),
             }
             import json
             self.wfile.write(json.dumps(status).encode())
@@ -1120,9 +1377,20 @@ class StreamHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html')
             self.send_header('Access-Control-Allow-Origin', '*')
             self.end_headers()
-            html = f'''<html><body style="margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh">
-            <img src="/stream.mjpg" style="max-width:100%;max-height:100vh" />
-            </body></html>'''
+            preview_mode = get_preview_stream_mode()
+            preview_url = get_preview_stream_url()
+            if ENABLE_MJPEG_HTTP:
+                html = f'''<html><body style="margin:0;background:#000;display:flex;justify-content:center;align-items:center;height:100vh">
+                <img src="/stream.mjpg" style="max-width:100%;max-height:100vh" />
+                </body></html>'''
+            else:
+                html = f'''<html><body style="font-family:sans-serif;padding:2rem;background:#0f172a;color:#e2e8f0">
+                <h1>DigiPath Pi Bridge</h1>
+                <p><strong>Preview mode:</strong> {preview_mode}</p>
+                <p><strong>Stream endpoint:</strong> {preview_url}</p>
+                <p><strong>Status:</strong> <a href="/status" style="color:#38bdf8">/status</a></p>
+                <p>MJPEG is disabled. Dashboard preview uses WebSocket through the backend.</p>
+                </body></html>'''
             self.wfile.write(html.encode())
 
     def do_POST(self):
@@ -1130,12 +1398,8 @@ class StreamHandler(BaseHTTPRequestHandler):
 
         if self.path == '/connect':
             try:
-                post_device_presence("device_connected")
-                connected_once = True
-                last_presence_ok = True
-                last_presence_error = ""
-                last_presence_at = datetime.now().isoformat()
-                self.send_json(200, {"ok": True, "event": "device_connected"})
+                report_device_presence("device_connected")
+                self.send_json(200, {"ok": True, "event": "device_connected", "transport": "websocket" if USE_WEBSOCKET and WS_AVAILABLE else "http"})
             except Exception as e:
                 last_presence_ok = False
                 last_presence_error = str(e)
@@ -1143,12 +1407,8 @@ class StreamHandler(BaseHTTPRequestHandler):
                 self.send_json(502, {"ok": False, "event": "device_connected", "message": f"Connect failed: {e}"})
         elif self.path == '/heartbeat':
             try:
-                post_device_presence("device_heartbeat")
-                connected_once = True
-                last_presence_ok = True
-                last_presence_error = ""
-                last_presence_at = datetime.now().isoformat()
-                self.send_json(200, {"ok": True, "event": "device_heartbeat"})
+                report_device_presence("device_heartbeat")
+                self.send_json(200, {"ok": True, "event": "device_heartbeat", "transport": "websocket" if USE_WEBSOCKET and WS_AVAILABLE else "http"})
             except Exception as e:
                 last_presence_ok = False
                 last_presence_error = str(e)
@@ -1156,12 +1416,8 @@ class StreamHandler(BaseHTTPRequestHandler):
                 self.send_json(502, {"ok": False, "event": "device_heartbeat", "message": f"Heartbeat failed: {e}"})
         elif self.path == '/disconnect':
             try:
-                post_device_presence("device_disconnected")
-                connected_once = False
-                last_presence_ok = True
-                last_presence_error = ""
-                last_presence_at = datetime.now().isoformat()
-                self.send_json(200, {"ok": True, "event": "device_disconnected"})
+                report_device_presence("device_disconnected")
+                self.send_json(200, {"ok": True, "event": "device_disconnected", "transport": "websocket" if USE_WEBSOCKET and WS_AVAILABLE else "http"})
             except Exception as e:
                 self.send_json(502, {"ok": False, "event": "device_disconnected", "message": f"Disconnect failed: {e}"})
         else:
@@ -1177,6 +1433,17 @@ class StreamHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # Suppress default logging
 
+def is_stream_port_in_use(port=STREAM_PORT):
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(0.5)
+    try:
+        return probe.connect_ex(('127.0.0.1', int(port))) == 0
+    except Exception:
+        return False
+    finally:
+        probe.close()
+
+
 def start_stream_server():
     try:
         server = ThreadingHTTPServer(('0.0.0.0', STREAM_PORT), StreamHandler)
@@ -1189,7 +1456,10 @@ def start_stream_server():
         return
     print(f"[Bridge] Local bridge server started on port {STREAM_PORT}")
     print(f"[Bridge] Connect endpoint: http://0.0.0.0:{STREAM_PORT}/connect")
-    print(f"[Stream] View at: http://0.0.0.0:{STREAM_PORT}/stream.mjpg")
+    if ENABLE_MJPEG_HTTP:
+        print(f"[Stream] MJPEG view at: http://0.0.0.0:{STREAM_PORT}/stream.mjpg")
+    else:
+        print(f"[Stream] WebSocket preview via: {get_realtime_ws_url()}")
     server.serve_forever()
 
 # ================= COMMAND POLLING WORKER =================
@@ -1210,7 +1480,17 @@ def execute_device_command(cmd):
                 headers=DEVICE_HEADERS,
                 timeout=10
             )
-            file_path, text, title, date, sender = scan_document()
+            sort_layer = 1
+            try:
+                motor_controller.run_scan_sequence()
+                file_path, text, title, date, sender = scan_document()
+                sort_layer = motor_controller.resolve_sort_layer(
+                    cmd.get("payload") or {},
+                    text,
+                    title,
+                )
+            finally:
+                motor_controller.finish_scan_sequence(sort_layer)
             if os.path.exists(file_path):
                 local_scan_id = queue_scan(file_path, text, title, date, sender, "pending")
                 result = upload_scan_to_backend(file_path, text, title, date, sender, cmd['id'])
@@ -1260,11 +1540,22 @@ def execute_device_command(cmd):
 
 
 def on_realtime_message(ws, message):
+    global connected_once, last_presence_ok, last_presence_error, last_presence_at
     try:
         msg = json.loads(message)
     except json.JSONDecodeError:
         return
-    if msg.get("type") in ("auth:ok", "presence:ok"):
+    if msg.get("type") == "auth:ok":
+        try:
+            report_device_presence("device_connected")
+            print("[Realtime] Authenticated and registered with backend via WebSocket.")
+        except Exception as e:
+            last_presence_ok = False
+            last_presence_error = str(e)
+            last_presence_at = datetime.now().isoformat()
+            print(f"[Realtime] Post-auth registration failed: {e}")
+        return
+    if msg.get("type") in ("presence:ok",):
         return
     if msg.get("type") == "command:pending" and msg.get("command"):
         threading.Thread(target=execute_device_command, args=(msg["command"],), daemon=True).start()
@@ -1373,7 +1664,17 @@ if __name__ == "__main__":
         print("Set it to the same DEVICE_API_KEY value configured in backend/.env.")
 
     atexit.register(send_disconnect)
+    atexit.register(motor_controller.cleanup)
     init_db()
+
+    if is_stream_port_in_use(STREAM_PORT):
+        print(f"[Main] ERROR: port {STREAM_PORT} is already in use.")
+        print("[Main] Another bridge instance is running (usually digipath-scanner systemd).")
+        print("[Main] Fix with:")
+        print("  sudo bash scripts/pi-restart-clean.sh")
+        print("  OR: sudo systemctl stop digipath-scanner && pkill -f pi_scanner_bridge.py")
+        print("[Main] Do not run python3 pi_scanner_bridge.py manually while systemd is active.")
+        raise SystemExit(1)
 
     print("[Main] Auto-installing missing dependencies (if any)...")
     ensure_dependencies()
@@ -1416,7 +1717,17 @@ if __name__ == "__main__":
     print("  VinzonsDIGIPATH - Pi Scanner Bridge")
     print("=" * 60)
     print(f"  Camera:  {'Ready' if cam_ok else 'Not available'}")
-    print(f"  Stream:  http://0.0.0.0:{STREAM_PORT}/stream.mjpg ({STREAM_FPS} fps)")
+    motor_status = motor_controller.status()
+    print(f"  Motor:   {'Enabled (2x TB6600)' if motor_status.get('enabled') else 'Disabled'}")
+    if motor_status.get("enabled"):
+        lift = motor_status.get("lift", {})
+        rotate = motor_status.get("rotate", {})
+        print(
+            f"           Lift PUL=GPIO{lift.get('pulGpio')} DIR=GPIO{lift.get('dirGpio')}, "
+            f"Rotate PUL=GPIO{rotate.get('pulGpio')} DIR=GPIO{rotate.get('dirGpio')}, "
+            f"layers={motor_status.get('layerCount')}"
+        )
+    print(f"  Preview: {get_preview_stream_mode()} ({get_preview_stream_url()})")
     print(f"  Realtime: {'WebSocket' if USE_WEBSOCKET and WS_AVAILABLE else 'HTTP fallback'}")
     print(f"  Backend: {BACKEND_BASE_URL}")
     print(f"  Device:  {DEVICE_ID}")

@@ -125,6 +125,17 @@ export async function bootstrapApiBase(options = {}) {
   if (bootstrapPromise) return bootstrapPromise;
 
   bootstrapPromise = (async () => {
+    const envUrl = getEnvApiUrl();
+    if (envUrl) {
+      const envBase = normalizeApiBase(envUrl);
+      const envWorking = await probeApiUrl(envUrl);
+      if (envWorking) {
+        resolvedApiBase = envWorking;
+        setStoredApiUrl(envWorking);
+        return envWorking;
+      }
+    }
+
     for (const candidate of collectApiCandidates()) {
       const working = await probeApiUrl(candidate);
       if (working) {

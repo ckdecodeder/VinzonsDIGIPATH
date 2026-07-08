@@ -5,6 +5,8 @@ dashboard/node_modules/
 .env
 backend/.env
 dashboard/.env
+bridge.env
+network.env
 
 dashboard/dist/
 backend/uploads/

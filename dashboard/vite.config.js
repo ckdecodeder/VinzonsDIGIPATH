@@ -8,6 +8,7 @@ const sharedServer = {
   port: 5173,
   strictPort: true,
   proxy: {
+    // Proxy API to backend — browser stays same-origin (no CORS issues in dev).
     '/api': {
       target: backendTarget,
       changeOrigin: true,

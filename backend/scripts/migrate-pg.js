@@ -202,6 +202,7 @@ async function main() {
     type:         { type: S },
     status:       { type: S },
     ip:           { type: S },
+    bridgeUrl:    { type: S },
     location:     { type: S },
     lastActive:   { type: S },
     firmware:     { type: S },

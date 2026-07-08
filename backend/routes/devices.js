@@ -3,7 +3,7 @@ const router = express.Router();
 const { Device, DeviceEvent, Command, Document } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { deviceLimiter } = require('../utils/rateLimit');
-const { requireDeviceApiKey, getBridgeBaseUrl, fetchBridgeEndpoint, cleanBridgeErrorText } = require('../utils/bridge');
+const { requireDeviceApiKey, getBridgeBaseUrl, fetchBridgeEndpoint, cleanBridgeErrorText, normalizeBridgeBaseUrl, isPrivateBridgeHost } = require('../utils/bridge');
 const {
   asyncHandler,
   requireFields,
@@ -263,7 +263,66 @@ router.put('/device', adminOnly, asyncHandler(async (req, res) => {
   );
 
   await createLogEntry(req, 'device_config_updated', `Updated scanner configuration for ${device.id}`, device.id);
-  res.json(await getDeviceSnapshot(device.id));
+  const snapshot = await getDeviceSnapshot(device.id);
+  broadcastDeviceUpdated(snapshot);
+  res.json(snapshot);
+}));
+
+router.get('/device/bridge/probe', allRoles, asyncHandler(async (req, res) => {
+  const deviceId = req.query.deviceId || 'DEV-001';
+  const rawBridgeUrl = req.query.bridgeUrl?.trim();
+  const bridgeUrl = normalizeBridgeBaseUrl(rawBridgeUrl);
+  if (!bridgeUrl) {
+    return res.status(400).json({ ok: false, message: 'A valid private LAN bridgeUrl is required.' });
+  }
+
+  let hostname = '';
+  try {
+    hostname = new URL(bridgeUrl).hostname;
+  } catch {
+    return res.status(400).json({ ok: false, message: 'Invalid bridgeUrl format.' });
+  }
+
+  if (!isPrivateBridgeHost(hostname)) {
+    return res.status(400).json({ ok: false, message: 'bridgeUrl must be a private LAN address.' });
+  }
+
+  try {
+    const response = await fetchBridgeEndpoint(bridgeUrl, '/status', { method: 'GET' });
+    const text = await response.text();
+    if (!response.ok) {
+      return res.json({
+        ok: false,
+        bridgeUrl,
+        message: `Bridge probe failed with HTTP ${response.status}`,
+        errorMessage: cleanBridgeErrorText(text),
+      });
+    }
+
+    let status = null;
+    try {
+      status = text ? JSON.parse(text) : {};
+    } catch {
+      status = { raw: text };
+    }
+
+    const resolvedBridgeUrl = normalizeBridgeBaseUrl(status?.bridgeUrl) || bridgeUrl;
+    res.json({
+      ok: true,
+      bridgeUrl,
+      resolvedBridgeUrl,
+      status,
+      mjpegEnabled: Boolean(status?.mjpegEnabled),
+      device: await getDeviceSnapshot(deviceId),
+    });
+  } catch (err) {
+    res.json({
+      ok: false,
+      bridgeUrl,
+      message: 'Bridge probe could not reach the Pi scanner on LAN.',
+      errorMessage: err.message,
+    });
+  }
 }));
 
 router.get('/device/bridge/status', allRoles, asyncHandler(async (req, res) => {
@@ -271,7 +330,7 @@ router.get('/device/bridge/status', allRoles, asyncHandler(async (req, res) => {
   const device = await getDeviceSnapshot(deviceId);
   const bridgeUrl = getBridgeBaseUrl(req, device);
   if (!bridgeUrl) {
-    return res.status(400).json({ message: 'Scanner bridge URL is not available. Wait for a heartbeat or enter the Pi bridge URL.' });
+    return res.status(400).json({ message: 'Scanner bridge URL is not available yet. Wait for the Pi to send a heartbeat.' });
   }
 
   try {
@@ -307,7 +366,7 @@ router.get('/device/bridge/snapshot', allRoles, asyncHandler(async (req, res) =>
   const device = await getDeviceSnapshot(deviceId);
   const bridgeUrl = getBridgeBaseUrl(req, device);
   if (!bridgeUrl) {
-    return res.status(400).json({ message: 'Scanner bridge URL is not available. Wait for a heartbeat or enter the Pi bridge URL.' });
+    return res.status(400).json({ message: 'Scanner bridge URL is not available yet. Wait for the Pi to send a heartbeat.' });
   }
 
   let response;
@@ -362,7 +421,7 @@ router.post('/device/bridge/connect', scannerCommandRoles, asyncHandler(async (r
   const device = await getDeviceSnapshot(deviceId);
   const bridgeUrl = getBridgeBaseUrl(req, device);
   if (!bridgeUrl) {
-    return res.status(400).json({ message: 'Scanner bridge URL is not available. Wait for a heartbeat or enter the Pi bridge URL.' });
+    return res.status(400).json({ message: 'Scanner bridge URL is not available yet. Wait for the Pi to send a heartbeat.' });
   }
 
   try {
@@ -401,7 +460,7 @@ router.post('/device/bridge/disconnect', scannerCommandRoles, asyncHandler(async
   const device = await getDeviceSnapshot(deviceId);
   const bridgeUrl = getBridgeBaseUrl(req, device);
   if (!bridgeUrl) {
-    return res.status(400).json({ message: 'Scanner bridge URL is not available. Wait for a heartbeat or enter the Pi bridge URL.' });
+    return res.status(400).json({ message: 'Scanner bridge URL is not available yet. Wait for the Pi to send a heartbeat.' });
   }
 
   try {

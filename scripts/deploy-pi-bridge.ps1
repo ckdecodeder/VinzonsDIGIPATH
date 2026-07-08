@@ -1,5 +1,5 @@
 param(
-  [string]$PiHost = "10.137.17.39",
+  [string]$PiHost = "192.168.254.132",
   [string]$PiUser = "digipathberry",
   [string]$BackendBaseUrl = "",
   [string]$DeviceApiKey = "",
@@ -64,6 +64,18 @@ if (-not $DeviceApiKey) {
 }
 
 if (-not $BackendBaseUrl) {
+  if (Test-Path $backendEnvFile) {
+    $publicLine = Get-Content $backendEnvFile | Where-Object { $_ -match "^PUBLIC_API_URL=" } | Select-Object -First 1
+    if ($publicLine) {
+      $publicUrl = (($publicLine -replace "^PUBLIC_API_URL=", "").Trim()).TrimEnd('/')
+      if ($publicUrl) {
+        $BackendBaseUrl = if ($publicUrl.EndsWith('/api')) { $publicUrl } else { "$publicUrl/api" }
+      }
+    }
+  }
+}
+
+if (-not $BackendBaseUrl) {
   $backendIp = Get-BackendIp -TargetHost $PiHost
   $BackendBaseUrl = "http://${backendIp}:5000/api"
 }
@@ -73,11 +85,16 @@ $remoteDir = "/tmp/digipath-scanner-install"
 
 Write-Host "Deploying scanner bridge to $remote"
 Write-Host "Backend URL for Pi: $BackendBaseUrl"
-Write-Host "Dashboard bridge URL after install: http://${PiHost}:$StreamPort"
+Write-Host "Pi WebSocket target: $($BackendBaseUrl -replace '/api$','')/ws/device"
+Write-Host "Pi status page: http://${PiHost}:$StreamPort/status"
 
 ssh $remote "rm -rf $remoteDir && mkdir -p $remoteDir/raspberry_pi"
 scp $bridgeFile "${remote}:$remoteDir/pi_scanner_bridge.py"
 scp $installerFile "${remote}:$remoteDir/raspberry_pi/install_digipath_scanner.sh"
+$piDepsFile = Join-Path $repoRoot "install-pi-deps.sh"
+if (Test-Path $piDepsFile) {
+  scp $piDepsFile "${remote}:$remoteDir/install-pi-deps.sh"
+}
 $bridgeEnvExample = Join-Path $repoRoot "bridge.env.example"
 if (Test-Path $bridgeEnvExample) {
   scp $bridgeEnvExample "${remote}:$remoteDir/bridge.env.example"

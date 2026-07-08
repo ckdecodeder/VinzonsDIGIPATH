@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { bridgeService } from '../api/documentService';
 import { useOptionalRealtime } from '../context/RealtimeContext';
+import { getWsUrl } from '../ws/realtimeClient';
 import { users as defaultUsers } from '../data/mockData';
 
 import { getApiBase } from '../api/apiBase';
@@ -83,8 +84,24 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
 
   const isConnected = Boolean(scanner.connected);
   const getReportedBridgeUrl = () => {
+    const deviceIp = scanner.ip && scanner.ip !== 'Not reported' ? scanner.ip : '';
+    const ipBridge = deviceIp ? normalizeBridgeUrl(`http://${deviceIp}:${DEFAULT_BRIDGE_PORT}`) : '';
+
+    const reportedBridge = scanner.bridgeUrl || scanner.payload?.bridgeUrl;
+    if (reportedBridge) {
+      const normalized = normalizeBridgeUrl(reportedBridge);
+      if (!ipBridge) return normalized;
+      try {
+        const host = new URL(normalized).hostname;
+        if (host === deviceIp) return normalized;
+      } catch {
+        return ipBridge;
+      }
+      return ipBridge;
+    }
+
     const reportedStream = scanner.streamUrl || scanner.payload?.streamUrl;
-    if (reportedStream) {
+    if (reportedStream && /^https?:\/\//i.test(String(reportedStream))) {
       try {
         return new URL(reportedStream).origin;
       } catch {
@@ -95,32 +112,25 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
     if (scanner.ip && scanner.ip !== 'Not reported') return normalizeBridgeUrl(`http://${scanner.ip}:${DEFAULT_BRIDGE_PORT}`);
     return '';
   };
-  const getDefaultBridgeUrl = () => {
-    const reported = getReportedBridgeUrl();
-    if (reported) return reported;
-    return import.meta.env.VITE_SCANNER_BRIDGE_URL || `http://127.0.0.1:${DEFAULT_BRIDGE_PORT}`;
-  };
-  const [bridgeUrl, setBridgeUrl] = useState(() => normalizeBridgeUrl(localStorage.getItem('dp_scannerBridgeUrl') || '') || getDefaultBridgeUrl());
+  const [manualBridgeUrl, setManualBridgeUrl] = useState('');
+  const [showManualBridgeUrl, setShowManualBridgeUrl] = useState(false);
   const [isBridgeConnecting, setIsBridgeConnecting] = useState(false);
   const [bridgeActionMessage, setBridgeActionMessage] = useState('');
   const [bridgeStatus, setBridgeStatus] = useState(null);
-  const reportedBridgeUrl = getReportedBridgeUrl();
+  const autoBridgeUrl = getReportedBridgeUrl();
+  const normalizedManualBridgeUrl = normalizeBridgeUrl(manualBridgeUrl);
+  const isManualOverrideActive = showManualBridgeUrl && Boolean(normalizedManualBridgeUrl);
+  const effectiveBridgeUrl = isManualOverrideActive
+    ? normalizedManualBridgeUrl
+    : (autoBridgeUrl || normalizedManualBridgeUrl);
+  const bridgeUrlSource = isManualOverrideActive
+    ? 'manual'
+    : (autoBridgeUrl ? 'auto' : (normalizedManualBridgeUrl ? 'manual' : 'waiting'));
 
-  useEffect(() => {
-    const savedUrl = normalizeBridgeUrl(localStorage.getItem('dp_scannerBridgeUrl') || '');
-    const savedLooksLocal = /^(https?:\/\/)?(localhost|127\.0\.0\.1)(:|\/|$)/i.test(savedUrl);
-    const nextUrl = reportedBridgeUrl && (isConnected || !savedUrl || savedLooksLocal)
-      ? reportedBridgeUrl
-      : savedUrl || getDefaultBridgeUrl();
-    setBridgeUrl(prev => (prev === nextUrl ? prev : nextUrl));
-  }, [scanner.ip, scanner.streamUrl, scanner.payload?.streamUrl, isConnected]);
-
-  useEffect(() => {
-    const normalized = normalizeBridgeUrl(bridgeUrl);
-    if (normalized) {
-      localStorage.setItem('dp_scannerBridgeUrl', normalized);
-    }
-  }, [bridgeUrl]);
+  const getBridgePayload = () => ({
+    deviceId: scanner.id || 'DEV-001',
+    ...(effectiveBridgeUrl && (isManualOverrideActive || !autoBridgeUrl) ? { bridgeUrl: effectiveBridgeUrl } : {}),
+  });
   const hardwareEvents = [...deviceEvents]
     .filter(event => event.recordedBy === 'hardware')
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -155,28 +165,19 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
     </div>
   );
 
-  const endpointRows = [
-    { label: 'Connect', method: 'POST', url: `${getApiBase()}/devices/connect` },
-    { label: 'Heartbeat', method: 'POST', url: `${getApiBase()}/devices/heartbeat` },
-    { label: 'Disconnect', method: 'POST', url: `${getApiBase()}/devices/disconnect` },
-    { label: 'Hardware Event', method: 'POST', url: `${getApiBase()}/devices/events` },
-  ];
+  const deviceWsUrl = getWsUrl().replace(/\/ws$/, '/ws/device');
 
-  const getBridgePayload = () => {
-    const target = normalizeBridgeUrl(bridgeUrl);
-    if (target && target !== bridgeUrl) {
-      setBridgeUrl(target);
-    }
-    return {
-      deviceId: scanner.id || 'DEV-001',
-      bridgeUrl: target,
-    };
-  };
+  const endpointRows = [
+    { label: 'WebSocket Auth', method: 'WS', url: `${deviceWsUrl} — { "type": "auth", "deviceId": "DEV-001", "apiKey": "..." }` },
+    { label: 'Connect (WebSocket)', method: 'WS', url: `${deviceWsUrl} — { "type": "device_connected", "payload": { ... } }` },
+    { label: 'Heartbeat (WebSocket)', method: 'WS', url: `${deviceWsUrl} — { "type": "heartbeat", "payload": { ... } }` },
+    { label: 'HTTP fallback', method: 'POST', url: `${getApiBase()}/devices/heartbeat (legacy / testing only)` },
+  ];
 
   const handleBridgeConnect = async () => {
     const payload = getBridgePayload();
-    if (!payload.bridgeUrl) {
-      setBridgeActionMessage('Enter the Raspberry Pi bridge URL first.');
+    if (!autoBridgeUrl && !effectiveBridgeUrl) {
+      setBridgeActionMessage('Waiting for the Pi to send a heartbeat so the bridge URL can be detected automatically.');
       return;
     }
 
@@ -205,8 +206,8 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
 
   const handleBridgeStatus = async () => {
     const payload = getBridgePayload();
-    if (!payload.bridgeUrl) {
-      setBridgeActionMessage('Enter the Raspberry Pi bridge URL first.');
+    if (!autoBridgeUrl && !effectiveBridgeUrl) {
+      setBridgeActionMessage('Waiting for the Pi to send a heartbeat so the bridge URL can be detected automatically.');
       return;
     }
 
@@ -239,7 +240,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
 
   const handleBridgeDisconnect = async () => {
     const payload = getBridgePayload();
-    if (!payload.bridgeUrl) return;
+    if (!autoBridgeUrl && !effectiveBridgeUrl) return;
 
     setIsBridgeConnecting(true);
     setBridgeActionMessage('Sending disconnect signal through the backend...');
@@ -304,15 +305,60 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto auto', gap: '0.75rem', alignItems: 'end' }}>
           <div className="form-group" style={{ marginBottom: 0 }}>
             <label className="form-label">Scanner Bridge URL</label>
-            <input
-              className="form-input"
-              value={bridgeUrl}
-              onChange={e => setBridgeUrl(e.target.value)}
-              placeholder="http://raspberry-pi-ip:8080"
-            />
-            <p className="field-hint">
-              The bridge now auto-connects on startup. Use this button only to trigger the handshake from the dashboard.
-            </p>
+            {bridgeUrlSource === 'auto' ? (
+              <>
+                <div className="form-input" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-elevated)', color: 'var(--text-main)' }}>
+                  <Wifi size={15} style={{ color: 'var(--success)', flexShrink: 0 }} />
+                  <span className="td-mono" style={{ fontSize: '0.82rem', wordBreak: 'break-all' }}>{autoBridgeUrl}</span>
+                </div>
+                <p className="field-hint">
+                  Auto-detected from Pi heartbeat. Hindi mo na kailangan i-type — magre-register at magko-connect ang device automatically.
+                </p>
+              </>
+            ) : bridgeUrlSource === 'manual' ? (
+              <>
+                <input
+                  className="form-input"
+                  value={manualBridgeUrl}
+                  onChange={e => setManualBridgeUrl(e.target.value)}
+                  placeholder="http://raspberry-pi-ip:8080"
+                />
+                <p className="field-hint">Manual override lang ito. Mas mainam hintayin ang Pi heartbeat para auto-detect.</p>
+              </>
+            ) : (
+              <>
+                <div className="form-input" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--warning-bg)', color: 'var(--text-secondary)' }}>
+                  <Clock size={15} style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.82rem' }}>Waiting for Pi heartbeat...</span>
+                </div>
+                <p className="field-hint">
+                  I-on ang Pi at hintayin ang WebSocket heartbeat. Auto-fill ang bridge URL pag naka-connect na.
+                </p>
+              </>
+            )}
+            {!showManualBridgeUrl && bridgeUrlSource !== 'manual' && (
+              <button
+                type="button"
+                className="btn btn-link"
+                style={{ marginTop: '0.35rem', padding: 0, fontSize: '0.75rem' }}
+                onClick={() => setShowManualBridgeUrl(true)}
+              >
+                Manual override (optional)
+              </button>
+            )}
+            {showManualBridgeUrl && bridgeUrlSource !== 'manual' && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <input
+                  className="form-input"
+                  value={manualBridgeUrl}
+                  onChange={e => setManualBridgeUrl(e.target.value)}
+                  placeholder="http://raspberry-pi-ip:8080"
+                />
+                <p className="field-hint" style={{ marginTop: '0.35rem' }}>
+                  Kapag may value dito, manual URL ang gagamitin ng Connect/Check/Disconnect.
+                </p>
+              </div>
+            )}
           </div>
           <button className="btn btn-primary" onClick={handleBridgeConnect} disabled={isBridgeConnecting}>
             {isBridgeConnecting ? <RefreshCcw size={16} className="animate-spin" /> : <Wifi size={16} />}
@@ -416,7 +462,9 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
               {isConnected
                 ? `Last heartbeat received within ${heartbeatSeconds} seconds`
-                : 'Waiting for the physical scanner to connect to the backend'}
+                : scanner.lastSignalAt
+                  ? `Last signal was ${formatDateTime(scanner.lastSignalAt)} — stale or not reaching backend`
+                  : 'Waiting for the physical scanner to connect to the backend'}
             </p>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem 2rem' }}>
@@ -477,7 +525,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
             <div>
               <h3 className="card-title" style={{ marginBottom: '0.25rem' }}>No Real Device Signal</h3>
               <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.86rem' }}>
-                The backend has not received a fresh hardware heartbeat. The scanner will stay disconnected until the physical device calls the connection endpoint.
+                The backend has not received a fresh hardware heartbeat via WebSocket. The scanner will stay disconnected until the Pi bridge connects and sends device_connected / heartbeat messages.
               </p>
             </div>
           </div>
@@ -514,7 +562,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, dev
 
           <div style={{ marginTop: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
             <span><ShieldCheck size={13} style={{ verticalAlign: 'middle', marginRight: '0.35rem' }} />Header: <span className="td-mono">x-device-key: &lt;DEVICE_API_KEY&gt;</span></span>
-            <span><Clock size={13} style={{ verticalAlign: 'middle', marginRight: '0.35rem' }} />Heartbeat must repeat before the {heartbeatSeconds}s timeout.</span>
+            <span><Clock size={13} style={{ verticalAlign: 'middle', marginRight: '0.35rem' }} />Pi sends WebSocket heartbeat every few seconds; backend marks offline after {heartbeatSeconds}s without signal.</span>
           </div>
         </div>
 

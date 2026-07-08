@@ -26,6 +26,7 @@ class RealtimeHub {
     this.presenceHandler = null;
     this.wss = null;
     this.pingTimer = null;
+    this.streamThrottle = new Map();
   }
 
   setPresenceHandler(handler) {
@@ -231,6 +232,11 @@ class RealtimeHub {
   }
 
   relayStreamFrame(deviceId, frameBuffer) {
+    const now = Date.now();
+    const lastSent = this.streamThrottle.get(deviceId) || 0;
+    if (now - lastSent < 80) return;
+    this.streamThrottle.set(deviceId, now);
+
     const channel = `scanner:${deviceId}:stream`;
     for (const client of this.userClients) {
       if (!client.auth || !client.subscriptions.has(channel)) continue;

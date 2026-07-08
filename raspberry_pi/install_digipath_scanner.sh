@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eu
 
 TARGET_DIR="/opt/digipath-scanner"
 ENV_FILE="/etc/digipath-scanner.env"
@@ -15,7 +15,7 @@ WIFI_PASSWORD=""
 usage() {
   cat <<'USAGE'
 Usage:
-  sudo ./install_digipath_scanner.sh --backend-url http://COMPUTER_IP:5000/api --device-key DEVICE_API_KEY [options]
+  sudo bash install_digipath_scanner.sh --backend-url http://COMPUTER_IP:5000/api --device-key DEVICE_API_KEY [options]
 
 Options:
   --backend-url URL       Backend API URL reachable from the Pi over WiFi.
@@ -120,18 +120,34 @@ apt-get install -y \
   libswscale-dev \
   libswresample-dev \
   pkg-config
-apt-get install -y python3-picamera2 || true
+apt-get install -y python3-gpiozero || true
 apt-get install -y rpicam-apps || apt-get install -y libcamera-apps || true
 
 echo "Installing bridge files..."
 mkdir -p "$TARGET_DIR"
 cp "$BRIDGE_SOURCE" "$TARGET_DIR/pi_scanner_bridge.py"
+if [[ -f "$REPO_ROOT/motor_controller.py" ]]; then
+  cp "$REPO_ROOT/motor_controller.py" "$TARGET_DIR/motor_controller.py"
+fi
+if [[ -f "$REPO_ROOT/relay_controller.py" ]]; then
+  cp "$REPO_ROOT/relay_controller.py" "$TARGET_DIR/relay_controller.py"
+fi
+if [[ -f "$REPO_ROOT/install-pi-deps.sh" ]]; then
+  cp "$REPO_ROOT/install-pi-deps.sh" "$TARGET_DIR/install-pi-deps.sh"
+  chmod +x "$TARGET_DIR/install-pi-deps.sh"
+fi
+if [[ -f "$REPO_ROOT/verify-pi-deps.py" ]]; then
+  cp "$REPO_ROOT/verify-pi-deps.py" "$TARGET_DIR/verify-pi-deps.py"
+fi
+if [[ -f "$REPO_ROOT/requirements-pi.txt" ]]; then
+  cp "$REPO_ROOT/requirements-pi.txt" "$TARGET_DIR/requirements-pi.txt"
+fi
 chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
 
 echo "Creating Python environment..."
 python3 -m venv --system-site-packages "$TARGET_DIR/.venv"
 "$TARGET_DIR/.venv/bin/python" -m pip install --upgrade pip
-"$TARGET_DIR/.venv/bin/python" -m pip install requests Pillow pytesseract websocket-client
+"$TARGET_DIR/.venv/bin/python" -m pip install requests Pillow pytesseract websocket-client gpiozero
 "$TARGET_DIR/.venv/bin/python" - <<'PY'
 import importlib.util
 
@@ -157,6 +173,9 @@ DIGIPATH_DEVICE_ID="$DEVICE_ID"
 DIGIPATH_OFFICE_ID="$OFFICE_ID"
 DIGIPATH_STREAM_PORT="$STREAM_PORT"
 DIGIPATH_HEARTBEAT_INTERVAL_SECS=10
+DIGIPATH_AUTO_INSTALL=1
+DIGIPATH_USE_WEBSOCKET=1
+DIGIPATH_ENABLE_MJPEG_HTTP=0
 DIGIPATH_CAMERA_CLI=""
 DIGIPATH_ENABLE_OPENCV_CAMERA="auto"
 DIGIPATH_OPENCV_CAMERA_INDEX="0"

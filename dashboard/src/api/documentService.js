@@ -301,7 +301,11 @@ export const bridgeService = {
     });
   },
 
-  getSnapshot(payload = {}) {
+  probe(payload = {}) {
+    return apiRequest(`/device/bridge/probe${buildQuery(payload)}`);
+  },
+
+  snapshot(payload = {}) {
     return apiBlobRequest(`/device/bridge/snapshot${buildQuery(payload)}`, {
       headers: { Accept: 'image/jpeg,image/*;q=0.9,*/*;q=0.5' },
     });

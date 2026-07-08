@@ -33,7 +33,10 @@ app.use(cors({
   origin: corsOriginCallback,
   credentials: true,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-device-key', 'X-Requested-With'],
+  exposedHeaders: ['Content-Type', 'Content-Length'],
+  optionsSuccessStatus: 204,
+  maxAge: 86400,
 }));
 app.use(express.json({ limit: '15mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -55,9 +58,12 @@ const startServer = async () => {
   });
 
   app.get('/api/config', (req, res) => {
+    const publicRoot = getPublicApiUrl(req).replace(/\/$/, '');
+    const apiUrl = publicRoot.endsWith('/api') ? publicRoot : `${publicRoot}/api`;
     res.json({
       ok: true,
-      apiUrl: getPublicApiUrl(req),
+      apiUrl,
+      wsUrl: apiUrl.replace(/\/api\/?$/, '').replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/ws',
     });
   });
 

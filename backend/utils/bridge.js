@@ -46,12 +46,19 @@ const getBridgeBaseUrl = (req, device) => {
   const requestedBase = normalizeBridgeBaseUrl(requestedUrl);
   if (requestedBase) return requestedBase;
 
-  const streamBase = normalizeBridgeBaseUrl(device?.streamUrl || device?.payload?.streamUrl);
+  if (device?.ip && device.ip !== 'Not reported') {
+    const ipBridge = normalizeBridgeBaseUrl(`http://${device.ip}:${scannerBridgePort}`);
+    if (ipBridge) return ipBridge;
+  }
+
+  const eventBridge = normalizeBridgeBaseUrl(device?.payload?.bridgeUrl);
+  if (eventBridge) return eventBridge;
+
+  const streamBase = normalizeBridgeBaseUrl(device?.bridgeUrl || device?.payload?.bridgeUrl);
   if (streamBase) return streamBase;
 
-  if (device?.ip && device.ip !== 'Not reported') {
-    return normalizeBridgeBaseUrl(`http://${device.ip}:${scannerBridgePort}`);
-  }
+  const streamUrlBase = normalizeBridgeBaseUrl(device?.streamUrl || device?.payload?.streamUrl);
+  if (streamUrlBase) return streamUrlBase;
 
   return '';
 };
@@ -82,6 +89,13 @@ const cleanBridgeErrorText = (value = '') => {
     .trim();
 };
 
+const isPrivateBridgeHost = (hostname = '') => (
+  /^(localhost|127\.0\.0\.1)$/i.test(hostname)
+  || /^192\.168\./.test(hostname)
+  || /^10\./.test(hostname)
+  || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+);
+
 module.exports = {
   getDeviceApiKey,
   requireDeviceApiKey,
@@ -89,4 +103,5 @@ module.exports = {
   getBridgeBaseUrl,
   fetchBridgeEndpoint,
   cleanBridgeErrorText,
+  isPrivateBridgeHost,
 };

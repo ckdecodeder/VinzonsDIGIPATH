@@ -25,7 +25,9 @@ import {
 } from "lucide-react";
 import { Camera } from "react-camera-pro";
 import Tesseract from "tesseract.js";
-import { bridgeService, commandService } from "../api/documentService";
+import { commandService, bridgeService } from "../api/documentService";
+import { useOptionalRealtime } from "../context/RealtimeContext";
+import { resolveReachableLanBridge } from "../utils/bridgePreview";
 import {
   offices as defaultOffices,
   documentTypes as defaultDocumentTypes,
@@ -44,6 +46,10 @@ const paperGuides = [
   { id: 'receipt-landscape', label: 'Receipt', ratio: '2.6 / 1' },
 ];
 
+const WS_STREAM_TIMEOUT_MS = 500;
+const DISPLAY_FRAME_MS = 100;
+const SNAPSHOT_INTERVAL_MS = 800;
+
 const getSubjectFromOcr = (text, fallback = '') => {
   const lines = (text || '')
     .split(/\r?\n/)
@@ -59,27 +65,17 @@ const getSubjectFromOcr = (text, fallback = '') => {
   return (lines[0] || fallback || 'Scanned Document').slice(0, 120);
 };
 
-const getBridgeBaseUrl = (device) => {
-  const reportedStreamUrl = device?.streamUrl || device?.payload?.streamUrl;
-  if (reportedStreamUrl) {
-    try {
-      return new URL(reportedStreamUrl).origin;
-    } catch {
-      const match = String(reportedStreamUrl).match(/^(https?:\/\/[^/]+)/i);
-      if (match) return match[1];
-    }
-  }
-
-  if (device?.ip && device.ip !== 'Not reported') {
-    return `http://${device.ip}:8080`;
-  }
-
-  return '';
-};
-
 const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device }) => {
   const camera = useRef(null);
   const commandPollRef = useRef(null);
+  const previewImgRef = useRef(null);
+  const wsFrameUrlRef = useRef('');
+  const pendingFrameRef = useRef(null);
+  const framePaintRafRef = useRef(null);
+  const lastFramePaintAtRef = useRef(0);
+  const previewReadyRef = useRef(false);
+  const lanSnapshotStarterRef = useRef(null);
+  const realtime = useOptionalRealtime();
   const canChooseSourceOffice = currentUser?.role === 'Admin';
   const canChooseDirection = currentUser?.role === 'Admin';
   const canSetInitialStatus = currentUser?.role === 'Receptionist' || currentUser?.role === 'Admin';
@@ -100,6 +96,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [previewErrorMessage, setPreviewErrorMessage] = useState('');
   const [streamHasError, setStreamHasError] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
+  const [lanBridgeBase, setLanBridgeBase] = useState(null);
+  const [lanBridgeProbing, setLanBridgeProbing] = useState(false);
+  const [directStreamUrl, setDirectStreamUrl] = useState('');
+  const [previewMode, setPreviewMode] = useState('ws');
   const [isExtracting, setIsExtracting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isDeviceScanning, setIsDeviceScanning] = useState(false);
@@ -182,50 +183,330 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     });
   };
 
-  const bridgeBaseUrl = getBridgeBaseUrl(device);
-  const physicalStreamUrl = bridgeBaseUrl ? `${bridgeBaseUrl}/stream.mjpg` : '';
-  const physicalStatusUrl = bridgeBaseUrl ? `${bridgeBaseUrl}/status` : '';
   const isPhysicalSource = cameraSource === PHYSICAL_CAMERA_VALUE;
+  const hasLanBridge = Boolean(isPhysicalSource && device?.connected && lanBridgeBase);
+  const previewLabel = previewMode === 'direct'
+    ? 'Live via Pi LAN (MJPEG)'
+    : previewMode === 'lan-snapshot'
+      ? 'Live via Pi LAN (snapshot)'
+      : previewMode === 'ws'
+        ? 'Live via WebSocket'
+        : 'Live via Pi snapshot';
   const selectedPaperGuide = paperGuides.find(item => item.id === paperGuideId) || paperGuides[0];
   const isCapturedPdf = capturedFileType === 'application/pdf' || /\.pdf($|\?)/i.test(capturedImage || '');
 
   useEffect(() => {
-    if (!isPhysicalSource || !bridgeBaseUrl) {
+    if (!isPhysicalSource) {
       setStreamHasError(false);
       setPreviewErrorMessage('');
       return undefined;
     }
 
-    let cancelled = false;
+    if (!device?.connected) {
+      setStreamHasError(true);
+      setPreviewErrorMessage('Physical scanner is offline. Wait for device heartbeat.');
+      return undefined;
+    }
 
-    const checkBridge = async () => {
+    if (hasLanBridge) {
+      setStreamHasError(false);
+      setPreviewErrorMessage(previewReady ? '' : 'Connecting to Pi camera on LAN...');
+      return undefined;
+    }
+
+    if (lanBridgeProbing) {
+      setStreamHasError(false);
+      setPreviewErrorMessage('Checking for Pi on local network...');
+      return undefined;
+    }
+
+    if (!realtime?.connected) {
+      setStreamHasError(false);
+      setPreviewErrorMessage('Connecting to realtime server...');
+      return undefined;
+    }
+
+    if (previewReady) {
+      setStreamHasError(false);
+      setPreviewErrorMessage('');
+      return undefined;
+    }
+
+    setStreamHasError(false);
+    setPreviewErrorMessage('Connecting WebSocket camera stream...');
+    return undefined;
+  }, [isPhysicalSource, device?.connected, realtime?.connected, previewReady, streamReloadKey, hasLanBridge, lanBridgeProbing]);
+
+  useEffect(() => {
+    if (!isPhysicalSource || !device?.connected) {
+      setLanBridgeBase(null);
+      setLanBridgeProbing(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLanBridgeProbing(true);
+    setLanBridgeBase(null);
+
+    resolveReachableLanBridge(device).then((base) => {
+      if (cancelled) return;
+      setLanBridgeBase(base);
+      setLanBridgeProbing(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isPhysicalSource, device?.connected, device?.bridgeUrl, device?.streamUrl, device?.id, streamReloadKey]);
+
+  const paintPreviewBlob = (blob) => {
+    const nextUrl = URL.createObjectURL(blob);
+    if (wsFrameUrlRef.current) {
+      URL.revokeObjectURL(wsFrameUrlRef.current);
+    }
+    wsFrameUrlRef.current = nextUrl;
+    if (previewImgRef.current) {
+      previewImgRef.current.src = nextUrl;
+    }
+    if (!previewReadyRef.current) {
+      previewReadyRef.current = true;
+      setPreviewReady(true);
+    }
+    setStreamHasError(false);
+    setPreviewErrorMessage('');
+  };
+
+  useEffect(() => {
+    previewReadyRef.current = false;
+    setPreviewReady(false);
+    setDirectStreamUrl('');
+    if (wsFrameUrlRef.current) {
+      URL.revokeObjectURL(wsFrameUrlRef.current);
+      wsFrameUrlRef.current = '';
+    }
+    if (previewImgRef.current) {
+      previewImgRef.current.removeAttribute('src');
+    }
+  }, [streamReloadKey, device?.id, cameraSource]);
+
+  useEffect(() => {
+    if (!hasLanBridge) {
+      setDirectStreamUrl('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    let snapshotTimer = null;
+    const lanBase = lanBridgeBase;
+
+    const deviceId = device?.id || 'DEV-001';
+
+    const startLanSnapshotPolling = () => {
+      if (cancelled || snapshotTimer) return;
+      setDirectStreamUrl('');
+      setPreviewMode('lan-snapshot');
+
+      const pollLanSnapshot = async () => {
+        try {
+          const blob = await bridgeService.snapshot({ deviceId, bridgeUrl: lanBase });
+          if (cancelled || !blob?.size) return;
+          paintPreviewBlob(blob);
+        } catch (err) {
+          if (!cancelled && !previewReadyRef.current) {
+            setStreamHasError(true);
+            setPreviewErrorMessage(`LAN camera preview failed: ${err.message || 'snapshot unavailable'}`);
+          }
+        }
+      };
+
+      pollLanSnapshot();
+      snapshotTimer = setInterval(pollLanSnapshot, SNAPSHOT_INTERVAL_MS);
+    };
+
+    const probeLanStream = async () => {
       try {
-        const result = await bridgeService.status({
-          deviceId: device?.id || 'DEV-001',
-          bridgeUrl: bridgeBaseUrl,
-        });
+        const result = await bridgeService.probe({ bridgeUrl: lanBase, deviceId });
         if (cancelled) return;
-        const status = result.status || result.bridge || null;
-        const cameraReady = Boolean(status?.cameraReady ?? status?.camera);
-        setStreamHasError(!cameraReady);
-        setPreviewErrorMessage(cameraReady ? '' : 'Scanner camera is not ready yet.');
+        if (result?.ok && result?.mjpegEnabled) {
+          setPreviewMode('direct');
+          setDirectStreamUrl(`${lanBase}/stream.mjpg`);
+          lanSnapshotStarterRef.current = startLanSnapshotPolling;
+          return;
+        }
+      } catch {
+        // MJPEG unavailable on Pi — use snapshot polling instead.
+      }
+
+      if (!cancelled) startLanSnapshotPolling();
+    };
+
+    probeLanStream();
+    lanSnapshotStarterRef.current = startLanSnapshotPolling;
+
+    return () => {
+      cancelled = true;
+      lanSnapshotStarterRef.current = null;
+      if (snapshotTimer) clearInterval(snapshotTimer);
+    };
+  }, [hasLanBridge, lanBridgeBase, streamReloadKey, device?.id]);
+
+  const scheduleFramePaint = () => {
+    if (framePaintRafRef.current) return;
+    framePaintRafRef.current = requestAnimationFrame(() => {
+      framePaintRafRef.current = null;
+      const now = performance.now();
+      if (now - lastFramePaintAtRef.current < DISPLAY_FRAME_MS) {
+        if (pendingFrameRef.current) scheduleFramePaint();
+        return;
+      }
+
+      const frame = pendingFrameRef.current;
+      pendingFrameRef.current = null;
+      if (!frame?.length || !previewImgRef.current) return;
+
+      lastFramePaintAtRef.current = now;
+      const blob = new Blob([frame], { type: 'image/jpeg' });
+      const nextUrl = URL.createObjectURL(blob);
+      if (wsFrameUrlRef.current) {
+        URL.revokeObjectURL(wsFrameUrlRef.current);
+      }
+      wsFrameUrlRef.current = nextUrl;
+      previewImgRef.current.src = nextUrl;
+
+      if (!previewReadyRef.current) {
+        previewReadyRef.current = true;
+        setPreviewReady(true);
+        setPreviewMode('ws');
+        setStreamHasError(false);
+        setPreviewErrorMessage('');
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (!isPhysicalSource || !device?.connected || !realtime?.client || hasLanBridge) {
+      return undefined;
+    }
+
+    const deviceId = device.id || 'DEV-001';
+    const channel = `scanner:${deviceId}:stream`;
+    let streamTimeout = null;
+
+    const bindStream = () => {
+      realtime.subscribeChannel(channel);
+    };
+
+    bindStream();
+    const offOpen = realtime.subscribe('connection:open', bindStream);
+
+    const offFrame = realtime.subscribe('scanner:frame', ({ frame }) => {
+      if (!frame?.length) return;
+      pendingFrameRef.current = frame;
+      scheduleFramePaint();
+      if (streamTimeout) {
+        clearTimeout(streamTimeout);
+        streamTimeout = null;
+      }
+    });
+
+    streamTimeout = setTimeout(() => {
+      if (!previewReadyRef.current) {
+        setStreamHasError(true);
+        setPreviewErrorMessage(device?.streamWsConnected === false
+          ? 'Pi WebSocket stream is offline. Trying snapshot preview from the bridge...'
+          : 'WebSocket camera stream unavailable. Trying snapshot preview from the bridge...');
+      }
+    }, WS_STREAM_TIMEOUT_MS);
+
+    return () => {
+      offOpen();
+      offFrame();
+      if (streamTimeout) clearTimeout(streamTimeout);
+      if (framePaintRafRef.current) {
+        cancelAnimationFrame(framePaintRafRef.current);
+        framePaintRafRef.current = null;
+      }
+      pendingFrameRef.current = null;
+      realtime.client.unsubscribe(channel);
+      if (wsFrameUrlRef.current) {
+        URL.revokeObjectURL(wsFrameUrlRef.current);
+        wsFrameUrlRef.current = '';
+      }
+    };
+  }, [isPhysicalSource, device?.connected, device?.id, device?.streamWsConnected, realtime, realtime?.connected, streamReloadKey, hasLanBridge]);
+
+  useEffect(() => {
+    if (!isPhysicalSource || !device?.connected || previewReady || hasLanBridge || lanBridgeProbing) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let snapshotTimer = null;
+    const deviceId = device.id || 'DEV-001';
+
+    const loadSnapshotPreview = async () => {
+      try {
+        const bridgeStatus = await bridgeService.status({ deviceId });
+        if (cancelled) return;
+        if (!bridgeStatus?.ok) {
+          if (!previewReadyRef.current) {
+            setStreamHasError(true);
+            setPreviewErrorMessage(
+              device?.streamWsConnected === false
+                ? 'Waiting for Pi WebSocket stream via public backend. Ensure dev tunnel port 5000 is public and run: bash scripts/pi-test-backend.sh on the Pi.'
+                : 'WebSocket stream still connecting. If this persists, restart digipath-scanner on the Pi.',
+            );
+          }
+          return;
+        }
+
+        const blob = await bridgeService.snapshot({
+          deviceId,
+          bridgeUrl: bridgeStatus.bridgeUrl,
+        });
+        if (cancelled || !blob) return;
+
+        const nextUrl = URL.createObjectURL(blob);
+        if (wsFrameUrlRef.current) {
+          URL.revokeObjectURL(wsFrameUrlRef.current);
+        }
+        wsFrameUrlRef.current = nextUrl;
+        if (previewImgRef.current) {
+          previewImgRef.current.src = nextUrl;
+        }
+        if (!previewReadyRef.current) {
+          previewReadyRef.current = true;
+          setPreviewReady(true);
+        }
+        setPreviewMode('snapshot');
+        setStreamHasError(false);
+        setPreviewErrorMessage('');
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !previewReadyRef.current) {
           setStreamHasError(true);
-          setPreviewErrorMessage(err.message || 'Scanner preview is not ready yet.');
+          setPreviewErrorMessage(
+            `Camera preview unavailable: ${err.message || 'bridge snapshot failed'}. Same WiFi as Pi enables faster LAN preview.`,
+          );
         }
       }
     };
 
-    checkBridge();
+    const startAfter = setTimeout(() => {
+      loadSnapshotPreview();
+      snapshotTimer = setInterval(loadSnapshotPreview, SNAPSHOT_INTERVAL_MS);
+    }, WS_STREAM_TIMEOUT_MS);
+
     return () => {
       cancelled = true;
+      clearTimeout(startAfter);
+      if (snapshotTimer) clearInterval(snapshotTimer);
     };
-  }, [isPhysicalSource, bridgeBaseUrl, device?.id, streamReloadKey]);
+  }, [isPhysicalSource, device?.connected, device?.id, device?.streamWsConnected, previewReady, streamReloadKey, hasLanBridge, lanBridgeProbing]);
 
   const handleCameraSourceChange = (value) => {
     setCameraSource(value);
     setStreamHasError(false);
+    setPreviewErrorMessage('');
     if (value !== PHYSICAL_CAMERA_VALUE) {
       setSelectedCameraId(value === 'browser-camera' ? '' : value);
     }
@@ -333,6 +614,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         officeId: formData.fromOfficeId === OTHER_OFFICE_VALUE ? defaultSourceOfficeId : formData.fromOfficeId,
         originOfficeOther: formData.originOfficeOther,
         status: canSetInitialStatus ? formData.status : 'Received',
+        priorityLevel: formData.priorityLevel,
+        documentTypeId: formData.documentTypeId,
       });
       setDeviceScanStatus('Waiting for the physical scanner to capture and upload the document...');
 
@@ -551,7 +834,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 value={cameraSource}
                 onChange={e => handleCameraSourceChange(e.target.value)}
               >
-                {device?.connected && physicalStreamUrl && (
+                {device?.connected && (
                   <option value={PHYSICAL_CAMERA_VALUE}>Physical Scanner Live Preview</option>
                 )}
                 {cameraDevices.length ? cameraDevices.map((item, index) => (
@@ -569,6 +852,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               onClick={() => {
                 if (isPhysicalSource) {
                   setStreamHasError(false);
+                  setPreviewErrorMessage('');
                   setStreamReloadKey(value => value + 1);
                   return;
                 }
@@ -603,22 +887,33 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
           <div className="scanner-preview-shell">
             {isPhysicalSource ? (
-              bridgeBaseUrl ? (
+              device?.connected ? (
                 <img
-                  key={streamReloadKey}
+                  key={`physical-preview-${streamReloadKey}`}
+                  ref={previewImgRef}
                   className="scanner-live-stream"
-                  src={physicalStreamUrl}
+                  src={directStreamUrl || undefined}
                   alt="Physical scanner live preview"
-                  onLoad={() => setStreamHasError(false)}
+                  onLoad={() => {
+                    if (directStreamUrl) {
+                      previewReadyRef.current = true;
+                      setPreviewReady(true);
+                      setPreviewMode('direct');
+                      setStreamHasError(false);
+                      setPreviewErrorMessage('');
+                    }
+                  }}
                   onError={() => {
-                    setStreamHasError(true);
-                    setPreviewErrorMessage(`Live stream unavailable. Check ${physicalStatusUrl || 'the Pi bridge status'}.`);
+                    if (directStreamUrl && hasLanBridge) {
+                      setPreviewErrorMessage('MJPEG unavailable on Pi. Using LAN snapshot preview...');
+                      lanSnapshotStarterRef.current?.();
+                    }
                   }}
                 />
               ) : (
                 <div className="scanner-preview-empty">
                   <CameraIcon size={34} />
-                  <span>Physical scanner bridge URL is not configured</span>
+                  <span>Physical scanner is offline</span>
                 </div>
               )
             ) : (
@@ -646,10 +941,24 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               <div className="scanner-scan-line"></div>
             </div>
 
-            {isPhysicalSource && streamHasError && (
+            {isPhysicalSource && previewReady && (
+              <div className="scanner-preview-warning" style={{ background: 'var(--success-bg, rgba(16, 185, 129, 0.12))', color: 'var(--success, #10b981)' }}>
+                <Wifi size={16} />
+                <span>{previewLabel}</span>
+              </div>
+            )}
+
+            {isPhysicalSource && device?.connected && !previewReady && !streamHasError && (
+              <div className="scanner-preview-empty" style={{ position: 'absolute', inset: 0, zIndex: 2 }}>
+                <CameraIcon size={34} />
+                <span>{previewErrorMessage || 'Connecting camera stream...'}</span>
+              </div>
+            )}
+
+            {isPhysicalSource && streamHasError && !previewReady && (
               <div className="scanner-preview-warning">
                 <AlertCircle size={16} />
-                <span>{previewErrorMessage || `Preview is not ready. Check ${physicalStatusUrl || 'the Pi bridge status'}.`}</span>
+                <span>{previewErrorMessage || 'WebSocket camera stream is not ready yet.'}</span>
               </div>
             )}
 
