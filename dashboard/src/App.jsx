@@ -1,7 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import AppModal from './components/AppModal';
+import ActionToast from './components/ActionToast';
+import {
+  getProcessActionToastMessage,
+  getStatusToastMessage,
+  getTransmissionUpdateToastMessage,
+  getVerificationToastMessage,
+} from './utils/actionToastMessages';
 import LoginPage from './pages/LoginPage';
 import AdminDashboard from './pages/DashboardHome';
 import DocumentList from './pages/DocumentList';
@@ -110,6 +117,7 @@ function App() {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isRefreshingContent, setIsRefreshingContent] = useState(false);
   const [hasLoadedData, setHasLoadedData] = useState(false);
+  const [actionToast, setActionToast] = useState(null);
   const [documentFocusId, setDocumentFocusId] = useState('');
   const [documentStatusFocus, setDocumentStatusFocus] = useState('All');
   const [dismissedNotifications, setDismissedNotifications] = useState(() => {
@@ -117,9 +125,11 @@ function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const loadData = async ({ silent = hasLoadedData } = {}) => {
+  const loadData = async ({ silent = hasLoadedData, quiet = false } = {}) => {
     if (silent) {
-      setIsRefreshingContent(true);
+      if (!quiet) {
+        setIsRefreshingContent(true);
+      }
     } else {
       setIsLoadingData(true);
     }
@@ -187,6 +197,56 @@ function App() {
     });
   };
 
+  const showActionToast = useCallback((type, message = '') => {
+    const defaultMessages = {
+      created: 'Created successfully',
+      updated: 'Updated successfully',
+      saved: 'Saved successfully',
+      deleted: 'Deleted successfully',
+    };
+
+    setActionToast({
+      id: Date.now(),
+      type,
+      message: message || defaultMessages[type] || defaultMessages.saved,
+    });
+  }, []);
+
+  const clearActionToast = useCallback(() => setActionToast(null), []);
+
+  const refreshAfterMutation = () => {
+    loadData({ quiet: true }).catch(() => {});
+  };
+
+  const upsertDocument = (savedDoc) => {
+    setDocuments((prev) => sortNewest(
+      [savedDoc, ...prev.filter((item) => item.id !== savedDoc.id)],
+      ['createdAt', 'updatedAt', 'dateReceived'],
+    ));
+  };
+
+  const upsertTransmission = (savedTransmission) => {
+    setTransmissions((prev) => sortNewest(
+      [savedTransmission, ...prev.filter((item) => item.id !== savedTransmission.id)],
+      ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate'],
+    ));
+  };
+
+  const upsertArchive = (savedArchive) => {
+    setArchives((prev) => sortNewest(
+      [savedArchive, ...prev.filter((item) => item.id !== savedArchive.id)],
+      ['createdAt', 'updatedAt', 'date'],
+    ));
+  };
+
+  const upsertUser = (savedUser) => {
+    setUsers((prev) => [savedUser, ...prev.filter((item) => item.id !== savedUser.id)]);
+  };
+
+  const upsertOffice = (savedOffice) => {
+    setOffices((prev) => [savedOffice, ...prev.filter((item) => item.id !== savedOffice.id)]);
+  };
+
   const confirmUser = ({ type = 'warning', title, message, confirmLabel = 'Confirm', cancelLabel = 'Cancel' }) => (
     new Promise(resolve => {
       const closeWith = (answer) => {
@@ -235,7 +295,7 @@ function App() {
     });
 
     const offInvalidate = realtimeClient.on('data:invalidate', () => {
-      loadData({ silent: true });
+      loadData({ silent: true, quiet: true });
     });
 
     return () => {
@@ -332,13 +392,17 @@ function App() {
       originOfficeId: doc.originOfficeId || getUserOfficeId(),
       currentOfficeId: doc.currentOfficeId || doc.originOfficeId || getUserOfficeId(),
     }));
-    await loadData();
+    upsertDocument(savedDoc);
+    showActionToast('created');
+    refreshAfterMutation();
     return savedDoc;
   };
 
   const handleEditDocument = async (updated) => {
     const savedDoc = await runMutation(() => documentService.update(updated));
-    await loadData();
+    upsertDocument(savedDoc);
+    showActionToast('updated');
+    refreshAfterMutation();
     return savedDoc;
   };
 
@@ -352,7 +416,9 @@ function App() {
     if (!confirmed) return;
 
     await runMutation(() => documentService.delete(id));
-    await loadData();
+    setDocuments((prev) => prev.filter((item) => item.id !== id));
+    showActionToast('deleted');
+    refreshAfterMutation();
   };
 
   const handleAddTransmission = async (transmission) => {
@@ -360,19 +426,36 @@ function App() {
       ...transmission,
       transmissionDate: transmission.transmissionDate || new Date().toISOString().split('T')[0],
     }));
-    await loadData();
+    upsertTransmission(savedTransmission);
+    showActionToast('created', 'Transmission created successfully');
+    refreshAfterMutation();
+    return savedTransmission;
+  };
+
+  const handleRouteDocument = async (transmission) => {
+    const savedTransmission = await runMutation(() => transmissionService.create({
+      ...transmission,
+      transmissionDate: transmission.transmissionDate || new Date().toISOString().split('T')[0],
+    }));
+    upsertTransmission(savedTransmission);
+    showActionToast('saved', 'Routed successfully');
+    refreshAfterMutation();
     return savedTransmission;
   };
 
   const handleUpdateTransmission = async (id, updates) => {
     const savedTransmission = await runMutation(() => transmissionService.update(id, updates));
-    await loadData();
+    upsertTransmission(savedTransmission);
+    showActionToast('saved', getTransmissionUpdateToastMessage(updates));
+    refreshAfterMutation();
     return savedTransmission;
   };
 
   const handleAddArchive = async (archive) => {
     const savedArchive = await runMutation(() => archiveService.create(archive));
-    await loadData();
+    upsertArchive(savedArchive);
+    showActionToast('created', 'Archived successfully');
+    refreshAfterMutation();
     return savedArchive;
   };
 
@@ -385,25 +468,33 @@ function App() {
       status,
       ...(status === 'Signed' ? { completedAt: new Date().toISOString() } : {}),
     }));
-    await loadData();
+    upsertDocument(savedDoc);
+    showActionToast('saved', getStatusToastMessage(status));
+    refreshAfterMutation();
     return savedDoc;
   };
 
   const handleVerifyDocument = async (documentId, intakeStatus, rejectionReason = '') => {
     const savedDoc = await runMutation(() => documentService.verify(documentId, intakeStatus, rejectionReason));
-    await loadData();
+    upsertDocument(savedDoc);
+    showActionToast('saved', getVerificationToastMessage(intakeStatus));
+    refreshAfterMutation();
     return savedDoc;
   };
 
   const handleResubmitDocument = async (documentId) => {
     const savedDoc = await runMutation(() => documentService.resubmit(documentId));
-    await loadData();
+    upsertDocument(savedDoc);
+    showActionToast('saved', 'Resubmitted successfully');
+    refreshAfterMutation();
     return savedDoc;
   };
 
   const handleProcessDocument = async (documentId, action, note = '') => {
     const savedDoc = await runMutation(() => documentService.processNote(documentId, action, note));
-    await loadData();
+    upsertDocument(savedDoc);
+    showActionToast('saved', getProcessActionToastMessage(action));
+    refreshAfterMutation();
     return savedDoc;
   };
 
@@ -419,7 +510,8 @@ function App() {
 
   const handleResendSenderNotification = async (notificationId) => {
     const saved = await runMutation(() => senderNotificationService.resend(notificationId));
-    await loadData();
+    showActionToast('saved', 'Notification sent successfully');
+    refreshAfterMutation();
     return saved;
   };
 
@@ -442,7 +534,11 @@ function App() {
       },
       attachment,
     }));
-    await loadData();
+    if (saved?.document) {
+      upsertDocument(saved.document);
+    }
+    showActionToast('created');
+    refreshAfterMutation();
     return saved;
   };
 
@@ -457,7 +553,9 @@ function App() {
     if (!confirmed) return null;
 
     const savedUser = await runMutation(() => userService.create(user));
-    await loadData();
+    upsertUser(savedUser);
+    showActionToast('created');
+    refreshAfterMutation();
     return savedUser;
   };
 
@@ -473,7 +571,9 @@ function App() {
     if (!confirmed) return null;
 
     const savedUser = await runMutation(() => userService.update(id, updates));
-    await loadData();
+    upsertUser(savedUser);
+    showActionToast('updated');
+    refreshAfterMutation();
     return savedUser;
   };
 
@@ -489,7 +589,9 @@ function App() {
     if (!confirmed) return;
 
     await runMutation(() => userService.delete(id));
-    await loadData();
+    setUsers((prev) => prev.filter((item) => item.id !== id));
+    showActionToast('deleted');
+    refreshAfterMutation();
   };
 
   const handleAddOffice = async (office) => {
@@ -502,7 +604,9 @@ function App() {
     if (!confirmed) return null;
 
     const savedOffice = await runMutation(() => officeService.create(office));
-    await loadData();
+    upsertOffice(savedOffice);
+    showActionToast('created');
+    refreshAfterMutation();
     return savedOffice;
   };
 
@@ -517,7 +621,9 @@ function App() {
     if (!confirmed) return null;
 
     const savedOffice = await runMutation(() => officeService.update(id, updates));
-    await loadData();
+    upsertOffice(savedOffice);
+    showActionToast('updated');
+    refreshAfterMutation();
     return savedOffice;
   };
 
@@ -532,7 +638,9 @@ function App() {
     if (!confirmed) return;
 
     await runMutation(() => officeService.delete(id));
-    await loadData();
+    setOffices((prev) => prev.filter((item) => item.id !== id));
+    showActionToast('deleted');
+    refreshAfterMutation();
   };
 
   const isGlobalViewer = currentRole === 'admin' || currentRole === 'mayor';
@@ -792,7 +900,7 @@ function App() {
                 onAdd={handleAddDocument}
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
-                onRouteDocument={handleAddTransmission}
+                onRouteDocument={handleRouteDocument}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
                 onVerifyDocument={handleVerifyDocument}
@@ -902,7 +1010,7 @@ function App() {
                 onAdd={handleAddDocument}
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
-                onRouteDocument={handleAddTransmission}
+                onRouteDocument={handleRouteDocument}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
                 onVerifyDocument={handleVerifyDocument}
@@ -971,7 +1079,7 @@ function App() {
                 documentTypes={documentTypes}
                 currentUser={currentUser}
                 onAddDocument={handleAddDocument}
-                onAddTransmission={handleAddTransmission}
+                onAddTransmission={handleRouteDocument}
                 onReceiveTransmission={handleUpdateTransmission}
                 onNavigate={handleNavigate}
                 onOpenDocument={handleOpenDocument}
@@ -992,7 +1100,7 @@ function App() {
                 onAdd={handleAddDocument}
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
-                onRouteDocument={handleAddTransmission}
+                onRouteDocument={handleRouteDocument}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
                 onVerifyDocument={handleVerifyDocument}
@@ -1028,7 +1136,7 @@ function App() {
                 documentTypes={documentTypes}
                 currentUser={currentUser}
                 onAddDocument={handleAddDocument}
-                onAddTransmission={handleAddTransmission}
+                onAddTransmission={handleRouteDocument}
                 onReceiveTransmission={handleUpdateTransmission}
                 onNavigate={handleNavigate}
                 onOpenDocument={handleOpenDocument}
@@ -1073,6 +1181,7 @@ function App() {
         onConfirm={appDialog.onConfirm}
         onCancel={appDialog.onCancel}
       />
+      <ActionToast toast={actionToast} onDone={clearActionToast} />
     </RealtimeProvider>
   );
 }

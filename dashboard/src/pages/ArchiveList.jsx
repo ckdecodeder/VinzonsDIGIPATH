@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PageShell from "../components/PageShell";
+import ModalOverlay from "../components/ModalOverlay";
 import {
   Archive,
   Search,
@@ -359,10 +360,7 @@ const ArchiveList = ({
           const timeline = getArchiveTimeline(archive, doc);
 
           return (
-            <div
-              className="modal-overlay"
-              onClick={() => setDetailArchive(null)}
-            >
+            <ModalOverlay onClose={() => setDetailArchive(null)}>
               <div
                 className="modal document-detail-modal"
                 onClick={(e) => e.stopPropagation()}
@@ -546,12 +544,12 @@ const ArchiveList = ({
                   </button>
                 </div>
               </div>
-            </div>
+            </ModalOverlay>
           );
         })()}
 
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Archive a Document</h2>
@@ -631,13 +629,13 @@ const ArchiveList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {previewFile && (
-        <div
-          className="modal-overlay scanned-preview-overlay"
-          onClick={() => setPreviewFile(null)}
+        <ModalOverlay
+          overlayClassName="scanned-preview-overlay"
+          onClose={() => setPreviewFile(null)}
         >
           <div
             className="modal scanned-preview-modal"
@@ -702,7 +700,7 @@ const ArchiveList = ({
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

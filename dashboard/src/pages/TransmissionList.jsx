@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PageShell from "../components/PageShell";
+import ModalOverlay from "../components/ModalOverlay";
 import {
   ArrowRightLeft,
   Search,
@@ -357,7 +358,7 @@ const TransmissionList = ({
         }
       >
       <div className="table-container">
-        <table>
+        <table className="transmissions-table">
           <thead>
             <tr>
               <th className="transmissions-col-id">ID</th>
@@ -418,10 +419,7 @@ const TransmissionList = ({
                       </div>
                     </td>
                     <td className="transmissions-col-type">
-                      <span
-                        className={`filter-chip active`}
-                        style={{ cursor: "default", fontSize: "0.7rem" }}
-                      >
+                      <span className="transmissions-type-chip">
                         {t.transmissionType}
                       </span>
                     </td>
@@ -528,10 +526,7 @@ const TransmissionList = ({
           const timeline = getTransmissionTimeline(transmission);
 
           return (
-            <div
-              className="modal-overlay"
-              onClick={() => setDetailTransmission(null)}
-            >
+            <ModalOverlay onClose={() => setDetailTransmission(null)}>
               <div
                 className="modal document-detail-modal"
                 onClick={(e) => e.stopPropagation()}
@@ -721,13 +716,13 @@ const TransmissionList = ({
                   </button>
                 </div>
               </div>
-            </div>
+            </ModalOverlay>
           );
         })()}
 
       {/* Form Modal */}
       {showForm && (
-        <div className="modal-overlay" onClick={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => setShowForm(false)}>
           <div
             className="modal document-form-modal"
             onClick={(e) => e.stopPropagation()}
@@ -959,7 +954,7 @@ const TransmissionList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

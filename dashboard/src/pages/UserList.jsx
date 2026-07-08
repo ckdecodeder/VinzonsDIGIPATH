@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import PageShell from '../components/PageShell';
+import ModalOverlay from '../components/ModalOverlay';
 import {
   Users,
   Search,
@@ -387,7 +388,7 @@ const UserList = ({
       </PageShell>
 
       {showForm && (
-        <div className="modal-overlay" onClick={closeForm}>
+        <ModalOverlay onClose={closeForm}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{editUser ? "Edit User" : "New User"}</h2>
@@ -566,7 +567,7 @@ const UserList = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </>
   );

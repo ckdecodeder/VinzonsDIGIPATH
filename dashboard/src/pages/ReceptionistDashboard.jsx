@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import ModalOverlay from '../components/ModalOverlay';
+import formatBadgeCount from '../utils/formatBadgeCount';
 import {
   Inbox,
   Send,
@@ -239,29 +241,29 @@ const ReceptionistDashboard = ({
       scannedFiles: newFiles,
       scannedImageUrl: newFiles[0]?.dataUrl || '',
     };
+    setShowReceiveForm(false);
+    setAttachmentFile(null);
+    setReceiveForm({
+      subject: '',
+      documentDirection: 'Incoming',
+      documentTypeId: 'DT-001',
+      documentTypeOther: '',
+      status: 'Received',
+      priorityLevel: 'normal',
+      dateReceived: new Date().toISOString().split('T')[0],
+      currentOfficeId: currentUser?.officeId || 'OFF-001',
+      originOfficeOther: '',
+      senderName: '',
+      senderContact: '',
+      senderEmail: '',
+      notifySender: true,
+      senderNotificationConsent: true,
+      senderNotificationChannels: ['sms', 'email'],
+      remarks: '',
+      scannedText: '',
+    });
     try {
       await onAddDocument(newDoc);
-      setShowReceiveForm(false);
-      setAttachmentFile(null);
-      setReceiveForm({
-        subject: '',
-        documentDirection: 'Incoming',
-        documentTypeId: 'DT-001',
-        documentTypeOther: '',
-        status: 'Received',
-        priorityLevel: 'normal',
-        dateReceived: new Date().toISOString().split('T')[0],
-        currentOfficeId: currentUser?.officeId || 'OFF-001',
-        originOfficeOther: '',
-        senderName: '',
-        senderContact: '',
-        senderEmail: '',
-        notifySender: true,
-        senderNotificationConsent: true,
-        senderNotificationChannels: ['sms', 'email'],
-        remarks: '',
-        scannedText: '',
-      });
     } catch {
       // The shared save handler already shows the API error.
     }
@@ -282,9 +284,9 @@ const ReceptionistDashboard = ({
       ...routeForm,
       fromOfficeId: currentUser?.officeId || routeForm.fromOfficeId,
     };
+    setShowRouteForm(false);
     try {
       await onAddTransmission(newTrans);
-      setShowRouteForm(false);
     } catch {
       // The shared save handler already shows the API error.
     }
@@ -418,7 +420,7 @@ const ReceptionistDashboard = ({
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">Pending</h3>
-              <span className="nav-badge">{pendingDocuments.length}</span>
+              <span className="nav-badge">{formatBadgeCount(pendingDocuments.length)}</span>
             </div>
             {pendingDocuments.length > 0 ? (
               <div className="activity-list">
@@ -599,7 +601,7 @@ const ReceptionistDashboard = ({
 
       {/* Receive Document Modal */}
       {showReceiveForm && (
-        <div className="modal-overlay" onClick={() => setShowReceiveForm(false)}>
+        <ModalOverlay onClose={() => setShowReceiveForm(false)}>
           <div className="modal receptionist-register-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Register Document</h2>
@@ -812,12 +814,12 @@ const ReceptionistDashboard = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {/* Route Document Modal */}
       {showRouteForm && (
-        <div className="modal-overlay" onClick={() => setShowRouteForm(false)}>
+        <ModalOverlay onClose={() => setShowRouteForm(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Route Document</h2>
@@ -886,7 +888,7 @@ const ReceptionistDashboard = ({
               </div>
             </form>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );

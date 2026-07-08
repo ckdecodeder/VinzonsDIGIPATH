@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import formatBadgeCount from '../utils/formatBadgeCount';
 import {
   LayoutDashboard,
   FileText,
@@ -167,7 +168,7 @@ const Layout = ({
                 >
                   {item.icon}
                   {item.label}
-                  {item.badge > 0 && <span className="nav-badge">{item.badge}</span>}
+                  {item.badge > 0 && <span className="nav-badge">{formatBadgeCount(item.badge)}</span>}
                 </div>
               ))}
             </div>
@@ -176,20 +177,20 @@ const Layout = ({
 
         {/* Footer */}
         <div className="sidebar-footer">
-          <div className="user-info">
-            <div className="user-avatar">{userInitials}</div>
+          <button
+            type="button"
+            className="user-info"
+            onClick={onLogout}
+            title="Log out"
+            aria-label={`Log out ${userName}`}
+          >
+            <div className="user-avatar" aria-hidden="true">{userInitials}</div>
             <div className="user-details">
               <div className="user-name">{userName}</div>
               <div className="user-role">{userRole}</div>
             </div>
-            <LogOut
-              size={16}
-              style={{ color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}
-              onClick={onLogout}
-              title="Log out"
-              aria-label="Log out"
-            />
-          </div>
+            <LogOut size={16} className="user-logout-icon" aria-hidden="true" />
+          </button>
         </div>
       </aside>
 
@@ -243,7 +244,7 @@ const Layout = ({
             title={isNotificationDockOpen ? 'Hide notifications' : 'Show notifications'}
           >
             <Bell size={16} />
-            <span>{notifications.length}</span>
+            <span className="notification-dock-badge">{formatBadgeCount(notifications.length)}</span>
           </button>
 
           {isNotificationDockOpen && (

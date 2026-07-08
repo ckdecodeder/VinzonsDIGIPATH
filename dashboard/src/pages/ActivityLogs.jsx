@@ -142,11 +142,16 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
 
   const getUserFullName = (userId) => {
     const user = users.find((u) => u.id === userId);
-    return user
-      ? `${user.fname} ${user.mname || ""} ${user.lname}`
-          .replace(/\s+/g, " ")
-          .trim()
-      : "Unknown";
+    if (!user) return "Unknown";
+
+    const middle = user.mname?.trim();
+    const middleInitial = middle
+      ? middle.length <= 2
+        ? middle
+        : `${middle.charAt(0)}.`
+      : "";
+
+    return [user.fname, middleInitial, user.lname].filter(Boolean).join(" ");
   };
 
   const actionTypes = ["All", ...new Set(logs.map((l) => l.action))];
@@ -264,14 +269,14 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
       }
     >
       <div className="table-container">
-        <table>
+        <table className="activity-logs-table">
           <thead>
             <tr>
               <th className="activity-col-timestamp">Timestamp</th>
-              <th className="w-[170px] min-w-[160px]">Action</th>
-              <th className="w-[170px] min-w-[160px]">User</th>
-              <th className="min-w-[280px]">Details</th>
-              <th className="w-[120px] min-w-[110px]">Reference</th>
+              <th className="activity-col-action">Action</th>
+              <th className="activity-col-user">User</th>
+              <th className="activity-col-details">Details</th>
+              <th className="activity-col-reference">Reference</th>
             </tr>
           </thead>
           <tbody>
@@ -290,30 +295,27 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
                         {formatTimestamp(log.timestamp)}
                       </span>
                     </td>
-                    <td>
+                    <td className="activity-col-action-cell">
                       <span
-                        className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[0.7rem] font-semibold whitespace-nowrap"
+                        className="activity-log-action"
                         style={{ background: cfg.bg, color: cfg.color }}
                       >
                         {cfg.icon}
                         {cfg.label}
                       </span>
                     </td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <User
-                          size={14}
-                          style={{ color: "var(--text-muted)" }}
-                        />
-                        <span className="text-[0.8rem] font-medium text-[var(--text-main)]">
+                    <td className="activity-col-user-cell">
+                      <div className="activity-log-user">
+                        <User size={14} className="activity-log-user-icon" />
+                        <span className="activity-log-user-name" title={getUserFullName(log.userId)}>
                           {getUserFullName(log.userId)}
                         </span>
                       </div>
                     </td>
-                    <td className="td-primary text-[0.8rem] font-normal leading-snug">
+                    <td className="activity-col-details-cell td-primary">
                       {log.details}
                     </td>
-                    <td>
+                    <td className="activity-col-reference-cell">
                       {log.referenceId && (
                         <span className="td-mono text-[0.7rem]">
                           {log.referenceId}
