@@ -155,13 +155,12 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                     <label className="form-label">Password</label>
                     <div style={{ position: 'relative' }}>
                       <input
-                        className="form-input"
+                        className="form-input login-password-input"
                         type={showPassword ? 'text' : 'password'}
                         value={password}
                         onChange={e => setPassword(e.target.value)}
                         placeholder="Enter your password"
                         required
-                        style={{ paddingRight: '2.5rem' }}
                       />
                       <button
                         type="button"

@@ -15,6 +15,9 @@ import {
   getPriorityInfo,
 } from '../data/mockData';
 import { compareNewest } from '../utils/sorting';
+import { getAttachmentUrl } from '../utils/mediaUrl';
+import { getDocumentFiles, isImageAttachment, isPdfAttachment } from '../utils/documentFiles';
+import ScannedPreviewMedia from '../components/ScannedPreviewMedia';
 
 const OTHER_OFFICE_VALUE = '__external_source__';
 
@@ -158,22 +161,6 @@ const DocumentList = ({
   const getUserFullName = (userId) => {
     const user = users.find(u => u.id === userId);
     return user ? `${user.fname} ${user.mname || ''} ${user.lname}`.replace(/\s+/g, ' ').trim() : 'Unknown';
-  };
-
-  const getDocumentFiles = (doc) => {
-    if (doc.scannedFiles?.length) return doc.scannedFiles;
-    if (doc.scannedImageUrl) {
-      return [{
-        id: `${doc.id}-scan`,
-        name: `${doc.trackingNumber || doc.id}-scan.jpg`,
-        type: 'image/jpeg',
-        dataUrl: doc.scannedImageUrl,
-        uploadedAt: doc.dateReceived,
-        uploadedBy: null,
-        source: 'camera',
-      }];
-    }
-    return [];
   };
 
   const getSenderNotifications = (documentId) => {
@@ -634,17 +621,7 @@ const DocumentList = ({
     return date.toLocaleString();
   };
 
-  const getAttachmentSource = (file) => file?.url || file?.dataUrl || '';
-
-  const isImageFile = (file) => {
-    const source = getAttachmentSource(file);
-    return file.type?.startsWith('image/') || source.startsWith('data:image/') || /\.(jpg|jpeg|png|webp)$/i.test(source);
-  };
-
-  const isPdfFile = (file) => {
-    const source = getAttachmentSource(file);
-    return file.type === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf') || source.startsWith('data:application/pdf') || /\.pdf$/i.test(source);
-  };
+  const getAttachmentSource = (file) => getAttachmentUrl(file);
 
   const getDownloadName = (file, extension) => {
     const base = (file.name || 'scanned-document').replace(/\.[^.]+$/, '');
@@ -709,14 +686,14 @@ const DocumentList = ({
       if (format === 'original') {
         downloadUrl(source, file.name || 'scanned-document');
       } else if (format === 'pdf') {
-        if (isPdfFile(file)) {
+        if (isPdfAttachment(file)) {
           downloadUrl(source, file.name || 'scanned-document.pdf');
-        } else if (isImageFile(file)) {
+        } else if (isImageAttachment(file)) {
           printImageAsPdf(file);
         } else {
           notify('PDF saving is available for image or PDF scans only.');
         }
-      } else if (isImageFile(file)) {
+      } else if (isImageAttachment(file)) {
         await convertImageDownload(file, format);
       } else {
         notify('Image conversion is available for scanned image files only.');
@@ -1627,17 +1604,7 @@ const DocumentList = ({
             </div>
             <div className="modal-body">
               <div className="scanned-preview-surface">
-                {isImageFile(previewFile) ? (
-                  <img src={getAttachmentSource(previewFile)} alt={previewFile.name} className="scanned-preview-image" />
-                ) : isPdfFile(previewFile) ? (
-                  <iframe src={getAttachmentSource(previewFile)} title={previewFile.name} className="scanned-preview-frame" />
-                ) : (
-                  <div className="empty-state" style={{ padding: '2rem' }}>
-                    <FileText size={28} />
-                    <h3>Preview unavailable</h3>
-                    <p>This file type can be downloaded but cannot be previewed in the browser.</p>
-                  </div>
-                )}
+                <ScannedPreviewMedia file={previewFile} />
               </div>
             </div>
             <div className="modal-footer">

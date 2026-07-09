@@ -131,6 +131,27 @@ function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  const mergeReceptionistDocuments = (incoming = [], previous = [], user) => {
+    if (!user || getRoleKey(user) !== 'receptionist') {
+      return sortNewest(incoming, ['createdAt', 'updatedAt', 'dateReceived']);
+    }
+
+    const merged = new Map((incoming || []).map((doc) => [doc.id, doc]));
+    for (const doc of previous) {
+      const touchedByMe = (doc.timeline || []).some((event) => event.userId === user.id);
+      const atMyOffice = [
+        doc.originOfficeId,
+        doc.currentOfficeId,
+        doc.destinationOfficeId,
+      ].includes(user.officeId);
+      if ((touchedByMe || atMyOffice) && !merged.has(doc.id)) {
+        merged.set(doc.id, doc);
+      }
+    }
+
+    return sortNewest([...merged.values()], ['createdAt', 'updatedAt', 'dateReceived']);
+  };
+
   const loadData = async ({ silent = hasLoadedData, quiet = false } = {}) => {
     if (silent) {
       if (!quiet) {
@@ -145,7 +166,7 @@ function App() {
 
     try {
       const data = await appDataService.loadAll();
-      setDocuments(sortNewest(data.documents, ['createdAt', 'updatedAt', 'dateReceived']));
+      setDocuments((prev) => mergeReceptionistDocuments(data.documents || [], prev, currentUser));
       setTransmissions(sortNewest(data.transmissions, ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']));
       setArchives(sortNewest(data.archives, ['createdAt', 'updatedAt', 'date']));
       setDevice(data.device);
@@ -672,7 +693,12 @@ function App() {
     });
 
     if (currentRole === 'receptionist') {
-      return touchedByUser || visibleViaTransmission;
+      const atUserOffice = [
+        doc.originOfficeId,
+        doc.currentOfficeId,
+        doc.destinationOfficeId,
+      ].includes(userOfficeId);
+      return atUserOffice || touchedByUser || visibleViaTransmission;
     }
 
     return [

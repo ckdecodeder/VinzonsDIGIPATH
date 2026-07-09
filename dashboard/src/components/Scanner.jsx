@@ -778,14 +778,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   return (
     <PageShell
       header={
-        <div className="page-header">
+        <div className="page-header page-header--scanner">
           <div className="page-header-left">
             <h1>Scan Document</h1>
-            <p>Scan first, then submit the document for intake review</p>
-          </div>
-          <div className={device?.connected ? 'status-badge status-online' : 'status-badge status-offline'}>
-            {device?.connected ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {device?.connected ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
+            <div className="page-header-scanner-row">
+              <p>Scan first, then submit the document for intake review</p>
+              <div className={device?.connected ? 'status-badge status-online' : 'status-badge status-offline'}>
+                {device?.connected ? <Wifi size={12} /> : <WifiOff size={12} />}
+                {device?.connected ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
+              </div>
+            </div>
           </div>
         </div>
       }

@@ -12,6 +12,8 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
   const renderTaskRef = useRef(null);
   const renderGenerationRef = useRef(0);
   const resizeTimerRef = useRef(null);
+  const lastWidthRef = useRef(0);
+  const hasRenderedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -19,6 +21,10 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
     if (!src) return undefined;
 
     let cancelled = false;
+    hasRenderedRef.current = false;
+    lastWidthRef.current = 0;
+    setLoading(true);
+    setError('');
 
     const cancelActiveRender = async () => {
       const task = renderTaskRef.current;
@@ -37,8 +43,18 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
       await cancelActiveRender();
       if (cancelled || generation !== renderGenerationRef.current) return;
 
-      setLoading(true);
-      setError('');
+      const containerWidth = Math.max(wrapRef.current?.clientWidth || 640, 280);
+      const isResize = hasRenderedRef.current;
+      const widthDelta = Math.abs(containerWidth - lastWidthRef.current);
+
+      if (isResize && widthDelta < 12) return;
+
+      lastWidthRef.current = containerWidth;
+
+      if (!isResize) {
+        setLoading(true);
+        setError('');
+      }
 
       try {
         const doc = await pdfjs.getDocument(src).promise;
@@ -47,7 +63,6 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
         const page = await doc.getPage(1);
         if (cancelled || generation !== renderGenerationRef.current) return;
 
-        const containerWidth = Math.max(wrapRef.current?.clientWidth || 640, 280);
         const baseViewport = page.getViewport({ scale: 1 });
         const scale = containerWidth / baseViewport.width;
         const viewport = page.getViewport({ scale });
@@ -65,6 +80,7 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
 
         if (cancelled || generation !== renderGenerationRef.current) return;
         renderTaskRef.current = null;
+        hasRenderedRef.current = true;
         setLoading(false);
       } catch (err) {
         if (cancelled || generation !== renderGenerationRef.current) return;
@@ -87,7 +103,7 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
     scheduleRender(0);
 
     const observer = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(() => scheduleRender(150))
+      ? new ResizeObserver(() => scheduleRender(200))
       : null;
 
     if (observer && wrapRef.current) {
@@ -108,13 +124,18 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
 
   return (
     <div ref={wrapRef} className="scanner-pdf-fit-wrap" aria-label={alt}>
+      <canvas
+        ref={canvasRef}
+        className={`scanner-pdf-canvas${loading && !error ? ' is-loading' : ''}`}
+      />
       {loading && !error && (
-        <div className="scanner-pdf-fit-status">Loading preview...</div>
+        <div className="scanner-pdf-fit-status" aria-live="polite">
+          Loading preview...
+        </div>
       )}
       {error && (
         <div className="scanner-pdf-fit-status scanner-pdf-fit-status-error">{error}</div>
       )}
-      <canvas ref={canvasRef} className="scanner-pdf-canvas" />
     </div>
   );
 }

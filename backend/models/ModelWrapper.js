@@ -11,6 +11,27 @@
  */
 const { Op, Sequelize } = require('sequelize');
 const bcrypt = require('bcryptjs');
+const { sequelize } = require('../config/db');
+
+const JSONB_ARRAY_FIELDS = new Set([
+  'timeline',
+  'readBy',
+  'scannedFiles',
+  'senderNotificationChannels',
+]);
+
+const buildJsonbArrayMatchLiteral = (jsonField, jsonKey, value) => {
+  const safeKey = String(jsonKey).replace(/[^a-zA-Z0-9_]/g, '');
+  if (!safeKey) return null;
+
+  const escapedValue = sequelize
+    ? sequelize.escape(String(value))
+    : `'${String(value).replace(/'/g, "''")}'`;
+
+  return Sequelize.literal(
+    `EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE("${jsonField}", '[]'::jsonb)) AS json_elem WHERE json_elem->>'${safeKey}' = ${escapedValue})`,
+  );
+};
 
 // ─── MongoDB operator → Sequelize Op mapping ─────────────────────────────────
 const OP_MAP = {
@@ -85,11 +106,21 @@ function translateFilter(filter) {
       }
     }
 
-    // Nested dot-notation keys for JSON columns (e.g. 'timeline.userId')
-    // These become JSONB containment queries (not directly supported, skip gracefully)
+    // Nested dot-notation keys for JSON array columns (e.g. 'timeline.userId')
     if (key.includes('.')) {
-      // We handle JSON containment queries in getScopedQuery helpers.
-      // For now we skip nested dot keys silently — they are handled by raw SQL in special helpers.
+      const [jsonField, jsonKey, ...rest] = key.split('.');
+      if (!rest.length && jsonField && jsonKey && JSONB_ARRAY_FIELDS.has(jsonField)) {
+        const literal = buildJsonbArrayMatchLiteral(jsonField, jsonKey, value);
+        if (literal) {
+          if (!result[Op.and]) {
+            result[Op.and] = [literal];
+          } else if (Array.isArray(result[Op.and])) {
+            result[Op.and].push(literal);
+          } else {
+            result[Op.and] = [result[Op.and], literal];
+          }
+        }
+      }
       continue;
     }
 

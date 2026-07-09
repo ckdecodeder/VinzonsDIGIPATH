@@ -20,6 +20,9 @@ import {
   offices as defaultOffices,
   users as defaultUsers,
 } from "../data/mockData";
+import { getAttachmentUrl } from "../utils/mediaUrl";
+import { getDocumentFiles } from "../utils/documentFiles";
+import ScannedPreviewMedia from "../components/ScannedPreviewMedia";
 
 const ArchiveList = ({
   archives,
@@ -74,45 +77,7 @@ const ArchiveList = ({
     return date.toISOString().slice(0, 10);
   };
 
-  const getDocumentFiles = (doc) => {
-    if (!doc) return [];
-    if (doc.scannedFiles?.length) return doc.scannedFiles;
-    if (doc.scannedImageUrl) {
-      return [
-        {
-          id: `${doc.id}-scan`,
-          name: `${doc.trackingNumber || doc.id}-scan.jpg`,
-          type: "image/jpeg",
-          dataUrl: doc.scannedImageUrl,
-          uploadedAt: doc.dateReceived,
-          uploadedBy: null,
-          source: "camera",
-        },
-      ];
-    }
-    return [];
-  };
-
-  const getAttachmentSource = (file) => file?.url || file?.dataUrl || "";
-
-  const isImageFile = (file) => {
-    const source = getAttachmentSource(file);
-    return (
-      file.type?.startsWith("image/") ||
-      source.startsWith("data:image/") ||
-      /\.(jpg|jpeg|png|webp)$/i.test(source)
-    );
-  };
-
-  const isPdfFile = (file) => {
-    const source = getAttachmentSource(file);
-    return (
-      file.type === "application/pdf" ||
-      file.name?.toLowerCase().endsWith(".pdf") ||
-      source.startsWith("data:application/pdf") ||
-      /\.pdf$/i.test(source)
-    );
-  };
+  const getAttachmentSource = (file) => getAttachmentUrl(file);
 
   const getArchiveTimeline = (archive, doc) => {
     const timeline = doc?.timeline?.length
@@ -217,15 +182,20 @@ const ArchiveList = ({
     <>
       <PageShell
         header={
-          <div className="page-header">
+          <div className="page-header page-header--align-bottom">
             <div className="page-header-left">
               <h1>Archives</h1>
               <p>Documents that are filed, archived, and stored for records</p>
             </div>
+            <div className="page-header-actions page-header-actions--inline">
+              <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+                <Plus size={16} /> Archive Document
+              </button>
+            </div>
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row page-toolbar-stacked">
+          <div className="page-toolbar-row">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -238,9 +208,6 @@ const ArchiveList = ({
                 />
               </div>
             </div>
-            <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-              <Plus size={16} /> Archive Document
-            </button>
           </div>
         }
       >
@@ -668,28 +635,7 @@ const ArchiveList = ({
             </div>
             <div className="modal-body">
               <div className="scanned-preview-surface">
-                {isImageFile(previewFile) ? (
-                  <img
-                    src={getAttachmentSource(previewFile)}
-                    alt={previewFile.name}
-                    className="scanned-preview-image"
-                  />
-                ) : isPdfFile(previewFile) ? (
-                  <iframe
-                    src={getAttachmentSource(previewFile)}
-                    title={previewFile.name}
-                    className="scanned-preview-frame"
-                  />
-                ) : (
-                  <div className="empty-state" style={{ padding: "2rem" }}>
-                    <FileText size={28} />
-                    <h3>Preview unavailable</h3>
-                    <p>
-                      This file type can be downloaded but cannot be previewed
-                      in the browser.
-                    </p>
-                  </div>
-                )}
+                <ScannedPreviewMedia file={previewFile} />
               </div>
             </div>
             <div className="modal-footer">
