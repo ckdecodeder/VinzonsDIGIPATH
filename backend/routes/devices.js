@@ -243,6 +243,50 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   res.status(201).json({ documentId: doc.id, document: doc, device: deviceSnapshot });
 }));
 
+// Enrich an already-uploaded scan with AI-extracted fields (runs after the Pi
+// has uploaded the image, so the dashboard can proceed instantly then refresh).
+router.put('/devices/scans/:documentId', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
+  const doc = await Document.findOne({ id: req.params.documentId });
+  if (!doc) return res.status(404).json({ message: 'Document not found' });
+
+  const now = new Date().toISOString();
+  const set = { updatedAt: now };
+
+  const aiTitle = req.body.extractedTitle?.trim() || req.body.subject?.trim();
+  if (aiTitle) set.subject = aiTitle;
+
+  const aiText = req.body.scannedText || req.body.extractedText;
+  if (aiText && String(aiText).trim()) set.scannedText = String(aiText).trim();
+
+  const aiSender = req.body.extractedSender?.trim();
+  if (aiSender && aiSender.toLowerCase() !== 'scanner device') set.senderName = aiSender;
+
+  // Apply extracted date if provided (AI often reads this more reliably than OCR regex).
+  const aiDate = req.body.extractedDate?.trim();
+  if (aiDate) set.dateReceived = aiDate;
+
+  // Apply document type if the Pi mapped it to a known type ID.
+  const aiDocTypeId = req.body.documentTypeId?.trim();
+  if (aiDocTypeId) set.documentTypeId = aiDocTypeId;
+
+  const updated = await Document.findOneAndUpdate(
+    { id: req.params.documentId },
+    { $set: set },
+    updateOptions,
+  );
+
+  await createLogEntry(req, 'document_ai_enriched', `AI enriched scanned document: ${updated.subject}`, updated.id, 'hardware');
+
+  const resultDoc = updated.toObject?.() || updated;
+  if (req.body.commandId) {
+    const command = await Command.findOne({ id: req.body.commandId }).lean();
+    if (command) broadcastCommandUpdated(command, resultDoc);
+  }
+  broadcastDataInvalidate(['documents']);
+
+  res.json({ documentId: updated.id, document: resultDoc });
+}));
+
 // ─── ADMIN / USER FRONTEND ENDPOINTS ───────────────────────────────────────────
 router.use(protect);
 

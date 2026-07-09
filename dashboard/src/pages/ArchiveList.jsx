@@ -20,9 +20,9 @@ import {
   offices as defaultOffices,
   users as defaultUsers,
 } from "../data/mockData";
-import { getAttachmentUrl } from "../utils/mediaUrl";
 import { getDocumentFiles } from "../utils/documentFiles";
 import ScannedPreviewMedia from "../components/ScannedPreviewMedia";
+import { getAttachmentSource } from "../utils/attachmentDownload";
 
 const ArchiveList = ({
   archives,
@@ -77,7 +77,6 @@ const ArchiveList = ({
     return date.toISOString().slice(0, 10);
   };
 
-  const getAttachmentSource = (file) => getAttachmentUrl(file);
 
   const getArchiveTimeline = (archive, doc) => {
     const timeline = doc?.timeline?.length

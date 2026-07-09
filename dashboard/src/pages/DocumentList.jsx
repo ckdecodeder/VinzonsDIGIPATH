@@ -15,9 +15,14 @@ import {
   getPriorityInfo,
 } from '../data/mockData';
 import { compareNewest } from '../utils/sorting';
-import { getAttachmentUrl } from '../utils/mediaUrl';
-import { getDocumentFiles, isImageAttachment, isPdfAttachment } from '../utils/documentFiles';
+import { getDocumentFiles } from '../utils/documentFiles';
 import ScannedPreviewMedia from '../components/ScannedPreviewMedia';
+import {
+  downloadAttachment,
+  getAttachmentSource,
+  isImageAttachment,
+  isPdfAttachment,
+} from '../utils/attachmentDownload';
 
 const OTHER_OFFICE_VALUE = '__external_source__';
 
@@ -621,83 +626,10 @@ const DocumentList = ({
     return date.toLocaleString();
   };
 
-  const getAttachmentSource = (file) => getAttachmentUrl(file);
-
-  const getDownloadName = (file, extension) => {
-    const base = (file.name || 'scanned-document').replace(/\.[^.]+$/, '');
-    return `${base}.${extension}`;
-  };
-
-  const downloadUrl = (url, filename) => {
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-  };
-
-  const convertImageDownload = async (file, format) => {
-    const source = getAttachmentSource(file);
-    const image = await new Promise((resolve, reject) => {
-      const img = new window.Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('Unable to prepare the scanned image for conversion.'));
-      img.src = source;
-    });
-
-    const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth || image.width;
-    canvas.height = image.naturalHeight || image.height;
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(image, 0, 0);
-    const mime = format === 'jpeg' ? 'image/jpeg' : 'image/png';
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, mime, 0.92));
-    if (!blob) throw new Error('Unable to convert the scanned image.');
-    const url = URL.createObjectURL(blob);
-    downloadUrl(url, getDownloadName(file, format === 'jpeg' ? 'jpg' : 'png'));
-    URL.revokeObjectURL(url);
-  };
-
-  const printImageAsPdf = (file) => {
-    const source = getAttachmentSource(file);
-    const popup = window.open('', '_blank', 'width=900,height=1100');
-    if (!popup) {
-      notify('Allow popups to save the scanned paper as PDF.', 'Popup blocked');
-      return;
-    }
-    popup.document.write(`<!doctype html><html><head><title>${file.name || 'Scanned paper'}</title><style>
-      @page { margin: 0.4in; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fff; }
-      img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-    </style></head><body><img src="${source}" alt="Scanned paper" /></body></html>`);
-    popup.document.close();
-    popup.focus();
-    popup.print();
-  };
-
   const handleAttachmentDownload = async (file) => {
     const format = downloadFormats[file.id] || 'original';
-    const source = getAttachmentSource(file);
-    if (!source) return;
-
     try {
-      if (format === 'original') {
-        downloadUrl(source, file.name || 'scanned-document');
-      } else if (format === 'pdf') {
-        if (isPdfAttachment(file)) {
-          downloadUrl(source, file.name || 'scanned-document.pdf');
-        } else if (isImageAttachment(file)) {
-          printImageAsPdf(file);
-        } else {
-          notify('PDF saving is available for image or PDF scans only.');
-        }
-      } else if (isImageAttachment(file)) {
-        await convertImageDownload(file, format);
-      } else {
-        notify('Image conversion is available for scanned image files only.');
-      }
+      await downloadAttachment(file, format);
     } catch (err) {
       notify(err.message || 'Unable to download this scanned file.', 'Download failed', 'danger');
     }

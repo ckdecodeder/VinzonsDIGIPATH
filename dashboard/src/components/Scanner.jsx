@@ -51,6 +51,7 @@ const paperGuides = [
 
 const WS_STREAM_TIMEOUT_MS = 500;
 const SNAPSHOT_INTERVAL_MS = 400;
+const STREAM_STALE_MS = 4000;
 
 const paintWsFrame = (previewImg, frame, wsFrameUrlRef, onReady) => {
   if (!frame?.length || !previewImg) return;
@@ -83,10 +84,14 @@ const getSubjectFromOcr = (text, fallback = '') => {
 const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device }) => {
   const camera = useRef(null);
   const commandPollRef = useRef(null);
+  const enrichPollRef = useRef(null);
+  const autoFilledRef = useRef({});
   const previewImgRef = useRef(null);
   const wsFrameUrlRef = useRef('');
   const previewReadyRef = useRef(false);
   const lanSnapshotStarterRef = useRef(null);
+  const lastFrameAtRef = useRef(0);
+  const staleReloadAtRef = useRef(0);
   const realtime = useOptionalRealtime();
   const canChooseSourceOffice = currentUser?.role === 'Admin';
   const canChooseDirection = currentUser?.role === 'Admin';
@@ -113,6 +118,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [lanBridgeProbing, setLanBridgeProbing] = useState(false);
   const [directStreamUrl, setDirectStreamUrl] = useState('');
   const [previewMode, setPreviewMode] = useState('ws');
+  const [streamStale, setStreamStale] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [isDeviceScanning, setIsDeviceScanning] = useState(false);
@@ -151,6 +157,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     return () => {
       if (commandPollRef.current) {
         clearInterval(commandPollRef.current);
+      }
+      if (enrichPollRef.current) {
+        clearInterval(enrichPollRef.current);
       }
     };
   }, []);
@@ -280,17 +289,22 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     if (previewImgRef.current) {
       previewImgRef.current.src = nextUrl;
     }
+    lastFrameAtRef.current = Date.now();
     if (!previewReadyRef.current) {
       previewReadyRef.current = true;
       setPreviewReady(true);
     }
+    setStreamStale(false);
     setStreamHasError(false);
     setPreviewErrorMessage('');
   };
 
+  // Hard reset: switching device or camera source clears everything to black.
   useEffect(() => {
     previewReadyRef.current = false;
     setPreviewReady(false);
+    setStreamStale(false);
+    lastFrameAtRef.current = 0;
     setDirectStreamUrl('');
     if (wsFrameUrlRef.current) {
       URL.revokeObjectURL(wsFrameUrlRef.current);
@@ -299,7 +313,44 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     if (previewImgRef.current) {
       previewImgRef.current.removeAttribute('src');
     }
-  }, [streamReloadKey, device?.id, cameraSource]);
+  }, [device?.id, cameraSource]);
+
+  // Soft reload (stale watchdog): keep the last painted frame visible so the
+  // preview looks frozen under the "Reconnecting" overlay instead of flashing
+  // black. Resubscription happens in the stream effects keyed on streamReloadKey.
+  useEffect(() => {
+    setDirectStreamUrl('');
+  }, [streamReloadKey]);
+
+  useEffect(() => {
+    // MJPEG (direct) is a continuous browser-managed stream; per-frame timing
+    // is not observable, so skip the watchdog for it.
+    if (!isPhysicalSource || !device?.connected || !previewReady || previewMode === 'direct') {
+      setStreamStale(false);
+      return undefined;
+    }
+
+    const interval = setInterval(() => {
+      const last = lastFrameAtRef.current;
+      if (!last) return;
+      const age = Date.now() - last;
+      if (age < STREAM_STALE_MS) {
+        setStreamStale(false);
+        return;
+      }
+
+      setStreamStale(true);
+
+      // Auto-recover: reload the stream at most once every 8s while stalled.
+      const now = Date.now();
+      if (now - staleReloadAtRef.current > 8000) {
+        staleReloadAtRef.current = now;
+        setStreamReloadKey(value => value + 1);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isPhysicalSource, device?.connected, previewReady, previewMode, directStreamUrl]);
 
   useEffect(() => {
     if (!hasLanBridge) {
@@ -365,6 +416,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const scheduleFramePaint = (frame) => {
     if (!frame?.length || !previewImgRef.current) return;
     paintWsFrame(previewImgRef.current, frame, wsFrameUrlRef, () => {
+      lastFrameAtRef.current = Date.now();
+      setStreamStale(false);
       if (!previewReadyRef.current) {
         previewReadyRef.current = true;
         setPreviewReady(true);
@@ -497,22 +550,79 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
   };
 
-  const applyPhysicalScanResult = (result) => {
+  const startEnrichmentPolling = (commandId) => {
+    if (enrichPollRef.current) {
+      clearInterval(enrichPollRef.current);
+      enrichPollRef.current = null;
+    }
+    let attempts = 0;
+    enrichPollRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > 10) {
+        clearInterval(enrichPollRef.current);
+        enrichPollRef.current = null;
+        return;
+      }
+      try {
+        const result = await commandService.checkStatus(commandId);
+        const doc = result?.resultDocument;
+        if (!doc) return;
+
+        const auto = autoFilledRef.current || {};
+        const newSubject = getSubjectFromOcr(doc.scannedText || '', doc.subject) || '';
+        const newSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
+        const newText = doc.scannedText || '';
+
+        // Only fill fields the user hasn't manually changed (still equal to the
+        // value we auto-filled, or still empty). This avoids clobbering edits.
+        const enriched = newText && newText !== auto.scannedText;
+        if (!enriched) return;
+
+        setExtractedText(prev => (prev === auto.scannedText || !prev ? newText : prev));
+        setFormData(prev => ({
+          ...prev,
+          subject: (!prev.subject || prev.subject === auto.subject) && newSubject ? newSubject : prev.subject,
+          senderName: (!prev.senderName || prev.senderName === auto.senderName) && newSender ? newSender : prev.senderName,
+        }));
+        autoFilledRef.current = { subject: newSubject, senderName: newSender, scannedText: newText };
+
+        clearInterval(enrichPollRef.current);
+        enrichPollRef.current = null;
+      } catch {
+        // Keep polling; the enrichment may not be ready yet.
+      }
+    }, 2500);
+  };
+
+  const applyPhysicalScanResult = (result, commandId) => {
     if (result.status === 'Executed') {
       const doc = result.resultDocument;
       setHardwareScannedDoc(doc || null);
       if (doc) {
-        const scannedFile = doc.scannedFiles?.[0];
+        const scannedFile = doc.scannedFiles?.find((f) => !isPdfMedia(f?.url, f?.type))
+          || doc.scannedFiles?.[0];
         const scannedUrl = resolveUploadUrl(
-          doc.scannedImageUrl || scannedFile?.url || scannedFile?.dataUrl || null,
+          (scannedFile?.url && !isPdfMedia(scannedFile.url, scannedFile.type) ? scannedFile.url : null)
+          || (doc.scannedImageUrl && !isPdfMedia(doc.scannedImageUrl) ? doc.scannedImageUrl : null)
+          || scannedFile?.url
+          || doc.scannedImageUrl
+          || scannedFile?.dataUrl
+          || null,
         );
-        const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : '');
+        const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : 'image/jpeg');
+        const autoSubject = getSubjectFromOcr(doc.scannedText || '', doc.subject) || '';
+        const autoSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
+        autoFilledRef.current = {
+          subject: autoSubject,
+          senderName: autoSender,
+          scannedText: doc.scannedText || '',
+        };
         setCapturedImage(scannedUrl);
         setCapturedFileType(scannedType);
         setExtractedText(doc.scannedText || '');
         setFormData(prev => ({
           ...prev,
-          subject: getSubjectFromOcr(doc.scannedText || '', doc.subject) || prev.subject,
+          subject: autoSubject || prev.subject,
           documentDirection: doc.documentDirection || prev.documentDirection,
           documentTypeId: doc.documentTypeId || prev.documentTypeId,
           documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
@@ -522,7 +632,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
           toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
           dateReceived: doc.dateReceived || prev.dateReceived,
-          senderName: doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : prev.senderName,
+          senderName: autoSender || prev.senderName,
           senderContact: doc.senderContact || prev.senderContact,
           senderEmail: doc.senderEmail || prev.senderEmail,
           notifySender: doc.notifySender ?? prev.notifySender,
@@ -530,6 +640,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
           remarks: doc.remarks || prev.remarks,
         }));
+        // AI extraction may still be running on the Pi. Poll a few more times to
+        // fill in the fields once the enriched document arrives.
+        if (commandId) startEnrichmentPolling(commandId);
       }
       setIsDeviceScanning(false);
       setDeviceScanStatus('');
@@ -611,7 +724,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         attempts += 1;
         try {
           const result = await commandService.checkStatus(command.id);
-          if (applyPhysicalScanResult(result)) {
+          if (applyPhysicalScanResult(result, command.id)) {
             clearInterval(commandPollRef.current);
             commandPollRef.current = null;
           } else if (attempts > 90) {
@@ -726,6 +839,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   };
 
   const handleReset = () => {
+    if (enrichPollRef.current) {
+      clearInterval(enrichPollRef.current);
+      enrichPollRef.current = null;
+    }
+    autoFilledRef.current = {};
     setStep(1);
     setCapturedImage(null);
     setCapturedFileType('');
@@ -783,9 +901,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             <h1>Scan Document</h1>
             <div className="page-header-scanner-row">
               <p>Scan first, then submit the document for intake review</p>
-              <div className={device?.connected ? 'status-badge status-online' : 'status-badge status-offline'}>
-                {device?.connected ? <Wifi size={12} /> : <WifiOff size={12} />}
-                {device?.connected ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
+              <div className={(device?.connected || hardwareScannedDoc) ? 'status-badge status-online' : 'status-badge status-offline'}>
+                {(device?.connected || hardwareScannedDoc) ? <Wifi size={12} /> : <WifiOff size={12} />}
+                {(device?.connected || hardwareScannedDoc) ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
               </div>
             </div>
           </div>
@@ -941,7 +1059,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 videoReadyCallback={refreshCameraDevices}
                 videoSourceDeviceId={selectedCameraId || undefined}
                 facingMode={cameraFacingMode}
-                aspectRatio="cover"
+                aspectRatio="contain"
               />
             )}
 
@@ -958,10 +1076,29 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               <div className="scanner-scan-line"></div>
             </div>
 
-            {isPhysicalSource && previewReady && (
+            {isPhysicalSource && previewReady && !streamStale && (
               <div className="scanner-preview-warning" style={{ background: 'var(--success-bg, rgba(16, 185, 129, 0.12))', color: 'var(--success, #10b981)' }}>
                 <Wifi size={16} />
                 <span>{previewLabel}</span>
+              </div>
+            )}
+
+            {isPhysicalSource && previewReady && streamStale && (
+              <div className="scanner-preview-empty" style={{ position: 'absolute', inset: 0, zIndex: 3, background: 'rgba(0,0,0,0.55)' }}>
+                <Loader2 size={30} className="animate-spin" />
+                <span>Reconnecting camera stream...</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ marginTop: '0.75rem', padding: '0.4rem 1rem' }}
+                  onClick={() => {
+                    setStreamStale(false);
+                    setPreviewErrorMessage('');
+                    setStreamReloadKey(value => value + 1);
+                  }}
+                >
+                  <RefreshCw size={14} /> Reload preview
+                </button>
               </div>
             )}
 
