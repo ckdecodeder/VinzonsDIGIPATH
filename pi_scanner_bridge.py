@@ -341,7 +341,7 @@ DUMMY_IMAGE_PATH = "dummy_test.jpg"
 
 # Camera settings
 CAMERA_RESOLUTION = (3280, 2464)     # Max resolution for Pi Camera v2 (capture)
-STREAM_RESOLUTION = (640, 360)       # Lower resolution = faster live stream
+STREAM_RESOLUTION = (640, 480)       # 4:3 = full Pi camera field of view (no sensor crop zoom)
 CAMERA_WARMUP_SECS = 1
 STREAM_PORT = 8080                   # MJPEG stream port
 STREAM_PORT = int(os.environ.get("DIGIPATH_STREAM_PORT", str(STREAM_PORT)))
@@ -370,6 +370,13 @@ def _match_capture_size():
         return CAMERA_RESOLUTION
 
 CAPTURE_STILL_SIZE = _match_capture_size()
+
+
+def get_capture_still_size():
+    """Match the live-preview field of view — same aspect, no sensor zoom/crop change."""
+    if CAPTURE_MATCH_PREVIEW:
+        return _match_capture_size()
+    return CAMERA_RESOLUTION
 STREAM_COLOR_MODE = os.environ.get("DIGIPATH_STREAM_COLOR_MODE", "jpeg").strip().lower()
 # Cap how often frames are pushed over the WebSocket relay. Sending every ISP
 # frame can overflow a dev-tunnel send buffer and stall the stream (black).
@@ -400,9 +407,14 @@ OPENCV_CAMERA_INDEX = int(os.environ.get("DIGIPATH_OPENCV_CAMERA_INDEX", "0"))
 ENABLE_OPENCV_CAMERA = os.environ.get("DIGIPATH_ENABLE_OPENCV_CAMERA", "auto").lower()
 # Grab the still straight from the live preview buffer for instant capture.
 INSTANT_CAPTURE = os.environ.get("DIGIPATH_INSTANT_CAPTURE", "1").strip().lower() not in ("0", "false", "no", "off")
-# Auto-crop to detected document edges. OFF by default so the captured image
-# matches the full live-preview view (no cropping / perspective warp).
-AUTO_CROP = os.environ.get("DIGIPATH_AUTO_CROP", "0").strip().lower() in ("1", "true", "yes", "on")
+# Auto-crop to detected document edges (whole paper, not the full camera view).
+# ON by default — detects the white paper rectangle and perspective-corrects it.
+AUTO_CROP = os.environ.get("DIGIPATH_AUTO_CROP", "1").strip().lower() not in ("0", "false", "no", "off")
+CROP_MIN_AREA_PCT = float(os.environ.get("DIGIPATH_CROP_MIN_AREA_PCT", "0.05"))
+CROP_PADDING_PCT = float(os.environ.get("DIGIPATH_CROP_PADDING_PCT", "0.02"))
+# bbox = rectangular crop at same scale as live preview (no zoom-in).
+# perspective = deskew/flatten tilted paper (can look more zoomed).
+CROP_MODE = os.environ.get("DIGIPATH_CROP_MODE", "bbox").strip().lower()
 # USB webcam capture resolution (read high-res for OCR; preview is downscaled).
 _usb_cap_w = int(os.environ.get("DIGIPATH_USB_CAPTURE_WIDTH", "1920"))
 _usb_cap_h = int(os.environ.get("DIGIPATH_USB_CAPTURE_HEIGHT", "1080"))
@@ -1293,14 +1305,16 @@ def _picamera2_capture_still(file_path, force_auto_exposure=False):
                 print(f"[Scanner] Could not read live exposure ({meta_err}); using warmup.")
 
         camera.stop()
+        still_size = get_capture_still_size()
+        print(f"[Scanner] Still capture {still_size[0]}x{still_size[1]} (stream {STREAM_RESOLUTION[0]}x{STREAM_RESOLUTION[1]}, match_preview={CAPTURE_MATCH_PREVIEW})")
         try:
             still_config = camera.create_still_configuration(
-                main={"size": CAPTURE_STILL_SIZE, "format": "RGB888"},
+                main={"size": still_size, "format": "RGB888"},
                 controls=locked_controls or None,
             )
         except TypeError:
             still_config = camera.create_still_configuration(
-                main={"size": CAPTURE_STILL_SIZE, "format": "RGB888"},
+                main={"size": still_size, "format": "RGB888"},
             )
         camera.configure(still_config)
         camera.start()
@@ -1786,79 +1800,163 @@ def extract_text_and_title(image_path, run_ai=None):
     return extracted_text, extracted_title, extracted_date, extracted_sender
 
 # ================= DOCUMENT EDGE DETECTION & CROPPING =================
+def _order_quad_points(pts):
+    """Order 4 corner points as top-left, top-right, bottom-right, bottom-left."""
+    pts = np.array(pts, dtype="float32").reshape(4, 2)
+    s = pts.sum(axis=1)
+    rect = np.zeros((4, 2), dtype="float32")
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+    return rect
+
+
+def _quad_dimensions(rect):
+    tl, tr, br, bl = rect
+    w = max(np.linalg.norm(tr - tl), np.linalg.norm(br - bl))
+    h = max(np.linalg.norm(bl - tl), np.linalg.norm(br - tr))
+    return float(w), float(h)
+
+
+def _expand_quad(rect, image_shape, padding_pct):
+    """Expand quad slightly outward so paper edges are not clipped."""
+    h, w = image_shape[:2]
+    center = rect.mean(axis=0)
+    scale = 1.0 + max(0.0, padding_pct)
+    expanded = center + (rect - center) * scale
+    expanded[:, 0] = np.clip(expanded[:, 0], 0, w - 1)
+    expanded[:, 1] = np.clip(expanded[:, 1], 0, h - 1)
+    return expanded.astype("float32")
+
+
+def _find_paper_quad(image):
+    """Find the largest paper-like quadrilateral (rejects thin table-row strips)."""
+    h, w = image.shape[:2]
+    frame_area = h * w
+    min_area = frame_area * max(0.01, CROP_MIN_AREA_PCT)
+    max_area = frame_area * 0.98
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+
+    edge_images = []
+
+    # White/light paper on darker background (wood table, etc.)
+    _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if np.mean(gray[otsu == 255]) < np.mean(gray[otsu == 0]):
+        otsu = cv2.bitwise_not(otsu)
+    closed = cv2.morphologyEx(otsu, cv2.MORPH_CLOSE, kernel, iterations=3)
+    edge_images.append(closed)
+
+    # Canny edges — backup when threshold misses the paper boundary
+    canny = cv2.Canny(blurred, 50, 150)
+    canny = cv2.dilate(canny, kernel, iterations=2)
+    edge_images.append(canny)
+
+    best_rect = None
+    best_area = 0
+
+    for edge_img in edge_images:
+        cnts, _ = cv2.findContours(edge_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)
+        for c in cnts[:25]:
+            area = cv2.contourArea(c)
+            if area < min_area or area > max_area:
+                continue
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) != 4:
+                continue
+            rect = _order_quad_points(approx.reshape(4, 2))
+            doc_w, doc_h = _quad_dimensions(rect)
+            if doc_w < 80 or doc_h < 80:
+                continue
+            short_side = min(doc_w, doc_h)
+            long_side = max(doc_w, doc_h)
+            # Reject thin strips (table rows, barcode lines, etc.)
+            if short_side / long_side < 0.25:
+                continue
+            if area > best_area:
+                best_area = area
+                best_rect = rect
+
+    return best_rect
+
+
+def _crop_paper_bbox(image, rect):
+    """Rectangular crop around the paper — same zoom level as the live preview."""
+    rect = _expand_quad(rect, image.shape, CROP_PADDING_PCT)
+    x1 = int(max(0, np.min(rect[:, 0])))
+    x2 = int(min(image.shape[1], np.max(rect[:, 0])))
+    y1 = int(max(0, np.min(rect[:, 1])))
+    y2 = int(min(image.shape[0], np.max(rect[:, 1])))
+    if x2 - x1 < 80 or y2 - y1 < 80:
+        return None
+    return image[y1:y2, x1:x2].copy()
+
+
+def _warp_paper(image, rect):
+    """Perspective-correct the detected paper quad to a flat rectangle."""
+    rect = _expand_quad(rect, image.shape, CROP_PADDING_PCT)
+    doc_w, doc_h = _quad_dimensions(rect)
+    max_w = int(doc_w)
+    max_h = int(doc_h)
+    if max_w < 100 or max_h < 100:
+        return None
+    dst = np.array([
+        [0, 0],
+        [max_w - 1, 0],
+        [max_w - 1, max_h - 1],
+        [0, max_h - 1],
+    ], dtype="float32")
+    M = cv2.getPerspectiveTransform(rect, dst)
+    return cv2.warpPerspective(image, M, (max_w, max_h))
+
+
 def auto_crop_document(image_path):
-    # Keep the full original camera view (same as the live preview) by default.
-    # Auto-crop is opt-in via DIGIPATH_AUTO_CROP=1.
+    """Detect the paper in the frame and crop/perspective-correct to the whole sheet."""
     if not AUTO_CROP:
         return image_path
     if not CV_AVAILABLE:
         return image_path
-    
-    print(f"[Cropper] Detecting document edges in {image_path}...")
+
+    print(f"[Cropper] Detecting paper edges in {image_path}...")
     try:
         image = cv2.imread(image_path)
-        if image is None: return image_path
-        
-        orig = image.copy()
-        height, width = image.shape[:2]
-        
-        # 1. Pre-process for edge detection
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        edged = cv2.Canny(blur, 75, 200)
-        
-        # 2. Find contours
-        cnts, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
-        
-        screen_cnt = None
-        for c in cnts:
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-            if len(approx) == 4:
-                screen_cnt = approx
-                break
-        
-        if screen_cnt is None:
-            print("[Cropper] No document edges found. Skipping crop.")
+        if image is None:
             return image_path
 
-        # 3. Perspective Transform
-        pts = screen_cnt.reshape(4, 2)
-        rect = np.zeros((4, 2), dtype="float32")
-        
-        s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]
-        rect[2] = pts[np.argmax(s)]
-        
-        diff = np.diff(pts, axis=1)
-        rect[1] = pts[np.argmin(diff)]
-        rect[3] = pts[np.argmax(diff)]
-        
-        (tl, tr, br, bl) = rect
-        widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
-        widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-        maxWidth = max(int(widthA), int(widthB))
-        
-        heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-        heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-        maxHeight = max(int(heightA), int(heightB))
-        
-        dst = np.array([
-            [0, 0],
-            [maxWidth - 1, 0],
-            [maxWidth - 1, maxHeight - 1],
-            [0, maxHeight - 1]], dtype="float32")
-        
-        M = cv2.getPerspectiveTransform(rect, dst)
-        warped = cv2.warpPerspective(orig, M, (maxWidth, maxHeight))
-        
-        # 4. Save cropped image
-        crop_path = image_path.replace(".jpg", "_cropped.jpg")
-        cv2.imwrite(crop_path, warped)
-        print(f"[Cropper] Successfully cropped to {crop_path}")
-        return crop_path
-        
+        rect = _find_paper_quad(image)
+        if rect is None:
+            print("[Cropper] No paper found — keeping full camera frame.")
+            return image_path
+
+        use_perspective = CROP_MODE in ("perspective", "warp", "deskew")
+        if use_perspective:
+            cropped = _warp_paper(image, rect)
+            mode_label = "perspective"
+        else:
+            cropped = _crop_paper_bbox(image, rect)
+            mode_label = "bbox"
+
+        if cropped is None:
+            print(f"[Cropper] {mode_label} crop failed — keeping full camera frame.")
+            return image_path
+
+        doc_w, doc_h = cropped.shape[1], cropped.shape[0]
+        short_side = min(doc_w, doc_h)
+        long_side = max(doc_w, doc_h)
+        if short_side / long_side < 0.2:
+            print("[Cropper] Result looks like a strip — keeping full camera frame.")
+            return image_path
+
+        cv2.imwrite(image_path, cropped)
+        print(f"[Cropper] Cropped to whole paper ({mode_label}, {doc_w}x{doc_h}): {image_path}")
+        return image_path
+
     except Exception as e:
         print(f"[Cropper] Error: {e}")
         return image_path

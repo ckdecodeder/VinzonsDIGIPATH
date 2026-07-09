@@ -1057,7 +1057,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 videoReadyCallback={refreshCameraDevices}
                 videoSourceDeviceId={selectedCameraId || undefined}
                 facingMode={cameraFacingMode}
-                aspectRatio="cover"
+                aspectRatio="contain"
               />
             )}
 
