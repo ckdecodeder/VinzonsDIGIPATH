@@ -128,6 +128,7 @@ bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_WIDTH', cfg.DIGIPATH_STREA
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_HEIGHT', cfg.DIGIPATH_STREAM_HEIGHT || '360');
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_JPEG_QUALITY', cfg.DIGIPATH_STREAM_JPEG_QUALITY || '82');
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_FAST', cfg.DIGIPATH_STREAM_FAST || '0');
+bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_WS_MAX_FPS', cfg.DIGIPATH_STREAM_WS_MAX_FPS || '24');
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_COLOR_MODE', cfg.DIGIPATH_STREAM_COLOR_MODE || 'jpeg');
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_RESTART_ON_IP_CHANGE', cfg.DIGIPATH_RESTART_ON_IP_CHANGE || '1');
 bridgeEnv = upsertEnvLine(

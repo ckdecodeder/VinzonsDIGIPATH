@@ -59,7 +59,9 @@ $scriptFiles = @(
   "scripts/pi-update-network.sh",
   "scripts/pi-test-backend.sh",
   "scripts/pi-restart-clean.sh",
-  "scripts/pi-install-network-hook.sh"
+  "scripts/pi-install-network-hook.sh",
+  "scripts/pi-usb-auto-update.sh",
+  "scripts/pi-install-usb-hook.sh"
 )
 
 $raspberryFiles = @(

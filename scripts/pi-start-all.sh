@@ -40,6 +40,11 @@ if [[ -f "$SCRIPT_DIR/pi-install-network-hook.sh" ]]; then
   bash "$SCRIPT_DIR/pi-install-network-hook.sh"
 fi
 
+echo "[DigiPath] 2b/6 — USB auto-update hook (plug USB → copy to Desktop + restart + eject)..."
+if [[ -f "$SCRIPT_DIR/pi-install-usb-hook.sh" ]]; then
+  bash "$SCRIPT_DIR/pi-install-usb-hook.sh"
+fi
+
 if ! systemctl cat digipath-scanner.service >/dev/null 2>&1; then
   echo "[DigiPath] 3/6 — first-time install (deps + systemd)..."
   if [[ -f "$REPO_ROOT/install-pi-deps.sh" ]]; then

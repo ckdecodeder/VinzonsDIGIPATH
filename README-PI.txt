@@ -24,6 +24,12 @@ You do not need to run anything manually.
 After copying files again from the laptop (USB):
   sudo bash start.sh
 
+USB AUTO-UPDATE (one-time install via start.sh):
+  Plug in a USB drive with the VinzonsDIGIPATH-Pi folder.
+  The Pi automatically copies it to ~/Desktop/VinzonsDIGIPATH-Pi (overwrite),
+  restarts digipath-scanner, then ejects the USB. Log: /var/log/digipath-usb-update.log
+  Manual install: sudo bash scripts/pi-install-usb-hook.sh
+
 If you see "$'\r': command not found" (Windows line endings):
   sed -i 's/\r$//' start.sh fix-pi-scripts.sh scripts/*.sh raspberry_pi/*.sh
   sudo bash start.sh

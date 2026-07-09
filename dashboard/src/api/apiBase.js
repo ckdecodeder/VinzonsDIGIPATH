@@ -75,12 +75,17 @@ function getProbeRoot(base) {
   return base.replace(/\/api\/?$/, '');
 }
 
+const PROBE_TIMEOUT_MS = 4000;
+
 async function probeApiUrl(base) {
   const root = getProbeRoot(base);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 
   try {
     const status = await fetch(`${root}/api/status`, {
       cache: 'no-store',
+      signal: controller.signal,
     });
 
     if (!status.ok) return null;
@@ -112,6 +117,8 @@ async function probeApiUrl(base) {
     return normalizeApiBase(base);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

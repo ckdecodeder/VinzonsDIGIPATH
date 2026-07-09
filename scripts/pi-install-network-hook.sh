@@ -39,9 +39,9 @@ if [[ -f "$LOCK" ]]; then
 fi
 
 touch "$LOCK"
-logger -t digipath "Network ${ACTION} on ${IFACE}; restarting digipath-scanner in 8s"
+logger -t digipath "Network ${ACTION} on ${IFACE}; restarting digipath-scanner in 5s"
 (
-  sleep 8
+  sleep 5
   systemctl restart digipath-scanner.service
   rm -f "$LOCK"
 ) &

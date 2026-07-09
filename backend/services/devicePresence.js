@@ -12,37 +12,15 @@ const scannerBridgePort = String(process.env.SCANNER_BRIDGE_PORT || '8080');
 
 const resolveBridgeUrl = (device, latestHardwareEvent) => {
   const eventPayload = latestHardwareEvent?.payload || {};
-  const eventIp = eventPayload.ip;
-  const deviceIp = (eventIp && eventIp !== 'Not reported')
-    ? eventIp
+  const reportedBridge = eventPayload.bridgeUrl || device?.bridgeUrl;
+  if (reportedBridge) return reportedBridge;
+
+  const ip = (eventPayload.ip && eventPayload.ip !== 'Not reported')
+    ? eventPayload.ip
     : (device?.ip && device.ip !== 'Not reported' ? device.ip : null);
-  const storedBridge = device?.bridgeUrl;
-  const eventBridge = eventPayload.bridgeUrl;
+  if (ip) return `http://${ip}:${scannerBridgePort}`;
 
-  if (deviceIp) {
-    const ipBridge = `http://${deviceIp}:${scannerBridgePort}`;
-    if (eventBridge) {
-      try {
-        if (new URL(eventBridge).hostname === deviceIp) {
-          return eventBridge;
-        }
-      } catch {
-        // ignore invalid event URL
-      }
-    }
-    if (storedBridge) {
-      try {
-        if (new URL(storedBridge).hostname === deviceIp) {
-          return storedBridge;
-        }
-      } catch {
-        // ignore invalid stored URL
-      }
-    }
-    return ipBridge;
-  }
-
-  return eventBridge || storedBridge || null;
+  return null;
 };
 
 const hardwarePresenceEvents = [

@@ -30,7 +30,7 @@ import Tesseract from "tesseract.js";
 import { resolveUploadUrl, isPdfMedia } from "../utils/mediaUrl";
 import { commandService, bridgeService } from "../api/documentService";
 import { useOptionalRealtime } from "../context/RealtimeContext";
-import { resolveReachableLanBridge } from "../utils/bridgePreview";
+import { getReportedBridgeUrl, fetchLanSnapshotAny } from "../utils/bridgePreview";
 import {
   offices as defaultOffices,
   documentTypes as defaultDocumentTypes,
@@ -67,10 +67,21 @@ const paintWsFrame = (previewImg, frame, wsFrameUrlRef, onReady) => {
 };
 
 const getSubjectFromOcr = (text, fallback = '') => {
+  const normalizedFallback = (fallback || '').trim();
+  if (
+    normalizedFallback
+    && !/^scanned document$/i.test(normalizedFallback)
+    && !/^untitled document$/i.test(normalizedFallback)
+    && !/^summary\s*:/i.test(normalizedFallback)
+  ) {
+    return normalizedFallback.slice(0, 120);
+  }
+
   const lines = (text || '')
     .split(/\r?\n/)
     .map(line => line.replace(/\s+/g, ' ').trim().replace(/^[-_:;,.]+|[-_:;,.]+$/g, ''))
-    .filter(line => line.length >= 6 && /[A-Za-z]/.test(line));
+    .filter(line => line.length >= 6 && /[A-Za-z]/.test(line))
+    .filter(line => !/^summary\s*:/i.test(line));
 
   const subjectLine = lines.find(line => /^subject\s*:/i.test(line));
   if (subjectLine) {
@@ -78,7 +89,7 @@ const getSubjectFromOcr = (text, fallback = '') => {
     if (subject) return subject.slice(0, 120);
   }
 
-  return (lines[0] || fallback || 'Scanned Document').slice(0, 120);
+  return (lines[0] || normalizedFallback || 'Scanned Document').slice(0, 120);
 };
 
 const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device }) => {
@@ -115,7 +126,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [streamHasError, setStreamHasError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const [lanBridgeBase, setLanBridgeBase] = useState(null);
-  const [lanBridgeProbing, setLanBridgeProbing] = useState(false);
   const [directStreamUrl, setDirectStreamUrl] = useState('');
   const [previewMode, setPreviewMode] = useState('ws');
   const [streamStale, setStreamStale] = useState(false);
@@ -235,12 +245,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       return undefined;
     }
 
-    if (lanBridgeProbing) {
-      setStreamHasError(false);
-      setPreviewErrorMessage('Checking for Pi on local network...');
-      return undefined;
-    }
-
     if (!realtime?.connected) {
       setStreamHasError(false);
       setPreviewErrorMessage('Connecting to realtime server...');
@@ -256,29 +260,32 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setStreamHasError(false);
     setPreviewErrorMessage('Connecting WebSocket camera stream...');
     return undefined;
-  }, [isPhysicalSource, device?.connected, realtime?.connected, previewReady, streamReloadKey, hasLanBridge, lanBridgeProbing]);
+  }, [isPhysicalSource, device?.connected, realtime?.connected, previewReady, streamReloadKey, hasLanBridge]);
 
   useEffect(() => {
     if (!isPhysicalSource || !device?.connected) {
       setLanBridgeBase(null);
-      setLanBridgeProbing(false);
       return undefined;
     }
 
-    let cancelled = false;
-    setLanBridgeProbing(true);
-    setLanBridgeBase(null);
+    setLanBridgeBase(getReportedBridgeUrl(device));
+    return undefined;
+  }, [isPhysicalSource, device?.connected, device?.bridgeUrl, device?.streamUrl, device?.id, device?.ip, device?.payload?.ip, device?.payload?.bridgeUrl, streamReloadKey]);
 
-    resolveReachableLanBridge(device).then((base) => {
-      if (cancelled) return;
-      setLanBridgeBase(base);
-      setLanBridgeProbing(false);
+  useEffect(() => {
+    if (!isPhysicalSource || !realtime?.subscribe) return undefined;
+
+    const offDevice = realtime.subscribe('device:updated', (message) => {
+      const nextDevice = message?.device || device;
+      const reported = getReportedBridgeUrl(nextDevice);
+      if (reported) {
+        setLanBridgeBase(reported);
+        setStreamReloadKey((value) => value + 1);
+      }
     });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [isPhysicalSource, device?.connected, device?.bridgeUrl, device?.streamUrl, device?.id, device?.ip, device?.payload?.ip, streamReloadKey]);
+    return () => offDevice();
+  }, [isPhysicalSource, realtime, device?.id, device?.ip, device?.bridgeUrl]);
 
   const paintPreviewBlob = (blob) => {
     const nextUrl = URL.createObjectURL(blob);
@@ -474,7 +481,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   }, [isPhysicalSource, device?.connected, device?.id, device?.streamWsConnected, realtime, realtime?.connected, streamReloadKey, hasLanBridge]);
 
   useEffect(() => {
-    if (!isPhysicalSource || !device?.connected || previewReady || hasLanBridge || lanBridgeProbing) {
+    if (!isPhysicalSource || !device?.connected || previewReady || hasLanBridge) {
       return undefined;
     }
 
@@ -486,41 +493,56 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       try {
         const bridgeStatus = await bridgeService.status({ deviceId });
         if (cancelled) return;
-        if (!bridgeStatus?.ok) {
-          if (!previewReadyRef.current) {
-            setStreamHasError(true);
-            setPreviewErrorMessage(
-              device?.streamWsConnected === false
-                ? 'Waiting for Pi WebSocket stream via public backend. Ensure dev tunnel port 5000 is public and run: bash scripts/pi-test-backend.sh on the Pi.'
-                : 'WebSocket stream still connecting. If this persists, restart digipath-scanner on the Pi.',
-            );
+        if (bridgeStatus?.ok) {
+          const blob = await bridgeService.snapshot({
+            deviceId,
+            bridgeUrl: bridgeStatus.bridgeUrl,
+          });
+          if (cancelled || !blob) return;
+
+          const nextUrl = URL.createObjectURL(blob);
+          if (wsFrameUrlRef.current) {
+            URL.revokeObjectURL(wsFrameUrlRef.current);
           }
+          wsFrameUrlRef.current = nextUrl;
+          if (previewImgRef.current) {
+            previewImgRef.current.src = nextUrl;
+          }
+          if (!previewReadyRef.current) {
+            previewReadyRef.current = true;
+            setPreviewReady(true);
+          }
+          setPreviewMode('snapshot');
+          setStreamHasError(false);
+          setPreviewErrorMessage('');
           return;
         }
 
-        const blob = await bridgeService.snapshot({
-          deviceId,
-          bridgeUrl: bridgeStatus.bridgeUrl,
-        });
-        if (cancelled || !blob) return;
-
-        const nextUrl = URL.createObjectURL(blob);
-        if (wsFrameUrlRef.current) {
-          URL.revokeObjectURL(wsFrameUrlRef.current);
+        const directBlob = await fetchLanSnapshotAny(device);
+        if (cancelled) return;
+        if (directBlob) {
+          paintPreviewBlob(directBlob);
+          setPreviewMode('lan-snapshot');
+          return;
         }
-        wsFrameUrlRef.current = nextUrl;
-        if (previewImgRef.current) {
-          previewImgRef.current.src = nextUrl;
+
+        if (!previewReadyRef.current) {
+          setStreamHasError(true);
+          setPreviewErrorMessage(
+            device?.streamWsConnected === false
+              ? 'Waiting for Pi WebSocket via backend. Same WiFi? Open Device Control, check Pi IP, or restart: sudo systemctl restart digipath-scanner'
+              : 'Camera stream unavailable. Same WiFi as Pi enables LAN preview — restart digipath-scanner if IP changed.',
+          );
+        }
+      } catch (err) {
+        if (cancelled) return;
+        const directBlob = await fetchLanSnapshotAny(device);
+        if (!cancelled && directBlob) {
+          paintPreviewBlob(directBlob);
+          setPreviewMode('lan-snapshot');
+          return;
         }
         if (!previewReadyRef.current) {
-          previewReadyRef.current = true;
-          setPreviewReady(true);
-        }
-        setPreviewMode('snapshot');
-        setStreamHasError(false);
-        setPreviewErrorMessage('');
-      } catch (err) {
-        if (!cancelled && !previewReadyRef.current) {
           setStreamHasError(true);
           setPreviewErrorMessage(
             `Camera preview unavailable: ${err.message || 'bridge snapshot failed'}. Same WiFi as Pi enables faster LAN preview.`,
@@ -539,7 +561,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       clearTimeout(startAfter);
       if (snapshotTimer) clearInterval(snapshotTimer);
     };
-  }, [isPhysicalSource, device?.connected, device?.id, device?.streamWsConnected, previewReady, streamReloadKey, hasLanBridge, lanBridgeProbing]);
+  }, [isPhysicalSource, device?.connected, device?.id, device?.streamWsConnected, previewReady, streamReloadKey, hasLanBridge]);
 
   const handleCameraSourceChange = (value) => {
     setCameraSource(value);
@@ -1059,7 +1081,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 videoReadyCallback={refreshCameraDevices}
                 videoSourceDeviceId={selectedCameraId || undefined}
                 facingMode={cameraFacingMode}
-                aspectRatio="contain"
+                aspectRatio="cover"
               />
             )}
 
@@ -1225,7 +1247,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
               <form onSubmit={handleProceedToReview}>
                 <div className="form-group">
-                  <label className="form-label">Document Subject / Description *</label>
+                  <label className="form-label">Document Subject *</label>
                   <input
                     className="form-input" type="text"
                     value={formData.subject}

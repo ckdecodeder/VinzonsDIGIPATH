@@ -1174,7 +1174,7 @@ const DocumentList = ({
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label">Document Subject / Description</label>
+                  <label className="form-label">Document Subject</label>
                   <input
                     className="form-input"
                     type="text"

@@ -32,6 +32,11 @@ if [ -f "$REPO_ROOT/pi_scanner_bridge.py" ]; then
   cp "$REPO_ROOT/relay_controller.py" /opt/digipath-scanner/relay_controller.py 2>/dev/null || true
 fi
 
+if [ -f "$REPO_ROOT/bridge.env" ]; then
+  cp "$REPO_ROOT/bridge.env" /etc/digipath-scanner.env 2>/dev/null || true
+  echo "[DigiPath] Updated /etc/digipath-scanner.env from bridge.env"
+fi
+
 echo "[DigiPath] Starting digipath-scanner service..."
 systemctl enable digipath-scanner 2>/dev/null || true
 systemctl restart digipath-scanner

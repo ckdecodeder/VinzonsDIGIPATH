@@ -22,7 +22,9 @@ for file in \
   "$SCRIPT_DIR/scripts/pi-restart-clean.sh" \
   "$SCRIPT_DIR/scripts/pi-update-network.sh" \
   "$SCRIPT_DIR/scripts/pi-test-backend.sh" \
-  "$SCRIPT_DIR/scripts/pi-install-network-hook.sh"; do
+  "$SCRIPT_DIR/scripts/pi-install-network-hook.sh" \
+  "$SCRIPT_DIR/scripts/pi-usb-auto-update.sh" \
+  "$SCRIPT_DIR/scripts/pi-install-usb-hook.sh"; do
   fix_file "$file"
 done
 

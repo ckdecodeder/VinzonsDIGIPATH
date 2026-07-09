@@ -610,7 +610,7 @@ const ReceptionistDashboard = ({
             <form onSubmit={handleReceive}>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label">Document Subject / Description</label>
+                  <label className="form-label">Document Subject</label>
                   <input className="form-input" type="text" value={receiveForm.subject}
                     onChange={e => setReceiveForm({ ...receiveForm, subject: e.target.value })}
                     placeholder="Enter document subject" required />
