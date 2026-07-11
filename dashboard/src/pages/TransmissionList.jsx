@@ -321,7 +321,7 @@ const TransmissionList = ({
               <p>Track document movement between offices</p>
             </div>
             {visibleRouteDocuments.length > 0 && (
-              <div className="page-header-actions page-header-actions--inline">
+              <div className="page-header-actions page-header-actions--inline page-header-actions--mobile-only">
                 <button className="btn btn-primary" onClick={openCreateForm}>
                   <Plus size={16} /> New Transmission
                 </button>
@@ -357,6 +357,13 @@ const TransmissionList = ({
                 ))}
               </select>
             </div>
+            {visibleRouteDocuments.length > 0 && (
+              <div className="page-toolbar-actions page-toolbar-actions--desktop-only">
+                <button className="btn btn-primary" onClick={openCreateForm}>
+                  <Plus size={16} /> New Transmission
+                </button>
+              </div>
+            )}
           </div>
         }
       >

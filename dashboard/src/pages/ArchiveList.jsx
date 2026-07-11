@@ -206,6 +206,14 @@ const ArchiveList = ({
               <h1>Archives</h1>
               <p>Documents that are filed, archived, and stored for records</p>
             </div>
+<<<<<<< Updated upstream
+=======
+            <div className="page-header-actions page-header-actions--inline page-header-actions--mobile-only">
+              <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+                <Plus size={16} /> Archive Document
+              </button>
+            </div>
+>>>>>>> Stashed changes
           </div>
         }
         toolbar={
@@ -222,9 +230,17 @@ const ArchiveList = ({
                 />
               </div>
             </div>
+<<<<<<< Updated upstream
             <button className="btn btn-primary" onClick={() => setShowForm(true)}>
               <Plus size={16} /> Archive Document
             </button>
+=======
+            <div className="page-toolbar-actions page-toolbar-actions--desktop-only">
+              <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+                <Plus size={16} /> Archive Document
+              </button>
+            </div>
+>>>>>>> Stashed changes
           </div>
         }
       >

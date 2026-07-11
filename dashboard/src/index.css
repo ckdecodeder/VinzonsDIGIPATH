@@ -2081,6 +2081,7 @@ tbody tr:hover {
   margin-left: auto;
 }
 
+<<<<<<< Updated upstream
 .page-toolbar-row.page-toolbar-stacked {
   flex-direction: column-reverse;
   align-items: stretch;
@@ -2096,6 +2097,28 @@ tbody tr:hover {
   margin-left: 0;
 }
 
+=======
+.page-toolbar-actions {
+  display: flex;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.page-toolbar-row .page-toolbar-actions {
+  margin-left: auto;
+}
+
+.page-toolbar-row .page-toolbar-actions .btn {
+  margin-left: 0;
+}
+
+@media (min-width: 769px) {
+  .page-header-actions--mobile-only {
+    display: none;
+  }
+}
+
+>>>>>>> Stashed changes
 .activity-filter-row {
   display: flex;
   gap: 1.25rem;
@@ -5567,6 +5590,10 @@ body.modal-open .notification-dock {
   .page-toolbar-row .btn {
     min-height: 44px;
     padding: 0 1.35rem;
+  }
+
+  .page-toolbar-actions--desktop-only {
+    display: none;
   }
 
   .receptionist-register-modal .modal-body {
