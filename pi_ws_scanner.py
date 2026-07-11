@@ -35,10 +35,10 @@ CAMERA_SCAN_MAX = max(0, int(os.environ.get("DIGIPATH_CAMERA_SCAN_MAX", "8")))
 USE_PICAMERA2_RAW = os.environ.get("DIGIPATH_USE_PICAMERA2", "auto").strip().lower()
 FRAME_WIDTH = int(os.environ.get("DIGIPATH_STREAM_WIDTH", "2560"))
 FRAME_HEIGHT = int(os.environ.get("DIGIPATH_STREAM_HEIGHT", "1440"))
-PREVIEW_WIDTH = int(os.environ.get("DIGIPATH_PREVIEW_WIDTH", "2560"))
-PREVIEW_HEIGHT = int(os.environ.get("DIGIPATH_PREVIEW_HEIGHT", "1440"))
-SCAN_WIDTH = int(os.environ.get("DIGIPATH_SCAN_WIDTH", "2560"))
-SCAN_HEIGHT = int(os.environ.get("DIGIPATH_SCAN_HEIGHT", "1440"))
+PREVIEW_WIDTH = int(os.environ.get("DIGIPATH_PREVIEW_WIDTH", "1920"))
+PREVIEW_HEIGHT = int(os.environ.get("DIGIPATH_PREVIEW_HEIGHT", "1080"))
+SCAN_WIDTH = int(os.environ.get("DIGIPATH_SCAN_WIDTH", str(PREVIEW_WIDTH)))
+SCAN_HEIGHT = int(os.environ.get("DIGIPATH_SCAN_HEIGHT", str(PREVIEW_HEIGHT)))
 SCAN_ORIENTATION = os.environ.get("DIGIPATH_SCAN_ORIENTATION", "landscape").strip().lower()
 PREVIEW_ROTATE = os.environ.get("DIGIPATH_PREVIEW_ROTATE", "none").strip().lower()
 STREAM_FAST = os.environ.get("DIGIPATH_STREAM_FAST", "1").strip().lower() not in (
@@ -176,6 +176,8 @@ _last_http_frame_upload_at = 0.0
 _http_frame_upload_boot = 0
 _http_upload_session = None
 _last_ws_frame_sent_at = 0.0
+_last_ws_jpeg_sent: bytes | None = None
+_last_ws_jpeg_lock = threading.Lock()
 _last_http_upload_error_log_at = 0.0
 
 
@@ -832,14 +834,17 @@ def _drain_capture_buffer(cap, reads: int):
         time.sleep(0.02)
 
 
-def read_sharpest_frame(cap, attempts: int | None = None):
+def read_sharpest_frame(cap, attempts: int | None = None, *, reject_corrupt: bool = True):
     """Burst-read frames after AF settle — keep the sharpest non-corrupt frame."""
     count = attempts if attempts is not None else SCAN_BURST_FRAMES
     best = None
     best_score = -1.0
     for _ in range(max(1, count)):
         ok, frame = _camera_read(cap)
-        if not ok or frame is None or not getattr(frame, "size", 0) or _frame_looks_corrupt(frame):
+        if not ok or frame is None or not getattr(frame, "size", 0):
+            time.sleep(0.04)
+            continue
+        if reject_corrupt and _frame_looks_corrupt(frame):
             time.sleep(0.04)
             continue
         score = _frame_sharpness_score(frame)
@@ -848,6 +853,51 @@ def read_sharpest_frame(cap, attempts: int | None = None):
             best = frame
         time.sleep(0.05)
     return best
+
+
+def _copy_latest_scan_frame():
+    """Last frame shown in live preview — true WYSIWYG fallback when USB read stalls."""
+    with frame_lock:
+        if latest_preview_bgr is not None and getattr(latest_preview_bgr, "size", 0):
+            return latest_preview_bgr.copy()
+        if latest_bgr is not None and getattr(latest_bgr, "size", 0):
+            return _prepare_preview_frame(latest_bgr.copy())
+    return None
+
+
+def _copy_last_ws_jpeg() -> bytes | None:
+    with _last_ws_jpeg_lock:
+        if _last_ws_jpeg_sent and _jpeg_is_complete(_last_ws_jpeg_sent):
+            return _last_ws_jpeg_sent
+    return None
+
+
+def _bgr_from_jpeg(jpeg: bytes):
+    if not jpeg or not _jpeg_is_complete(jpeg):
+        return None
+    try:
+        arr = np.frombuffer(jpeg, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None or not getattr(frame, "size", 0):
+            return None
+        return frame
+    except Exception:
+        return None
+
+
+def _copy_wysiwyg_preview_frame():
+    """Exact pixels from live preview — BGR buffer first, then last WS JPEG sent."""
+    preview = _copy_latest_scan_frame()
+    if preview is not None:
+        return preview, "preview buffer"
+    jpeg = _copy_last_ws_jpeg()
+    if jpeg:
+        decoded = _bgr_from_jpeg(jpeg)
+        if decoded is not None:
+            if decoded.shape[1] != PREVIEW_WIDTH or decoded.shape[0] != PREVIEW_HEIGHT:
+                decoded = _prepare_preview_frame(decoded)
+            return decoded, "ws jpeg"
+    return None, ""
 
 
 def _enhance_document_frame(frame):
@@ -871,8 +921,11 @@ def _enhance_document_frame(frame):
 def _scan_profile_from_payload(payload: dict | None = None) -> dict:
     """Per-scan size from dashboard paper guide — landscape output only."""
     payload = payload or {}
-    width = int(payload.get("scanWidth") or SCAN_WIDTH)
-    height = int(payload.get("scanHeight") or SCAN_HEIGHT)
+    if CAPTURE_MATCH_PREVIEW:
+        width, height = PREVIEW_WIDTH, PREVIEW_HEIGHT
+    else:
+        width = int(payload.get("scanWidth") or SCAN_WIDTH)
+        height = int(payload.get("scanHeight") or SCAN_HEIGHT)
     if height > width:
         width, height = height, width
     return {
@@ -885,6 +938,8 @@ def _scan_profile_from_payload(payload: dict | None = None) -> dict:
 
 
 def _scan_output_dims(profile: dict | None = None) -> tuple[int, int]:
+    if CAPTURE_MATCH_PREVIEW:
+        return PREVIEW_WIDTH, PREVIEW_HEIGHT
     if profile is not None:
         return int(profile["width"]), int(profile["height"])
     return SCAN_WIDTH, SCAN_HEIGHT
@@ -959,8 +1014,19 @@ def _finalize_scan_frame(frame, profile: dict | None = None) -> bytes | None:
     return jpeg
 
 
-def _capture_still_frame(cap, *, for_2k: bool = False):
+def _capture_still_frame(cap, *, for_2k: bool = False, for_preview: bool = False):
     """Exclusive still capture — preview worker must be paused."""
+    if for_preview:
+        # Light path — same frames as live stream; no heavy AF drain that stalls USB.
+        warmup_camera_frames(cap, max(2, SCAN_BURST_FRAMES // 2), min_secs=0.06)
+        _drain_capture_buffer(cap, 2)
+        frame = read_sharpest_frame(cap, attempts=max(4, SCAN_BURST_FRAMES), reject_corrupt=False)
+        if frame is None:
+            ok, frame = _camera_read(cap, retries=3)
+            if not ok or frame is None:
+                return None
+        return frame
+
     autofocus_settle(cap, active_camera_index, for_capture=True)
     drain_reads = max(SCAN_CAPTURE_DRAIN, 12 if for_2k else SCAN_CAPTURE_DRAIN)
     _drain_capture_buffer(cap, drain_reads)
@@ -1021,24 +1087,45 @@ def capture_scan_snapshot(profile: dict | None = None) -> bytes | None:
 
 
 def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
-    """WYSIWYG still capture — never race the live preview reader on the same USB cam."""
-    cap = active_capture_cap
-    if cap is None or not cap.isOpened():
-        return None
+    """WYSIWYG still capture — use live preview pixels; never fail if stream is visible."""
+    if not CAPTURE_MATCH_PREVIEW:
+        cap = active_capture_cap
+        if cap is None or not cap.isOpened():
+            return None
+        _scan_in_progress.set()
+        try:
+            return capture_scan_snapshot(profile)
+        finally:
+            _scan_in_progress.clear()
 
+    preview_frame, source = _copy_wysiwyg_preview_frame()
+    if preview_frame is not None:
+        print(
+            f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
+            f"(WYSIWYG {source} — same as live preview)"
+        )
+        return _finalize_scan_frame(preview_frame, profile)
+
+    # Stream not ready yet — brief USB read attempt.
     _scan_in_progress.set()
     try:
-        if not CAPTURE_MATCH_PREVIEW:
-            return capture_scan_snapshot(profile)
-
+        cap = active_capture_cap
+        frame = None
+        preview_frame = None
         with capture_cap_lock:
-            frame = _capture_still_frame(cap)
-            if frame is None:
-                return None
-            _store_camera_frames(frame, _prepare_preview_frame(frame))
-            actual_h, actual_w = frame.shape[:2]
-            print(f"[PiWS] Scan frame {actual_w}x{actual_h} (WYSIWYG, no rotate)")
-            return _finalize_scan_frame(frame, profile)
+            if cap is not None and cap.isOpened():
+                frame = _capture_still_frame(cap, for_preview=True)
+            if frame is not None:
+                preview_frame = _prepare_preview_frame(frame)
+                _store_camera_frames(frame, preview_frame)
+        if preview_frame is None:
+            print("[PiWS] Scan capture miss — no preview buffer and USB read failed")
+            return None
+        print(
+            f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
+            f"(USB fallback, cam {frame.shape[1]}x{frame.shape[0]})"
+        )
+        return _finalize_scan_frame(preview_frame, profile)
     finally:
         _scan_in_progress.clear()
 
@@ -1057,7 +1144,7 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
             update_command_status(
                 cmd_id,
                 "Failed",
-                "No camera frame available — replug USB cam or retry capture",
+                "No preview frame yet — wait for live stream, then capture again",
             )
             return
         update_command_status(cmd_id, "Executing")
@@ -1116,6 +1203,8 @@ def upload_stream_frame_http(jpeg: bytes):
     global _last_http_frame_upload_at, _http_frame_upload_boot, _last_http_upload_error_log_at
     if not STREAM_HTTP_UPLOAD or not jpeg or not BACKEND_BASE_URL:
         return
+    if _scan_in_progress.is_set():
+        return
     if STREAM_HTTP_WS_PRIORITY and ws_authenticated:
         if (time.monotonic() - _last_ws_frame_sent_at) < 3.0:
             return
@@ -1134,7 +1223,7 @@ def upload_stream_frame_http(jpeg: bytes):
                 params={"deviceId": DEVICE_ID},
                 data=jpeg,
                 headers={"Content-Type": "image/jpeg"},
-                timeout=4,
+                timeout=12,
             )
             if response.status_code >= 400:
                 if time.monotonic() - _last_http_upload_error_log_at > 30:
@@ -1159,7 +1248,7 @@ def upload_stream_frame_http(jpeg: bytes):
 
 def ws_frame_sender_worker():
     """Send only the newest JPEG over WS (drops stale sends)."""
-    global _ws_frame_slot, _last_ws_frame_sent_at
+    global _ws_frame_slot, _last_ws_frame_sent_at, _last_ws_jpeg_sent
     while not stop_event.is_set():
         if not _ws_frame_send_event.wait(timeout=0.25):
             continue
@@ -1176,6 +1265,8 @@ def ws_frame_sender_worker():
             realtime_ws.send(jpeg, opcode=websocket.ABNF.OPCODE_BINARY)
             _touch_ws_activity()
             _last_ws_frame_sent_at = time.monotonic()
+            with _last_ws_jpeg_lock:
+                _last_ws_jpeg_sent = jpeg
         except Exception as err:
             if _is_ws_closed_error(err):
                 print(f"[PiWS] WS closed during frame send: {err}")
@@ -1193,6 +1284,9 @@ def preview_encode_send_worker():
         if not _preview_encode_event.wait(timeout=0.12):
             continue
         _preview_encode_event.clear()
+
+        if _scan_in_progress.is_set():
+            continue
 
         drained = True
         while drained and not stop_event.is_set():
@@ -1606,17 +1700,21 @@ def upload_scan(image_bytes: bytes, command_id: str):
     extracted = False
     ai_extract_pending = False
     if AI_EXTRACT_ENABLED and GROQ_API_KEY:
-        print("[PiWS] Running AI field extraction (Groq vision)...")
-        ai = ai_extract_document(image_bytes)
-        if ai:
-            payload.update(_ai_payload_fields(ai))
-            if payload.get("extractedTitle"):
-                payload["subject"] = payload["extractedTitle"]
-            extracted = bool(payload.get("extractedTitle") or payload.get("scannedText"))
-            print(f"[PiWS] AI fields ready for upload (title={'yes' if payload.get('extractedTitle') else 'no'})")
+        if AI_EXTRACT_BACKGROUND:
+            ai_extract_pending = True
+            print("[PiWS] Uploading scan first — AI field extraction will run in background")
         else:
-            print("[PiWS] AI extraction returned no data — upload will use placeholders")
-        ai_extract_pending = not extracted
+            print("[PiWS] Running AI field extraction (Groq vision)...")
+            ai = ai_extract_document(image_bytes)
+            if ai:
+                payload.update(_ai_payload_fields(ai))
+                if payload.get("extractedTitle"):
+                    payload["subject"] = payload["extractedTitle"]
+                extracted = bool(payload.get("extractedTitle") or payload.get("scannedText"))
+                print(f"[PiWS] AI fields ready for upload (title={'yes' if payload.get('extractedTitle') else 'no'})")
+            else:
+                print("[PiWS] AI extraction returned no data — upload will use placeholders")
+            ai_extract_pending = not extracted
 
     if ai_extract_pending:
         payload["aiExtractPending"] = True
@@ -1630,8 +1728,8 @@ def upload_scan(image_bytes: bytes, command_id: str):
     response.raise_for_status()
     result = response.json()
     document_id = result.get("documentId") or (result.get("document") or {}).get("id")
-    if AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id and not extracted:
-        print("[PiWS] Scheduling background AI enrich retry...")
+    if AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id and (ai_extract_pending or not extracted):
+        print("[PiWS] Scheduling background AI enrich...")
         start_ai_enrich_async(document_id, command_id, image_bytes)
     return result
 

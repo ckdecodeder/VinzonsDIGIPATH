@@ -197,12 +197,21 @@ fi
 
 log "USB copy complete (overwrite done)."
 
-eject_usb_source "$SRC" || true
-
+# Restart from Desktop BEFORE eject — otherwise unmount kills a scanner still running from USB.
 if [[ -f "$DEST/scripts/pi-restart-ws-scanner.sh" ]]; then
-  log "Eject done — restarting scanner (bootstrap + run)..."
+  log "Restarting scanner from Desktop (before USB eject)..."
   DIGIPATH_USER="$RUN_USER" DIGIPATH_WS_DIR="$DEST" \
     bash "$DEST/scripts/pi-restart-ws-scanner.sh" >>"$LOG" 2>&1 || true
+  sleep 2
 else
   log "WARN: pi-restart-ws-scanner.sh missing — scanner not restarted."
+fi
+
+eject_usb_source "$SRC" || true
+
+# Safety net: if unmount still killed the process, start again from Desktop.
+if [[ -f "$DEST/scripts/pi-usb-ensure-scanner.sh" ]]; then
+  sleep 2
+  DIGIPATH_USER="$RUN_USER" DIGIPATH_WS_DIR="$DEST" \
+    bash "$DEST/scripts/pi-usb-ensure-scanner.sh" >>"$LOG" 2>&1 || true
 fi

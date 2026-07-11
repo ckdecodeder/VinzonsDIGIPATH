@@ -522,6 +522,15 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   }, [isPhysicalSource, device?.connected, device?.streamWsConnected, realtime?.connected, previewReady, streamReloadKey]);
 
   useEffect(() => {
+    if (!previewReady || isDeviceScanning) return;
+    setDeviceScanStatus((prev) => (
+      /no camera frame|no preview frame|failed|timeout|cancelled/i.test(prev || '')
+        ? ''
+        : prev
+    ));
+  }, [previewReady, isDeviceScanning]);
+
+  useEffect(() => {
     if (!isPhysicalSource || !streamOnline || usesWsJpegStream) {
       setLanBridgeBase(null);
       return undefined;
@@ -976,8 +985,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         documentTypeId: formData.documentTypeId,
         scanOrientation: 'landscape',
         paperGuideId: selectedPaperGuide.id,
-        scanWidth: 2560,
-        scanHeight: 1440,
+        scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
+        scanHeight: streamDims.height > 0 ? streamDims.height : (deviceStreamResolution?.height || 1080),
       });
       setDeviceScanStatus('Waiting for the physical scanner to capture and upload the document...');
 
