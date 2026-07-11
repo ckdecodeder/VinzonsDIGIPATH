@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PageShell from "./PageShell";
 import PdfFitPreview from "./PdfFitPreview";
 import {
@@ -25,12 +25,11 @@ import {
   RefreshCw,
   XCircle,
 } from "lucide-react";
-import { Camera } from "react-camera-pro";
-import Tesseract from "tesseract.js";
 import { resolveUploadUrl, isPdfMedia } from "../utils/mediaUrl";
+import { getReportedBridgeUrl, probeLanBridge, fetchLanSnapshotAny } from "../utils/bridgePreview";
 import { commandService, bridgeService } from "../api/documentService";
 import { useOptionalRealtime } from "../context/RealtimeContext";
-import { getReportedBridgeUrl, fetchLanSnapshotAny } from "../utils/bridgePreview";
+import { useLiveDevice } from "../hooks/useLiveDevice";
 import {
   offices as defaultOffices,
   documentTypes as defaultDocumentTypes,
@@ -42,29 +41,136 @@ const OTHER_OFFICE_VALUE = '__external_source__';
 const PHYSICAL_CAMERA_VALUE = 'physical-scanner';
 
 const paperGuides = [
-  { id: 'letter-landscape', label: 'Letter Landscape', ratio: '11 / 8.5' },
-  { id: 'legal-landscape', label: 'Legal Landscape', ratio: '14 / 8.5' },
-  { id: 'a4-landscape', label: 'A4 Landscape', ratio: '297 / 210' },
-  { id: 'id-landscape', label: 'ID / Card', ratio: '1.586 / 1' },
-  { id: 'receipt-landscape', label: 'Receipt', ratio: '2.6 / 1' },
+  { id: 'letter-landscape', label: 'Letter', width: 11, height: 8.5, orientation: 'landscape' },
+  { id: 'legal-landscape', label: 'Legal', width: 14, height: 8.5, orientation: 'landscape' },
+  { id: 'a4-landscape', label: 'A4', width: 297, height: 210, orientation: 'landscape' },
+  { id: 'id-card', label: 'ID / Card', width: 85.6, height: 53.98, orientation: 'landscape' },
 ];
 
-const WS_STREAM_TIMEOUT_MS = 500;
-const SNAPSHOT_INTERVAL_MS = 400;
-const STREAM_STALE_MS = 4000;
-
-const paintWsFrame = (previewImg, frame, wsFrameUrlRef, onReady) => {
-  if (!frame?.length || !previewImg) return;
-  const blob = new Blob([frame], { type: 'image/jpeg' });
-  const nextUrl = URL.createObjectURL(blob);
-  if (wsFrameUrlRef.current) {
-    URL.revokeObjectURL(wsFrameUrlRef.current);
-  }
-  wsFrameUrlRef.current = nextUrl;
-  previewImg.decoding = 'sync';
-  previewImg.src = nextUrl;
-  onReady?.();
+const getPaperGuideLayout = (guide) => {
+  const width = Number(guide?.width) || 11;
+  const height = Number(guide?.height) || 8.5;
+  const ratio = width / height;
+  return {
+    ratio,
+    orientation: 'landscape',
+    overlayClass: 'scanner-paper-overlay--landscape',
+    frameClass: 'scanner-paper-frame--landscape',
+    shellClass: 'scanner-preview-shell--landscape',
+  };
 };
+
+const parseResolutionLabel = (value) => {
+  const match = String(value || '').match(/(\d+)\s*x\s*(\d+)/i);
+  if (!match) return null;
+  return { width: Number(match[1]), height: Number(match[2]) };
+};
+
+const readJpegDimensions = (bytes) => {
+  if (!bytes?.length || bytes.length < 4) return null;
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 8 < bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    const marker = bytes[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0xd9) continue;
+    const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) return null;
+    if (marker === 0xc0 || marker === 0xc1 || marker === 0xc2) {
+      const height = (bytes[offset + 3] << 8) | bytes[offset + 4];
+      const width = (bytes[offset + 5] << 8) | bytes[offset + 6];
+      if (width > 0 && height > 0) return { width, height };
+      return null;
+    }
+    offset += segmentLength;
+  }
+  return null;
+};
+
+const is2kResolution = ({ width, height }) => (
+  width >= 2560 && height >= 1440
+);
+
+const getPreviewFitMode = () => 'contain';
+
+const renderScannedDocumentPreview = (src, { alt = 'Scanned document', isPdf = false } = {}) => {
+  if (!src) return null;
+  const resolved = resolveUploadUrl(src);
+  if (isPdf) {
+    return <PdfFitPreview src={resolved} alt={alt} />;
+  }
+  return (
+    <div className="scanner-scanned-preview-shell">
+      <img src={resolved} alt={alt} className="scanner-scanned-preview-image" />
+    </div>
+  );
+};
+
+const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {}) => {
+  if (!canvas || !frame?.length) return;
+  const fitMode = options.fitMode === 'cover' ? 'cover' : 'contain';
+  const paintGen = (paintGenRef.current += 1);
+  const blob = new Blob([frame], { type: 'image/jpeg' });
+
+  const drawBitmap = (bitmap) => {
+    if (paintGen !== paintGenRef.current) {
+      bitmap.close?.();
+      return;
+    }
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) {
+      bitmap.close?.();
+      return;
+    }
+    const cw = canvas.width;
+    const ch = canvas.height;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cw, ch);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = fitMode === 'cover' ? 'high' : 'medium';
+    const scale = fitMode === 'cover'
+      ? Math.max(cw / bitmap.width, ch / bitmap.height)
+      : Math.min(cw / bitmap.width, ch / bitmap.height);
+    const dw = bitmap.width * scale;
+    const dh = bitmap.height * scale;
+    ctx.drawImage(bitmap, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+    bitmap.close?.();
+    onReady?.();
+  };
+
+  if (typeof createImageBitmap === 'function') {
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const resizeWidth = Math.max(1, Math.floor(canvas.width * dpr));
+    createImageBitmap(blob, {
+      resizeWidth,
+      premultiplyAlpha: 'none',
+      resizeQuality: 'high',
+    })
+      .then(drawBitmap)
+      .catch(() => {
+        const img = new Image();
+        img.onload = () => drawBitmap(img);
+        img.onerror = () => {};
+        img.src = URL.createObjectURL(blob);
+      });
+    return;
+  }
+
+  const img = new Image();
+  img.onload = () => drawBitmap(img);
+  img.src = URL.createObjectURL(blob);
+};
+
+const WS_STREAM_TIMEOUT_MS = 15000;
+const STREAM_STALE_MS = 12000;
+const SNAPSHOT_POLL_MS = 3500;
+
+const deviceUsesWsJpegStream = (device) => (
+  device?.payload?.streamMode === 'jpeg-ws'
+  || device?.payload?.bridgeVersion === 'ws-jpeg-1.0'
+  || device?.streamWsConnected === true
+);
 
 const getSubjectFromOcr = (text, fallback = '') => {
   const normalizedFallback = (fallback || '').trim();
@@ -92,17 +198,46 @@ const getSubjectFromOcr = (text, fallback = '') => {
   return (lines[0] || normalizedFallback || 'Scanned Document').slice(0, 120);
 };
 
-const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device }) => {
+const normalizeDateForInput = (value) => {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) return '';
+  return new Date(parsed).toISOString().split('T')[0];
+};
+
+const isPlaceholderSubject = (value) => {
+  const subject = (value || '').trim();
+  return !subject || /^scanned document$/i.test(subject) || /^untitled document$/i.test(subject);
+};
+
+const resolveAutoSubject = (doc) => {
+  if (!doc) return '';
+  if (!isPlaceholderSubject(doc.subject)) {
+    return String(doc.subject).trim().slice(0, 120);
+  }
+  const fromText = getSubjectFromOcr(doc.scannedText || '', '');
+  return isPlaceholderSubject(fromText) ? '' : fromText;
+};
+
+const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device: deviceProp }) => {
+  const { device, cameOnline } = useLiveDevice(deviceProp);
   const camera = useRef(null);
   const commandPollRef = useRef(null);
   const enrichPollRef = useRef(null);
   const autoFilledRef = useRef({});
   const previewImgRef = useRef(null);
-  const wsFrameUrlRef = useRef('');
+  const previewCanvasRef = useRef(null);
+  const wsPaintGenRef = useRef(0);
+  const pendingPaintRef = useRef(false);
   const previewReadyRef = useRef(false);
   const lanSnapshotStarterRef = useRef(null);
+  const paintedFramesRef = useRef(0);
   const lastFrameAtRef = useRef(0);
+  const lastFrameRef = useRef(null);
   const staleReloadAtRef = useRef(0);
+  const streamStaleRef = useRef(false);
   const realtime = useOptionalRealtime();
   const canChooseSourceOffice = currentUser?.role === 'Admin';
   const canChooseDirection = currentUser?.role === 'Admin';
@@ -115,21 +250,22 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   };
   // Step 1 = Scan, Step 2 = Fill Details, Step 3 = Review, Step 4 = Done
   const [step, setStep] = useState(1);
-  const [numberOfCameras, setNumberOfCameras] = useState(0);
-  const [cameraDevices, setCameraDevices] = useState([]);
-  const [cameraSource, setCameraSource] = useState(PHYSICAL_CAMERA_VALUE);
-  const [selectedCameraId, setSelectedCameraId] = useState('');
-  const [cameraFacingMode, setCameraFacingMode] = useState('environment');
+  const [cameraSource] = useState(PHYSICAL_CAMERA_VALUE);
   const [paperGuideId, setPaperGuideId] = useState('letter-landscape');
+  const [showPaperGuide, setShowPaperGuide] = useState(false);
   const [streamReloadKey, setStreamReloadKey] = useState(0);
+  const [previewMode, setPreviewMode] = useState('ws');
+  const [lanBridgeBase, setLanBridgeBase] = useState(null);
+  const [directStreamUrl, setDirectStreamUrl] = useState('');
   const [previewErrorMessage, setPreviewErrorMessage] = useState('');
   const [streamHasError, setStreamHasError] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
-  const [lanBridgeBase, setLanBridgeBase] = useState(null);
-  const [directStreamUrl, setDirectStreamUrl] = useState('');
-  const [previewMode, setPreviewMode] = useState('ws');
   const [streamStale, setStreamStale] = useState(false);
+  const [streamStats, setStreamStats] = useState({ paint: 0 });
+  const [streamDims, setStreamDims] = useState({ width: 0, height: 0 });
   const [isExtracting, setIsExtracting] = useState(false);
+  const [isSubjectExtracting, setIsSubjectExtracting] = useState(false);
+  const [enrichmentHint, setEnrichmentHint] = useState('');
   const [progress, setProgress] = useState(0);
   const [isDeviceScanning, setIsDeviceScanning] = useState(false);
   const [deviceScanStatus, setDeviceScanStatus] = useState('');
@@ -162,44 +298,56 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   });
 
   useEffect(() => {
-    refreshCameraDevices();
-
     return () => {
-      if (commandPollRef.current) {
-        clearInterval(commandPollRef.current);
-      }
-      if (enrichPollRef.current) {
-        clearInterval(enrichPollRef.current);
-      }
+      if (commandPollRef.current) clearInterval(commandPollRef.current);
+      if (enrichPollRef.current) clearInterval(enrichPollRef.current);
     };
   }, []);
 
-  useEffect(() => {
-    if (!device?.connected && cameraSource === PHYSICAL_CAMERA_VALUE) {
-      setCameraSource(selectedCameraId || 'browser-camera');
-    }
-    if (device?.connected && (!cameraSource || cameraSource === 'browser-camera')) {
-      setCameraSource(PHYSICAL_CAMERA_VALUE);
-    }
-  }, [device?.connected]);
-
-  const refreshCameraDevices = async () => {
-    if (!navigator.mediaDevices?.enumerateDevices) return;
-
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoInputs = devices.filter(item => item.kind === 'videoinput');
-      setCameraDevices(videoInputs);
-      if (!selectedCameraId && videoInputs[0]?.deviceId) {
-        setSelectedCameraId(videoInputs[0].deviceId);
-      }
-    } catch {
-      setCameraDevices([]);
-    }
-  };
-
   const handleFormChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const applyExtractedDocFields = (doc, auto = {}) => {
+    const newSubject = resolveAutoSubject(doc);
+    const newSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
+    const newText = doc.scannedText || '';
+    const newDate = normalizeDateForInput(doc.dateReceived);
+    const newDocTypeId = doc.documentTypeId || '';
+
+    const enriched = (
+      (newText && newText !== auto.scannedText)
+      || (!isPlaceholderSubject(newSubject) && newSubject !== auto.subject)
+      || (newSender && newSender !== auto.senderName)
+      || (newDate && newDate !== auto.dateReceived)
+      || (newDocTypeId && newDocTypeId !== auto.documentTypeId)
+    );
+    if (!enriched) return false;
+
+    setExtractedText((prev) => (prev === auto.scannedText || !prev ? newText : prev));
+    setFormData((prev) => ({
+      ...prev,
+      subject: (isPlaceholderSubject(prev.subject) || prev.subject === auto.subject) && !isPlaceholderSubject(newSubject)
+        ? newSubject
+        : prev.subject,
+      senderName: (!prev.senderName || prev.senderName === auto.senderName) && newSender
+        ? newSender
+        : prev.senderName,
+      documentTypeId: (!prev.documentTypeId || prev.documentTypeId === auto.documentTypeId) && newDocTypeId
+        ? newDocTypeId
+        : prev.documentTypeId,
+      dateReceived: (!prev.dateReceived || prev.dateReceived === auto.dateReceived) && newDate
+        ? newDate
+        : prev.dateReceived,
+    }));
+    autoFilledRef.current = {
+      subject: newSubject,
+      senderName: newSender,
+      scannedText: newText,
+      documentTypeId: newDocTypeId,
+      dateReceived: newDate,
+    };
+    return true;
   };
 
   const toggleSenderChannel = (channel) => {
@@ -214,17 +362,135 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     });
   };
 
-  const isPhysicalSource = cameraSource === PHYSICAL_CAMERA_VALUE;
-  const hasLanBridge = Boolean(isPhysicalSource && device?.connected && lanBridgeBase);
+  const isPhysicalSource = true;
+  const selectedPaperGuide = paperGuides.find(item => item.id === paperGuideId) || paperGuides[0];
+  const paperGuideLayout = getPaperGuideLayout(selectedPaperGuide);
+  const previewFitMode = getPreviewFitMode();
+  const previewPaintOptions = useMemo(
+    () => ({ fitMode: previewFitMode }),
+    [previewFitMode],
+  );
+  const previewShellClassName = [
+    'scanner-preview-shell',
+    paperGuideLayout.shellClass,
+    previewReady ? 'scanner-preview-shell--live' : '',
+  ].filter(Boolean).join(' ');
+  const deviceStreamResolution = parseResolutionLabel(
+    device?.payload?.streamResolution || device?.payload?.previewResolution,
+  );
+  const streamResolutionLabel = (() => {
+    if (streamDims.width > 0 && streamDims.height > 0) {
+      return `${streamDims.width}×${streamDims.height}`;
+    }
+    if (deviceStreamResolution) {
+      return `${deviceStreamResolution.width}×${deviceStreamResolution.height}`;
+    }
+    return null;
+  })();
+  const streamIs2k = streamDims.width > 0
+    ? is2kResolution(streamDims)
+    : (device?.payload?.streamIs2K === true || is2kResolution(deviceStreamResolution || {}));
+  const isCapturedPdf = isPdfMedia(capturedImage, capturedFileType);
+  const deviceId = device?.id || 'DEV-001';
+  const streamChannel = `scanner:${deviceId}:stream`;
+  const streamOnline = device?.connected || device?.streamWsConnected === true;
+  const usesWsJpegStream = deviceUsesWsJpegStream(device);
+  const hasLanBridge = Boolean(
+    isPhysicalSource && streamOnline && lanBridgeBase && !usesWsJpegStream,
+  );
   const previewLabel = previewMode === 'direct'
     ? 'Live via Pi LAN (MJPEG)'
     : previewMode === 'lan-snapshot'
       ? 'Live via Pi LAN (snapshot)'
       : previewMode === 'ws'
         ? 'Live via WebSocket'
-        : 'Live via Pi snapshot';
-  const selectedPaperGuide = paperGuides.find(item => item.id === paperGuideId) || paperGuides[0];
-  const isCapturedPdf = isPdfMedia(capturedImage, capturedFileType);
+        : 'Live via snapshot';
+
+  const paintPreviewBlob = useCallback((blob) => {
+    if (!blob?.size || !previewCanvasRef.current) return;
+    blob.arrayBuffer().then((buffer) => {
+      paintWsFrameToCanvas(
+        previewCanvasRef.current,
+        new Uint8Array(buffer),
+        wsPaintGenRef,
+        () => {
+          lastFrameAtRef.current = Date.now();
+          if (!previewReadyRef.current) {
+            previewReadyRef.current = true;
+            setPreviewReady(true);
+          }
+          if (streamStaleRef.current) {
+            streamStaleRef.current = false;
+            setStreamStale(false);
+          }
+          setStreamHasError(false);
+          setPreviewErrorMessage('');
+        },
+        previewPaintOptions,
+      );
+    }).catch(() => {});
+  }, [previewPaintOptions]);
+
+  const scheduleFramePaint = useCallback((frame) => {
+    if (!frame?.length) return;
+    lastFrameRef.current = frame;
+    lastFrameAtRef.current = Date.now();
+    const jpegDims = readJpegDimensions(frame);
+    if (jpegDims) {
+      setStreamDims((prev) => (
+        prev.width === jpegDims.width && prev.height === jpegDims.height
+          ? prev
+          : jpegDims
+      ));
+    }
+    if (pendingPaintRef.current) return;
+    pendingPaintRef.current = true;
+    const paintLatest = () => {
+      pendingPaintRef.current = false;
+      const latest = lastFrameRef.current;
+      if (!latest?.length || !previewCanvasRef.current) return;
+      paintedFramesRef.current += 1;
+      paintWsFrameToCanvas(
+        previewCanvasRef.current,
+        latest,
+        wsPaintGenRef,
+        () => {
+          if (streamStaleRef.current) {
+            streamStaleRef.current = false;
+            setStreamStale(false);
+          }
+          if (!previewReadyRef.current) {
+            previewReadyRef.current = true;
+            setPreviewReady(true);
+            setPreviewMode('ws');
+            setStreamHasError(false);
+            setPreviewErrorMessage('');
+          }
+        },
+        previewPaintOptions,
+      );
+    };
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(paintLatest);
+    } else {
+      requestAnimationFrame(paintLatest);
+    }
+  }, [previewPaintOptions]);
+
+  // Repaint last frame when paper guide changes the preview shell layout.
+  useEffect(() => {
+    const frame = lastFrameRef.current;
+    if (!frame?.length || !previewCanvasRef.current) return;
+    requestAnimationFrame(() => {
+      paintWsFrameToCanvas(
+        previewCanvasRef.current,
+        frame,
+        wsPaintGenRef,
+        undefined,
+        previewPaintOptions,
+      );
+    });
+  }, [paperGuideId, paperGuideLayout.shellClass, previewPaintOptions]);
 
   useEffect(() => {
     if (!isPhysicalSource) {
@@ -233,15 +499,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       return undefined;
     }
 
-    if (!device?.connected) {
+    if (!device?.connected && device?.streamWsConnected !== true) {
       setStreamHasError(true);
       setPreviewErrorMessage('Physical scanner is offline. Wait for device heartbeat.');
-      return undefined;
-    }
-
-    if (hasLanBridge) {
-      setStreamHasError(false);
-      setPreviewErrorMessage(previewReady ? '' : 'Connecting to Pi camera on LAN...');
       return undefined;
     }
 
@@ -258,69 +518,90 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
 
     setStreamHasError(false);
-    setPreviewErrorMessage('Connecting WebSocket camera stream...');
+    setPreviewErrorMessage('Connecting to camera stream...');
     return undefined;
-  }, [isPhysicalSource, device?.connected, realtime?.connected, previewReady, streamReloadKey, hasLanBridge]);
+  }, [isPhysicalSource, device?.connected, device?.streamWsConnected, realtime?.connected, previewReady, streamReloadKey]);
 
   useEffect(() => {
-    if (!isPhysicalSource || !device?.connected) {
+    if (!isPhysicalSource || !streamOnline || usesWsJpegStream) {
       setLanBridgeBase(null);
       return undefined;
     }
-
-    setLanBridgeBase(getReportedBridgeUrl(device));
-    return undefined;
-  }, [isPhysicalSource, device?.connected, device?.bridgeUrl, device?.streamUrl, device?.id, device?.ip, device?.payload?.ip, device?.payload?.bridgeUrl, streamReloadKey]);
+    let cancelled = false;
+    const base = getReportedBridgeUrl(device);
+    if (!base) return undefined;
+    (async () => {
+      const probed = await probeLanBridge(base, deviceId);
+      if (!cancelled && probed) {
+        setLanBridgeBase(probed);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isPhysicalSource, streamOnline, usesWsJpegStream, device, deviceId]);
 
   useEffect(() => {
-    if (!isPhysicalSource || !realtime?.subscribe) return undefined;
+    const canvas = previewCanvasRef.current;
+    const shell = canvas?.parentElement;
+    if (!canvas || !shell) return undefined;
 
-    const offDevice = realtime.subscribe('device:updated', (message) => {
-      const nextDevice = message?.device || device;
-      const reported = getReportedBridgeUrl(nextDevice);
-      if (reported) {
-        setLanBridgeBase(reported);
-        setStreamReloadKey((value) => value + 1);
+    const syncCanvasSize = () => {
+      const rect = shell.getBoundingClientRect();
+      const w = Math.max(1, Math.floor(rect.width));
+      const h = Math.max(1, Math.floor(rect.height));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+    };
+
+    syncCanvasSize();
+    const ro = new ResizeObserver(() => {
+      syncCanvasSize();
+      const frame = lastFrameRef.current;
+      if (frame?.length && previewCanvasRef.current) {
+        paintWsFrameToCanvas(
+          previewCanvasRef.current,
+          frame,
+          wsPaintGenRef,
+          undefined,
+          previewPaintOptions,
+        );
       }
     });
+    ro.observe(shell);
+    return () => ro.disconnect();
+  }, [streamReloadKey, paperGuideId, previewPaintOptions]);
 
-    return () => offDevice();
-  }, [isPhysicalSource, realtime, device?.id, device?.ip, device?.bridgeUrl]);
-
-  const paintPreviewBlob = (blob) => {
-    const nextUrl = URL.createObjectURL(blob);
-    if (wsFrameUrlRef.current) {
-      URL.revokeObjectURL(wsFrameUrlRef.current);
-    }
-    wsFrameUrlRef.current = nextUrl;
-    if (previewImgRef.current) {
-      previewImgRef.current.src = nextUrl;
-    }
-    lastFrameAtRef.current = Date.now();
-    if (!previewReadyRef.current) {
-      previewReadyRef.current = true;
-      setPreviewReady(true);
-    }
-    setStreamStale(false);
-    setStreamHasError(false);
-    setPreviewErrorMessage('');
-  };
-
-  // Hard reset: switching device or camera source clears everything to black.
+  // Hard reset: switching device clears preview.
   useEffect(() => {
     previewReadyRef.current = false;
     setPreviewReady(false);
+    streamStaleRef.current = false;
     setStreamStale(false);
-    lastFrameAtRef.current = 0;
+    setPreviewMode('ws');
     setDirectStreamUrl('');
-    if (wsFrameUrlRef.current) {
-      URL.revokeObjectURL(wsFrameUrlRef.current);
-      wsFrameUrlRef.current = '';
+    lastFrameAtRef.current = 0;
+    wsPaintGenRef.current += 1;
+    const canvas = previewCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d', { alpha: false });
+      ctx?.fillRect(0, 0, canvas.width, canvas.height);
     }
     if (previewImgRef.current) {
       previewImgRef.current.removeAttribute('src');
     }
   }, [device?.id, cameraSource]);
+
+  // Pi came online — resubscribe only if preview not running yet.
+  useEffect(() => {
+    if (!cameOnline) return;
+    setStreamHasError(false);
+    setPreviewErrorMessage('');
+    staleReloadAtRef.current = 0;
+    if (!previewReadyRef.current) {
+      setStreamReloadKey((value) => value + 1);
+    }
+  }, [cameOnline]);
 
   // Soft reload (stale watchdog): keep the last painted frame visible so the
   // preview looks frozen under the "Reconnecting" overlay instead of flashing
@@ -330,38 +611,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   }, [streamReloadKey]);
 
   useEffect(() => {
-    // MJPEG (direct) is a continuous browser-managed stream; per-frame timing
-    // is not observable, so skip the watchdog for it.
-    if (!isPhysicalSource || !device?.connected || !previewReady || previewMode === 'direct') {
-      setStreamStale(false);
-      return undefined;
-    }
-
-    const interval = setInterval(() => {
-      const last = lastFrameAtRef.current;
-      if (!last) return;
-      const age = Date.now() - last;
-      if (age < STREAM_STALE_MS) {
-        setStreamStale(false);
-        return;
-      }
-
-      setStreamStale(true);
-
-      // Auto-recover: reload the stream at most once every 8s while stalled.
-      const now = Date.now();
-      if (now - staleReloadAtRef.current > 8000) {
-        staleReloadAtRef.current = now;
-        setStreamReloadKey(value => value + 1);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [isPhysicalSource, device?.connected, previewReady, previewMode, directStreamUrl]);
-
-  useEffect(() => {
     if (!hasLanBridge) {
       setDirectStreamUrl('');
+      return undefined;
+    }
+    // WebSocket preview wins — don't poll LAN snapshots on the same surface.
+    if (previewReadyRef.current && previewMode === 'ws') {
       return undefined;
     }
 
@@ -369,18 +624,18 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     let snapshotTimer = null;
     const lanBase = lanBridgeBase;
 
-    const deviceId = device?.id || 'DEV-001';
-
     const startLanSnapshotPolling = () => {
-      if (cancelled || snapshotTimer) return;
+      if (cancelled || snapshotTimer || (previewReadyRef.current && previewMode === 'ws')) return;
       setDirectStreamUrl('');
       setPreviewMode('lan-snapshot');
 
       const pollLanSnapshot = async () => {
+        if (previewReadyRef.current && previewMode === 'ws') return;
         try {
           const blob = await bridgeService.snapshot({ deviceId, bridgeUrl: lanBase });
           if (cancelled || !blob?.size) return;
           paintPreviewBlob(blob);
+          setPreviewMode('lan-snapshot');
         } catch (err) {
           if (!cancelled && !previewReadyRef.current) {
             setStreamHasError(true);
@@ -390,8 +645,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       };
 
       pollLanSnapshot();
-      snapshotTimer = setInterval(pollLanSnapshot, SNAPSHOT_INTERVAL_MS);
+      snapshotTimer = setInterval(pollLanSnapshot, SNAPSHOT_POLL_MS);
     };
+
+    lanSnapshotStarterRef.current = startLanSnapshotPolling;
 
     const probeLanStream = async () => {
       try {
@@ -404,212 +661,210 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           return;
         }
       } catch {
-        // MJPEG unavailable on Pi — use snapshot polling instead.
+        // MJPEG unavailable — snapshot polling instead.
       }
-
       if (!cancelled) startLanSnapshotPolling();
     };
 
     probeLanStream();
-    lanSnapshotStarterRef.current = startLanSnapshotPolling;
 
     return () => {
       cancelled = true;
-      lanSnapshotStarterRef.current = null;
       if (snapshotTimer) clearInterval(snapshotTimer);
     };
-  }, [hasLanBridge, lanBridgeBase, streamReloadKey, device?.id]);
-
-  const scheduleFramePaint = (frame) => {
-    if (!frame?.length || !previewImgRef.current) return;
-    paintWsFrame(previewImgRef.current, frame, wsFrameUrlRef, () => {
-      lastFrameAtRef.current = Date.now();
-      setStreamStale(false);
-      if (!previewReadyRef.current) {
-        previewReadyRef.current = true;
-        setPreviewReady(true);
-        setPreviewMode('ws');
-        setStreamHasError(false);
-        setPreviewErrorMessage('');
-      }
-    });
-  };
+  }, [hasLanBridge, lanBridgeBase, deviceId, paintPreviewBlob, previewMode]);
 
   useEffect(() => {
-    if (!isPhysicalSource || !device?.connected || !realtime?.client || hasLanBridge) {
+    if (!isPhysicalSource || !previewReady || previewMode === 'direct') {
+      setStreamStale(false);
       return undefined;
     }
 
-    const deviceId = device.id || 'DEV-001';
-    const channel = `scanner:${deviceId}:stream`;
+    const interval = setInterval(() => {
+      const last = lastFrameAtRef.current;
+      if (!last) return;
+      const age = Date.now() - last;
+      if (age < STREAM_STALE_MS) {
+        if (streamStaleRef.current) {
+          streamStaleRef.current = false;
+          setStreamStale(false);
+        }
+        return;
+      }
+
+      if (!streamStaleRef.current) {
+        streamStaleRef.current = true;
+        setStreamStale(true);
+      }
+      // Keep last frame — do not auto tear down WS subscription.
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isPhysicalSource, previewReady, previewMode, directStreamUrl]);
+
+  useEffect(() => {
+    if (!isPhysicalSource) return undefined;
+    const interval = setInterval(() => {
+      setStreamStats({ paint: paintedFramesRef.current });
+      paintedFramesRef.current = 0;
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isPhysicalSource]);
+
+  useEffect(() => {
+    if (!isPhysicalSource || !streamOnline || !realtime?.client || !realtime?.connected) {
+      return undefined;
+    }
+
     let streamTimeout = null;
+    let snapshotTimer = null;
+    let cancelled = false;
+    let snapshotInFlight = false;
 
     const bindStream = () => {
-      realtime.subscribeChannel(channel);
+      realtime.subscribeChannel(streamChannel);
+    };
+
+    const pullCachedSnapshot = async () => {
+      if (cancelled || snapshotInFlight || previewReadyRef.current) return false;
+      snapshotInFlight = true;
+      try {
+        const blob = await bridgeService.snapshot({ deviceId });
+        if (cancelled || !blob?.size) return false;
+        paintPreviewBlob(blob);
+        setPreviewMode(usesWsJpegStream ? 'ws-cached' : 'snapshot');
+        if (streamTimeout) {
+          clearTimeout(streamTimeout);
+          streamTimeout = null;
+        }
+        setStreamHasError(false);
+        setPreviewErrorMessage('');
+        return true;
+      } catch (err) {
+        if (!cancelled && err?.status === 503 && err?.message) {
+          setStreamHasError(true);
+          setPreviewErrorMessage(err.message);
+        }
+        return false;
+      } finally {
+        snapshotInFlight = false;
+      }
     };
 
     bindStream();
-    const offOpen = realtime.subscribe('connection:open', bindStream);
-
+    const offOpen = realtime.subscribe('connection:open', () => {
+      bindStream();
+      streamStaleRef.current = false;
+      setStreamStale(false);
+      setPreviewErrorMessage('');
+    });
     const offFrame = realtime.subscribe('scanner:frame', ({ frame }) => {
       scheduleFramePaint(frame);
       if (streamTimeout) {
         clearTimeout(streamTimeout);
         streamTimeout = null;
       }
+      setStreamHasError(false);
+      setPreviewErrorMessage('');
     });
+
+    const startSnapshotFallback = () => {
+      if (snapshotTimer || previewReadyRef.current) return;
+      pullCachedSnapshot();
+      snapshotTimer = setInterval(() => {
+        if (previewReadyRef.current) {
+          clearInterval(snapshotTimer);
+          snapshotTimer = null;
+          return;
+        }
+        pullCachedSnapshot();
+      }, SNAPSHOT_POLL_MS);
+    };
 
     streamTimeout = setTimeout(() => {
       if (!previewReadyRef.current) {
         setStreamHasError(true);
-        setPreviewErrorMessage(device?.streamWsConnected === false
-          ? 'Pi WebSocket stream is offline. Trying snapshot preview from the bridge...'
-          : 'WebSocket camera stream unavailable. Trying snapshot preview from the bridge...');
+        setPreviewErrorMessage(
+          device?.streamWsConnected === false
+            ? 'Pi WebSocket stream is offline. Trying snapshot preview...'
+            : 'Waiting for camera frames from Pi...',
+        );
+        startSnapshotFallback();
       }
-    }, WS_STREAM_TIMEOUT_MS);
-
-    return () => {
-      offOpen();
-      offFrame();
-      if (streamTimeout) clearTimeout(streamTimeout);
-      realtime.client.unsubscribe(channel);
-      if (wsFrameUrlRef.current) {
-        URL.revokeObjectURL(wsFrameUrlRef.current);
-        wsFrameUrlRef.current = '';
-      }
-    };
-  }, [isPhysicalSource, device?.connected, device?.id, device?.streamWsConnected, realtime, realtime?.connected, streamReloadKey, hasLanBridge]);
-
-  useEffect(() => {
-    if (!isPhysicalSource || !device?.connected || previewReady || hasLanBridge) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    let snapshotTimer = null;
-    const deviceId = device.id || 'DEV-001';
-
-    const loadSnapshotPreview = async () => {
-      try {
-        const bridgeStatus = await bridgeService.status({ deviceId });
-        if (cancelled) return;
-        if (bridgeStatus?.ok) {
-          const blob = await bridgeService.snapshot({
-            deviceId,
-            bridgeUrl: bridgeStatus.bridgeUrl,
-          });
-          if (cancelled || !blob) return;
-
-          const nextUrl = URL.createObjectURL(blob);
-          if (wsFrameUrlRef.current) {
-            URL.revokeObjectURL(wsFrameUrlRef.current);
-          }
-          wsFrameUrlRef.current = nextUrl;
-          if (previewImgRef.current) {
-            previewImgRef.current.src = nextUrl;
-          }
-          if (!previewReadyRef.current) {
-            previewReadyRef.current = true;
-            setPreviewReady(true);
-          }
-          setPreviewMode('snapshot');
-          setStreamHasError(false);
-          setPreviewErrorMessage('');
-          return;
-        }
-
-        const directBlob = await fetchLanSnapshotAny(device);
-        if (cancelled) return;
-        if (directBlob) {
-          paintPreviewBlob(directBlob);
-          setPreviewMode('lan-snapshot');
-          return;
-        }
-
-        if (!previewReadyRef.current) {
-          setStreamHasError(true);
-          setPreviewErrorMessage(
-            device?.streamWsConnected === false
-              ? 'Waiting for Pi WebSocket via backend. Same WiFi? Open Device Control, check Pi IP, or restart: sudo systemctl restart digipath-scanner'
-              : 'Camera stream unavailable. Same WiFi as Pi enables LAN preview — restart digipath-scanner if IP changed.',
-          );
-        }
-      } catch (err) {
-        if (cancelled) return;
-        const directBlob = await fetchLanSnapshotAny(device);
-        if (!cancelled && directBlob) {
-          paintPreviewBlob(directBlob);
-          setPreviewMode('lan-snapshot');
-          return;
-        }
-        if (!previewReadyRef.current) {
-          setStreamHasError(true);
-          setPreviewErrorMessage(
-            `Camera preview unavailable: ${err.message || 'bridge snapshot failed'}. Same WiFi as Pi enables faster LAN preview.`,
-          );
-        }
-      }
-    };
-
-    const startAfter = setTimeout(() => {
-      loadSnapshotPreview();
-      snapshotTimer = setInterval(loadSnapshotPreview, SNAPSHOT_INTERVAL_MS);
     }, WS_STREAM_TIMEOUT_MS);
 
     return () => {
       cancelled = true;
-      clearTimeout(startAfter);
+      offOpen?.();
+      offFrame?.();
+      if (streamTimeout) clearTimeout(streamTimeout);
       if (snapshotTimer) clearInterval(snapshotTimer);
+      realtime.client?.unsubscribe(streamChannel);
     };
-  }, [isPhysicalSource, device?.connected, device?.id, device?.streamWsConnected, previewReady, streamReloadKey, hasLanBridge]);
+  }, [
+    isPhysicalSource,
+    streamOnline,
+    realtime,
+    realtime?.connected,
+    streamChannel,
+    streamReloadKey,
+    deviceId,
+    device?.streamWsConnected,
+    usesWsJpegStream,
+    scheduleFramePaint,
+    paintPreviewBlob,
+  ]);
 
-  const handleCameraSourceChange = (value) => {
-    setCameraSource(value);
-    setStreamHasError(false);
-    setPreviewErrorMessage('');
-    if (value !== PHYSICAL_CAMERA_VALUE) {
-      setSelectedCameraId(value === 'browser-camera' ? '' : value);
+  useEffect(() => {
+    if (!realtime?.client) return undefined;
+    const offClose = realtime.subscribe('connection:close', () => {
+      if (!previewReadyRef.current) {
+        setStreamStale(true);
+        setPreviewErrorMessage('Reconnecting to realtime server...');
+      }
+    });
+    return () => offClose();
+  }, [realtime, realtime?.connected]);
+
+  const startEnrichmentPolling = (commandId, expectsAi = false) => {
+    if (!expectsAi) {
+      setIsSubjectExtracting(false);
+      setEnrichmentHint('');
+      return;
     }
-  };
-
-  const startEnrichmentPolling = (commandId) => {
     if (enrichPollRef.current) {
       clearInterval(enrichPollRef.current);
       enrichPollRef.current = null;
     }
+    setIsSubjectExtracting(true);
+    setEnrichmentHint('');
     let attempts = 0;
     enrichPollRef.current = setInterval(async () => {
       attempts += 1;
-      if (attempts > 10) {
+      if (attempts > 30) {
         clearInterval(enrichPollRef.current);
         enrichPollRef.current = null;
+        setIsSubjectExtracting(false);
+        setEnrichmentHint(
+          isPlaceholderSubject(autoFilledRef.current?.subject)
+            ? 'AI extraction did not finish. Enter the subject manually, or set DIGIPATH_GROQ_API_KEY in network.env and run npm run network:sync.'
+            : '',
+        );
         return;
       }
+      setEnrichmentHint('Extracting document fields from HQ scan...');
       try {
         const result = await commandService.checkStatus(commandId);
         const doc = result?.resultDocument;
         if (!doc) return;
 
         const auto = autoFilledRef.current || {};
-        const newSubject = getSubjectFromOcr(doc.scannedText || '', doc.subject) || '';
-        const newSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
-        const newText = doc.scannedText || '';
-
-        // Only fill fields the user hasn't manually changed (still equal to the
-        // value we auto-filled, or still empty). This avoids clobbering edits.
-        const enriched = newText && newText !== auto.scannedText;
-        if (!enriched) return;
-
-        setExtractedText(prev => (prev === auto.scannedText || !prev ? newText : prev));
-        setFormData(prev => ({
-          ...prev,
-          subject: (!prev.subject || prev.subject === auto.subject) && newSubject ? newSubject : prev.subject,
-          senderName: (!prev.senderName || prev.senderName === auto.senderName) && newSender ? newSender : prev.senderName,
-        }));
-        autoFilledRef.current = { subject: newSubject, senderName: newSender, scannedText: newText };
-
-        clearInterval(enrichPollRef.current);
-        enrichPollRef.current = null;
+        if (applyExtractedDocFields(doc, auto)) {
+          clearInterval(enrichPollRef.current);
+          enrichPollRef.current = null;
+          setIsSubjectExtracting(false);
+          setEnrichmentHint('');
+        }
       } catch {
         // Keep polling; the enrichment may not be ready yet.
       }
@@ -632,19 +887,22 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           || null,
         );
         const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : 'image/jpeg');
-        const autoSubject = getSubjectFromOcr(doc.scannedText || '', doc.subject) || '';
+        const autoSubject = resolveAutoSubject(doc);
         const autoSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
+        const autoDate = normalizeDateForInput(doc.dateReceived);
         autoFilledRef.current = {
           subject: autoSubject,
           senderName: autoSender,
           scannedText: doc.scannedText || '',
+          documentTypeId: doc.documentTypeId || '',
+          dateReceived: autoDate,
         };
         setCapturedImage(scannedUrl);
         setCapturedFileType(scannedType);
         setExtractedText(doc.scannedText || '');
         setFormData(prev => ({
           ...prev,
-          subject: autoSubject || prev.subject,
+          subject: autoSubject,
           documentDirection: doc.documentDirection || prev.documentDirection,
           documentTypeId: doc.documentTypeId || prev.documentTypeId,
           documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
@@ -653,8 +911,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
           originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
           toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
-          dateReceived: doc.dateReceived || prev.dateReceived,
-          senderName: autoSender || prev.senderName,
+          dateReceived: autoDate || doc.dateReceived || prev.dateReceived,
+          senderName: autoSender,
           senderContact: doc.senderContact || prev.senderContact,
           senderEmail: doc.senderEmail || prev.senderEmail,
           notifySender: doc.notifySender ?? prev.notifySender,
@@ -662,9 +920,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
           remarks: doc.remarks || prev.remarks,
         }));
-        // AI extraction may still be running on the Pi. Poll a few more times to
-        // fill in the fields once the enriched document arrives.
-        if (commandId) startEnrichmentPolling(commandId);
+        // AI extraction may still be running on the Pi. Poll only when the Pi flagged it.
+        if (commandId) startEnrichmentPolling(commandId, Boolean(result?.payload?.aiExtractPending));
       }
       setIsDeviceScanning(false);
       setDeviceScanStatus('');
@@ -683,42 +940,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
   // STEP 1: Capture/scan the document
   const handleCapture = async () => {
-    if (isPhysicalSource) {
-      await handlePhysicalScan();
-      return;
-    }
-
-    if (!camera.current?.takePhoto) {
-      setDeviceScanStatus('Camera is not ready yet. Please wait a moment and try again.');
-      return;
-    }
-
-    const photo = camera.current.takePhoto();
-    setCapturedImage(photo);
-    setCapturedFileType('image/jpeg');
-    setIsExtracting(true);
-    setProgress(0);
-
-    try {
-      const { data: { text } } = await Tesseract.recognize(photo, 'eng', {
-        logger: m => {
-          if (m.status === 'recognizing text') {
-            setProgress(parseInt(m.progress * 100));
-          }
-        }
-      });
-      setExtractedText(text);
-      setFormData(prev => ({
-        ...prev,
-        subject: prev.subject || getSubjectFromOcr(text),
-      }));
-    } catch (err) {
-      console.error("OCR Error:", err);
-      setExtractedText('');
-    } finally {
-      setIsExtracting(false);
-      setStep(2); // Move to details form
-    }
+    await handlePhysicalScan();
   };
 
   const handlePhysicalScan = async () => {
@@ -729,7 +951,22 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
     setIsDeviceScanning(true);
     setDeviceScanStatus('Sending scan command to physical scanner...');
+    setIsSubjectExtracting(false);
+    setEnrichmentHint('');
     setHardwareScannedDoc(null);
+    setExtractedText('');
+    autoFilledRef.current = {
+      subject: '',
+      senderName: '',
+      scannedText: '',
+      documentTypeId: '',
+      dateReceived: '',
+    };
+    setFormData((prev) => ({
+      ...prev,
+      subject: '',
+      senderName: '',
+    }));
 
     try {
       const command = await commandService.sendScan(device.id || 'DEV-001', {
@@ -738,6 +975,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         status: canSetInitialStatus ? formData.status : 'Received',
         priorityLevel: formData.priorityLevel,
         documentTypeId: formData.documentTypeId,
+        scanOrientation: 'landscape',
+        paperGuideId: selectedPaperGuide.id,
+        scanWidth: 2560,
+        scanHeight: 1440,
       });
       setDeviceScanStatus('Waiting for the physical scanner to capture and upload the document...');
 
@@ -860,12 +1101,25 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setStep(4);
   };
 
+  const handleRescan = () => {
+    if (enrichPollRef.current) {
+      clearInterval(enrichPollRef.current);
+      enrichPollRef.current = null;
+    }
+    setIsSubjectExtracting(false);
+    setEnrichmentHint('');
+    setDeviceScanStatus('');
+    setStep(1);
+  };
+
   const handleReset = () => {
     if (enrichPollRef.current) {
       clearInterval(enrichPollRef.current);
       enrichPollRef.current = null;
     }
     autoFilledRef.current = {};
+    setIsSubjectExtracting(false);
+    setEnrichmentHint('');
     setStep(1);
     setCapturedImage(null);
     setCapturedFileType('');
@@ -918,16 +1172,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   return (
     <PageShell
       header={
-        <div className="page-header page-header--scanner">
+        <div className="page-header">
           <div className="page-header-left">
             <h1>Scan Document</h1>
-            <div className="page-header-scanner-row">
-              <p>Scan first, then submit the document for intake review</p>
-              <div className={(device?.connected || hardwareScannedDoc) ? 'status-badge status-online' : 'status-badge status-offline'}>
-                {(device?.connected || hardwareScannedDoc) ? <Wifi size={12} /> : <WifiOff size={12} />}
-                {(device?.connected || hardwareScannedDoc) ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
-              </div>
-            </div>
+            <p>Scan first, then submit the document for intake review</p>
+          </div>
+          <div className={(device?.connected || hardwareScannedDoc) ? 'status-badge status-online' : 'status-badge status-offline'}>
+            {(device?.connected || hardwareScannedDoc) ? <Wifi size={12} /> : <WifiOff size={12} />}
+            {(device?.connected || hardwareScannedDoc) ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
           </div>
         </div>
       }
@@ -973,224 +1225,186 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
       {/* ============ STEP 1: Scan Document (FIRST!) ============ */}
       {step === 1 && (
-        <div className="card" style={{ maxWidth: '800px', margin: '0 auto', textAlign: 'center' }}>
-          <h2 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-            <Scan style={{ color: 'var(--primary-light)' }} />
-            Scan Document
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-            Position the document in front of the camera and capture it
-          </p>
-
-          <div className="scanner-camera-controls">
-            <div className="form-group" style={{ marginBottom: 0, textAlign: 'left' }}>
-              <label className="form-label">Camera Source</label>
-              <select
-                className="form-select"
-                value={cameraSource}
-                onChange={e => handleCameraSourceChange(e.target.value)}
-              >
-                {device?.connected && (
-                  <option value={PHYSICAL_CAMERA_VALUE}>Physical Scanner Live Preview</option>
-                )}
-                {cameraDevices.length ? cameraDevices.map((item, index) => (
-                  <option key={item.deviceId || index} value={item.deviceId}>
-                    {item.label || `Camera ${index + 1}`}
-                  </option>
-                )) : (
-                  <option value="browser-camera">Default browser camera</option>
-                )}
-              </select>
+        <div className="scanner-step-scan scanner-step-scan--wide">
+          <div className="card scanner-step-scan-main">
+            <div className="scanner-step-scan-header">
+              <div>
+                <h2 className="scanner-step-title">
+                  <Scan style={{ color: 'var(--primary-light)' }} />
+                  Scan Document
+                </h2>
+                <p className="scanner-step-subtitle">
+                  Align the document, then capture — guide overlay is optional
+                </p>
+              </div>
             </div>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => {
-                if (isPhysicalSource) {
+
+            <div className="scanner-preview-toolbar">
+              <div className="scanner-preview-toolbar-group">
+                <label className="form-label" htmlFor="paper-guide-size">Paper guide</label>
+                <select
+                  id="paper-guide-size"
+                  className="form-select"
+                  value={paperGuideId}
+                  onChange={(e) => setPaperGuideId(e.target.value)}
+                >
+                  {paperGuides.map((guide) => (
+                    <option key={guide.id} value={guide.id}>{guide.label}</option>
+                  ))}
+                </select>
+              </div>
+              <label className="scanner-toggle-row scanner-toggle-row--inline">
+                <input
+                  type="checkbox"
+                  checked={showPaperGuide}
+                  onChange={(e) => setShowPaperGuide(e.target.checked)}
+                />
+                <span>Show guide</span>
+              </label>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
                   setStreamHasError(false);
                   setPreviewErrorMessage('');
-                  setStreamReloadKey(value => value + 1);
-                  return;
-                }
-                if (camera.current?.switchCamera && numberOfCameras > 1) {
-                  const nextMode = camera.current.switchCamera();
-                  setCameraFacingMode(nextMode);
-                  setSelectedCameraId('');
-                  setCameraSource('browser-camera');
-                  refreshCameraDevices();
-                }
-              }}
-              disabled={!isPhysicalSource && numberOfCameras <= 1}
-            >
-              <RefreshCw size={16} />
-              {isPhysicalSource ? 'Refresh' : 'Switch'}
-            </button>
-          </div>
+                  setStreamReloadKey((value) => value + 1);
+                }}
+              >
+                <RefreshCw size={15} />
+                Refresh
+              </button>
+            </div>
 
-          <div className="scanner-guide-controls">
-            <label className="form-label" htmlFor="paper-guide-size">Paper Guide</label>
-            <select
-              id="paper-guide-size"
-              className="form-select"
-              value={paperGuideId}
-              onChange={e => setPaperGuideId(e.target.value)}
-            >
-              {paperGuides.map((guide) => (
-                <option key={guide.id} value={guide.id}>{guide.label}</option>
-              ))}
-            </select>
-          </div>
+            <div className={previewShellClassName}>
+              <canvas
+                ref={previewCanvasRef}
+                className={`scanner-live-stream scanner-live-canvas${directStreamUrl ? ' scanner-live-stream--hidden' : ''}`}
+                aria-hidden={Boolean(directStreamUrl)}
+              />
+              <img
+                key={`physical-preview-${streamReloadKey}`}
+                ref={previewImgRef}
+                className={`scanner-live-stream${directStreamUrl ? '' : ' scanner-live-stream--hidden'}`}
+                decoding="async"
+                src={directStreamUrl || undefined}
+                alt="Physical scanner live preview"
+                onLoad={() => {
+                  if (directStreamUrl) {
+                    previewReadyRef.current = true;
+                    setPreviewReady(true);
+                    setPreviewMode('direct');
+                    setStreamHasError(false);
+                    setPreviewErrorMessage('');
+                    lastFrameAtRef.current = Date.now();
+                  }
+                }}
+                onError={() => {
+                  if (directStreamUrl && hasLanBridge) {
+                    setPreviewErrorMessage('MJPEG unavailable on Pi. Using LAN snapshot preview...');
+                    lanSnapshotStarterRef.current?.();
+                  }
+                }}
+              />
 
-          <div className="scanner-preview-shell">
-            {isPhysicalSource ? (
-              device?.connected ? (
-                <img
-                  key={`physical-preview-${streamReloadKey}`}
-                  ref={previewImgRef}
-                  className="scanner-live-stream"
-                  decoding="sync"
-                  src={directStreamUrl || undefined}
-                  alt="Physical scanner live preview"
-                  onLoad={() => {
-                    if (directStreamUrl) {
-                      previewReadyRef.current = true;
-                      setPreviewReady(true);
-                      setPreviewMode('direct');
-                      setStreamHasError(false);
-                      setPreviewErrorMessage('');
-                    }
-                  }}
-                  onError={() => {
-                    if (directStreamUrl && hasLanBridge) {
-                      setPreviewErrorMessage('MJPEG unavailable on Pi. Using LAN snapshot preview...');
-                      lanSnapshotStarterRef.current?.();
-                    }
-                  }}
-                />
-              ) : (
-                <div className="scanner-preview-empty">
-                  <CameraIcon size={34} />
+              {showPaperGuide && previewReady && (
+                <div
+                  key={paperGuideId}
+                  className={`scanner-paper-overlay ${paperGuideLayout.overlayClass}`}
+                  style={{ '--paper-ratio': paperGuideLayout.ratio }}
+                >
+                  <div className={`scanner-paper-frame ${paperGuideLayout.frameClass}`}>
+                    <span className="scanner-paper-label">{selectedPaperGuide.label}</span>
+                    <span className="scanner-corner corner-tl" />
+                    <span className="scanner-corner corner-tr" />
+                    <span className="scanner-corner corner-bl" />
+                    <span className="scanner-corner corner-br" />
+                  </div>
+                </div>
+              )}
+
+              {isPhysicalSource && previewReady && !streamStale && (
+                <div
+                  className="scanner-stream-stats"
+                  data-fps-tier={streamStats.paint >= 45 ? 'good' : streamStats.paint >= 25 ? 'ok' : 'low'}
+                >
+                  <span>{streamStats.paint} fps</span>
+                  {streamResolutionLabel && (
+                    <>
+                      <span className="scanner-stream-stats-sep">·</span>
+                      <span>{streamResolutionLabel}{streamIs2k ? '' : ' (upscaled)'}</span>
+                    </>
+                  )}
+                  <span className="scanner-stream-stats-sep">·</span>
+                  <span>{previewLabel}</span>
+                </div>
+              )}
+
+              {isPhysicalSource && previewReady && streamStale && (
+                <div className="scanner-preview-overlay scanner-preview-overlay--reconnect">
+                  <Loader2 size={28} className="animate-spin" />
+                  <span>Reconnecting stream...</span>
+                </div>
+              )}
+
+              {isPhysicalSource && streamOnline && !previewReady && !streamHasError && (
+                <div className="scanner-preview-overlay">
+                  <CameraIcon size={32} />
+                  <span>{previewErrorMessage || 'Connecting camera stream...'}</span>
+                </div>
+              )}
+
+              {isPhysicalSource && !streamOnline && (
+                <div className="scanner-preview-overlay">
+                  <WifiOff size={32} />
                   <span>Physical scanner is offline</span>
                 </div>
-              )
-            ) : (
-              <Camera
-                key={selectedCameraId || cameraFacingMode}
-                ref={camera}
-                numberOfCamerasCallback={setNumberOfCameras}
-                videoReadyCallback={refreshCameraDevices}
-                videoSourceDeviceId={selectedCameraId || undefined}
-                facingMode={cameraFacingMode}
-                aspectRatio="cover"
-              />
-            )}
+              )}
 
-            <div className="scanner-paper-overlay" style={{ '--paper-ratio': selectedPaperGuide.ratio }}>
-              <div className="scanner-paper-frame">
-                <span className="scanner-paper-label">{selectedPaperGuide.label}</span>
-                <span className="scanner-corner corner-tl"></span>
-                <span className="scanner-corner corner-tr"></span>
-                <span className="scanner-corner corner-bl"></span>
-                <span className="scanner-corner corner-br"></span>
-                <span className="scanner-center-line horizontal"></span>
-                <span className="scanner-center-line vertical"></span>
-              </div>
-              <div className="scanner-scan-line"></div>
-            </div>
-
-            {isPhysicalSource && previewReady && !streamStale && (
-              <div className="scanner-preview-warning" style={{ background: 'var(--success-bg, rgba(16, 185, 129, 0.12))', color: 'var(--success, #10b981)' }}>
-                <Wifi size={16} />
-                <span>{previewLabel}</span>
-              </div>
-            )}
-
-            {isPhysicalSource && previewReady && streamStale && (
-              <div className="scanner-preview-empty" style={{ position: 'absolute', inset: 0, zIndex: 3, background: 'rgba(0,0,0,0.55)' }}>
-                <Loader2 size={30} className="animate-spin" />
-                <span>Reconnecting camera stream...</span>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  style={{ marginTop: '0.75rem', padding: '0.4rem 1rem' }}
-                  onClick={() => {
-                    setStreamStale(false);
-                    setPreviewErrorMessage('');
-                    setStreamReloadKey(value => value + 1);
-                  }}
-                >
-                  <RefreshCw size={14} /> Reload preview
-                </button>
-              </div>
-            )}
-
-            {isPhysicalSource && device?.connected && !previewReady && !streamHasError && (
-              <div className="scanner-preview-empty" style={{ position: 'absolute', inset: 0, zIndex: 2 }}>
-                <CameraIcon size={34} />
-                <span>{previewErrorMessage || 'Connecting camera stream...'}</span>
-              </div>
-            )}
-
-            {isPhysicalSource && streamHasError && !previewReady && (
-              <div className="scanner-preview-warning">
-                <AlertCircle size={16} />
-                <span>{previewErrorMessage || 'WebSocket camera stream is not ready yet.'}</span>
-              </div>
-            )}
-
-            {isExtracting && (
-              <div style={{
-                position: 'absolute', inset: 0,
-                backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)',
-                display: 'flex', flexDirection: 'column',
-                alignItems: 'center', justifyContent: 'center', color: '#fff', zIndex: 10,
-              }}>
-                <div style={{ width: '200px', height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', marginBottom: '1rem', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', background: 'var(--accent)', width: `${progress}%`, transition: 'width 0.3s' }}></div>
+              {isPhysicalSource && streamHasError && !previewReady && (
+                <div className="scanner-preview-overlay scanner-preview-overlay--error">
+                  <AlertCircle size={28} />
+                  <span>{previewErrorMessage || 'WebRTC preview is not ready yet.'}</span>
                 </div>
-                <p style={{ fontWeight: '600' }}>Extracting Text... {progress}%</p>
+              )}
+
+              {isExtracting && (
+                <div className="scanner-preview-overlay scanner-preview-overlay--extract">
+                  <div className="scanner-extract-progress">
+                    <div className="scanner-extract-progress-bar" style={{ width: `${progress}%` }} />
+                  </div>
+                  <p>Extracting text... {progress}%</p>
+                </div>
+              )}
+            </div>
+
+            <div className="scanner-step-actions">
+              <button
+                onClick={handleCapture}
+                disabled={isExtracting || isDeviceScanning || (isPhysicalSource && !device?.connected)}
+                className="btn btn-primary scanner-capture-btn"
+              >
+                {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
+                {isExtracting ? 'Processing...' : 'Capture with Physical Scanner'}
+              </button>
+              {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
+                <button
+                  onClick={handleCancelPhysicalScan}
+                  disabled={isExtracting}
+                  className="btn btn-secondary"
+                >
+                  <XCircle size={18} />
+                  Cancel Scan
+                </button>
+              )}
+            </div>
+
+            {deviceScanStatus && (
+              <div className="scanner-device-status-banner">
+                <AlertCircle size={14} />
+                <span>{deviceScanStatus}</span>
               </div>
             )}
           </div>
-
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-            <button
-              onClick={handleCapture}
-              disabled={isExtracting || isDeviceScanning || (isPhysicalSource && !device?.connected)}
-              className="btn btn-primary"
-              style={{ padding: '0.75rem 2rem' }}>
-              {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
-              {isExtracting ? 'Processing...' : isPhysicalSource ? 'Capture with Physical Scanner' : 'Capture Document'}
-            </button>
-            {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
-              <button
-                onClick={handleCancelPhysicalScan}
-                disabled={isExtracting}
-                className="btn btn-secondary"
-                style={{ padding: '0.75rem 2rem' }}
-              >
-                <XCircle size={18} />
-                Cancel Scan
-              </button>
-            )}
-            {!isPhysicalSource && (
-              <button
-                onClick={handlePhysicalScan}
-                disabled={isExtracting || isDeviceScanning || !device?.connected}
-                className="btn btn-secondary"
-                style={{ padding: '0.75rem 2rem' }}
-              >
-                {isDeviceScanning ? <Loader2 className="animate-spin" /> : <Scan size={18} />}
-                {isDeviceScanning ? 'Waiting...' : 'Use Physical Scanner'}
-              </button>
-            )}
-          </div>
-          {deviceScanStatus && (
-            <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--warning-bg)', borderRadius: 'var(--radius-md)', color: 'var(--warning)', fontSize: '0.85rem' }}>
-              <AlertCircle size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
-              {deviceScanStatus}
-            </div>
-          )}
         </div>
       )}
 
@@ -1207,15 +1421,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </h3>
               </div>
               {capturedImage ? (
-                isCapturedPdf ? (
-                  <PdfFitPreview src={resolveUploadUrl(capturedImage)} />
-                ) : (
-                  <img
-                    src={resolveUploadUrl(capturedImage)}
-                    alt="Scanned document"
-                    className="scanner-image-preview"
-                  />
-                )
+                renderScannedDocumentPreview(capturedImage, {
+                  alt: 'Scanned document',
+                  isPdf: isCapturedPdf,
+                })
               ) : (
                 <div className="scanner-preview-empty" style={{ minHeight: '220px' }}>
                   <Image size={28} />
@@ -1252,9 +1461,20 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     className="form-input" type="text"
                     value={formData.subject}
                     onChange={e => handleFormChange('subject', e.target.value)}
-                    placeholder="e.g. Memorandum on Water Resource Management"
+                    placeholder={
+                      formData.subject
+                        ? 'e.g. Memorandum on Water Resource Management'
+                        : (isSubjectExtracting
+                          ? 'Extracting subject from scanned document...'
+                          : 'Enter document subject')
+                    }
                     required autoFocus
                   />
+                  {enrichmentHint && (
+                    <p className="form-hint" style={{ marginTop: '0.35rem', color: 'var(--warning)' }}>
+                      {enrichmentHint}
+                    </p>
+                  )}
                 </div>
 
                 <div className="form-grid">
@@ -1452,7 +1672,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem' }}>
-                  <button type="button" className="btn btn-secondary" onClick={() => setStep(1)}>
+                  <button type="button" className="btn btn-secondary" onClick={handleRescan}>
                     <ArrowLeft size={16} /> Re-scan
                   </button>
                   <button
@@ -1491,11 +1711,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             {/* Scanned Preview */}
             <div>
               {capturedImage ? (
-                isCapturedPdf ? (
-                  <PdfFitPreview src={resolveUploadUrl(capturedImage)} alt="Scanned document review" />
-                ) : (
-                  <img src={resolveUploadUrl(capturedImage)} alt="Scanned" className="scanner-image-preview" />
-                )
+                renderScannedDocumentPreview(capturedImage, {
+                  alt: 'Scanned document review',
+                  isPdf: isCapturedPdf,
+                })
               ) : null}
             </div>
 

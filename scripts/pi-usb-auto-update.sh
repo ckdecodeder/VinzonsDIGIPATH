@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Auto-copy VinzonsDIGIPATH-Pi from a plugged-in USB drive to Desktop, then restart.
+# Auto-copy VinzonsDIGIPATH-Pi from a plugged-in USB drive to Desktop, then eject.
 # Triggered by udev when a USB storage partition is inserted (see pi-install-usb-hook.sh).
 
 set -eu
 
-MARKER="pi_scanner_bridge.py"
+MARKER_NEW="pi_ws_scanner.py"
+MARKER_OLD="pi_scanner_bridge.py"
 LOG="/var/log/digipath-usb-update.log"
 LOCK="/run/digipath-usb-update.lock"
 RUN_USER="${SUDO_USER:-${DIGIPATH_USER:-digipathberry}}"
 USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+if [[ -z "$USER_HOME" ]]; then
+  USER_HOME="/home/$RUN_USER"
+fi
 DEST="${USER_HOME}/Desktop/VinzonsDIGIPATH-Pi"
 
 log() {
@@ -107,11 +111,11 @@ find_usb_package() {
 
   for path in "${paths[@]}"; do
     [[ -e "$path" ]] || continue
-    if [[ -f "$path/$MARKER" ]]; then
+    if [[ -f "$path/$MARKER_NEW" || -f "$path/$MARKER_OLD" ]]; then
       echo "$path"
       return 0
     fi
-    if [[ -f "$path/VinzonsDIGIPATH-Pi/$MARKER" ]]; then
+    if [[ -f "$path/VinzonsDIGIPATH-Pi/$MARKER_NEW" || -f "$path/VinzonsDIGIPATH-Pi/$MARKER_OLD" ]]; then
       echo "$path/VinzonsDIGIPATH-Pi"
       return 0
     fi
@@ -121,11 +125,11 @@ find_usb_package() {
     [[ -d "$mount_root" ]] || continue
     for entry in "$mount_root"/*; do
       [[ -e "$entry" ]] || continue
-      if [[ -f "$entry/$MARKER" ]]; then
+      if [[ -f "$entry/$MARKER_NEW" || -f "$entry/$MARKER_OLD" ]]; then
         echo "$entry"
         return 0
       fi
-      if [[ -f "$entry/VinzonsDIGIPATH-Pi/$MARKER" ]]; then
+      if [[ -f "$entry/VinzonsDIGIPATH-Pi/$MARKER_NEW" || -f "$entry/VinzonsDIGIPATH-Pi/$MARKER_OLD" ]]; then
         echo "$entry/VinzonsDIGIPATH-Pi"
         return 0
       fi
@@ -143,24 +147,62 @@ fi
 
 log "Found USB package: $SRC"
 log "Copying to $DEST (overwrite)..."
+log "Run user: $RUN_USER | Home: $USER_HOME"
 
 mkdir -p "$(dirname "$DEST")"
 rm -rf "$DEST"
-cp -a "$SRC" "$DEST"
+if command -v rsync >/dev/null 2>&1; then
+  rsync -a --delete --info=stats1 "$SRC"/ "$DEST"/ >>"$LOG" 2>&1
+else
+  cp -a "$SRC" "$DEST"
+fi
 chown -R "$RUN_USER:$RUN_USER" "$DEST" 2>/dev/null || true
+
+# .venv from Windows/USB will not work on Pi — always recreate on bootstrap.
+rm -rf "$DEST/.venv"
+log "Removed .venv from copy (Pi will recreate locally)."
+if [[ ! -d "$DEST" ]]; then
+  log "ERROR: Destination folder missing after copy: $DEST"
+  exit 1
+fi
+if [[ ! -f "$DEST/$MARKER_NEW" && ! -f "$DEST/$MARKER_OLD" ]]; then
+  log "ERROR: Marker file missing in destination after copy."
+  exit 1
+fi
+
+calc_stats() {
+  local dir="$1"
+  local file_count
+  local total_bytes
+  file_count="$(find "$dir" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  total_bytes="$(find "$dir" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+  echo "${file_count}:${total_bytes}"
+}
+
+SRC_STATS="$(calc_stats "$SRC")"
+DEST_STATS="$(calc_stats "$DEST")"
+log "Source stats: ${SRC_STATS}"
+log "Dest stats:   ${DEST_STATS}"
+if [[ "$SRC_STATS" != "$DEST_STATS" ]]; then
+  log "ERROR: Copy integrity check failed (file count/bytes mismatch). Skip eject."
+  exit 1
+fi
+
+sync
+sleep 2
 
 if [[ -f "$DEST/fix-pi-scripts.sh" ]]; then
   sudo -u "$RUN_USER" bash "$DEST/fix-pi-scripts.sh" >>"$LOG" 2>&1 || true
 fi
 
-log "Deploying updated files and restarting digipath-scanner..."
-if [[ -f "$DEST/scripts/pi-restart-clean.sh" ]]; then
-  bash "$DEST/scripts/pi-restart-clean.sh" >>"$LOG" 2>&1
-elif [[ -f "$DEST/start.sh" ]]; then
-  bash "$DEST/start.sh" >>"$LOG" 2>&1
-else
-  systemctl restart digipath-scanner.service >>"$LOG" 2>&1 || true
-fi
+log "USB copy complete (overwrite done)."
 
-log "USB auto-update complete."
 eject_usb_source "$SRC" || true
+
+if [[ -f "$DEST/scripts/pi-restart-ws-scanner.sh" ]]; then
+  log "Eject done — restarting scanner (bootstrap + run)..."
+  DIGIPATH_USER="$RUN_USER" DIGIPATH_WS_DIR="$DEST" \
+    bash "$DEST/scripts/pi-restart-ws-scanner.sh" >>"$LOG" 2>&1 || true
+else
+  log "WARN: pi-restart-ws-scanner.sh missing — scanner not restarted."
+fi

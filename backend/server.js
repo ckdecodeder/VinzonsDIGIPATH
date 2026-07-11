@@ -8,6 +8,7 @@ const { syncModels } = require('./models');
 const { corsOriginCallback } = require('./utils/cors');
 const { formatServerUrls } = require('./utils/lanIp');
 const { getPublicApiUrl } = require('./utils/publicApiUrl');
+const { parseIceServers } = require('./utils/webrtcConfig');
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -39,6 +40,7 @@ app.use(cors({
   optionsSuccessStatus: 204,
   maxAge: 86400,
 }));
+app.use('/api/devices/stream/frame', express.raw({ type: ['image/jpeg', 'application/octet-stream'], limit: '2mb' }));
 app.use(express.json({ limit: '15mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
@@ -61,10 +63,13 @@ const startServer = async () => {
   app.get('/api/config', (req, res) => {
     const publicRoot = getPublicApiUrl(req).replace(/\/$/, '');
     const apiUrl = publicRoot.endsWith('/api') ? publicRoot : `${publicRoot}/api`;
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.json({
       ok: true,
       apiUrl,
       wsUrl: apiUrl.replace(/\/api\/?$/, '').replace(/^http:/, 'ws:').replace(/^https:/, 'wss:') + '/ws',
+      previewMode: 'jpeg-ws',
+      iceServers: parseIceServers(),
     });
   });
 

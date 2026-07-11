@@ -15,8 +15,6 @@ import {
   getPriorityInfo,
 } from '../data/mockData';
 import { compareNewest } from '../utils/sorting';
-import { getDocumentFiles } from '../utils/documentFiles';
-import ScannedPreviewMedia from '../components/ScannedPreviewMedia';
 import {
   downloadAttachment,
   getAttachmentSource,
@@ -166,6 +164,22 @@ const DocumentList = ({
   const getUserFullName = (userId) => {
     const user = users.find(u => u.id === userId);
     return user ? `${user.fname} ${user.mname || ''} ${user.lname}`.replace(/\s+/g, ' ').trim() : 'Unknown';
+  };
+
+  const getDocumentFiles = (doc) => {
+    if (doc.scannedFiles?.length) return doc.scannedFiles;
+    if (doc.scannedImageUrl) {
+      return [{
+        id: `${doc.id}-scan`,
+        name: `${doc.trackingNumber || doc.id}-scan.jpg`,
+        type: 'image/jpeg',
+        dataUrl: doc.scannedImageUrl,
+        uploadedAt: doc.dateReceived,
+        uploadedBy: null,
+        source: 'camera',
+      }];
+    }
+    return [];
   };
 
   const getSenderNotifications = (documentId) => {
@@ -1536,7 +1550,17 @@ const DocumentList = ({
             </div>
             <div className="modal-body">
               <div className="scanned-preview-surface">
-                <ScannedPreviewMedia file={previewFile} />
+                {isImageAttachment(previewFile) ? (
+                  <img src={getAttachmentSource(previewFile)} alt={previewFile.name} className="scanned-preview-image" />
+                ) : isPdfAttachment(previewFile) ? (
+                  <iframe src={getAttachmentSource(previewFile)} title={previewFile.name} className="scanned-preview-frame" />
+                ) : (
+                  <div className="empty-state" style={{ padding: '2rem' }}>
+                    <FileText size={28} />
+                    <h3>Preview unavailable</h3>
+                    <p>This file type can be downloaded but cannot be previewed in the browser.</p>
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">

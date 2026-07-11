@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "network:sync": "node scripts/sync-network-config.js",
+    "tunnel:token": "powershell -ExecutionPolicy Bypass -File scripts/fetch-devtunnel-token.ps1",
     "install:all": "npm --prefix backend install && npm --prefix dashboard install",
     "start": "node scripts/start-all.js",
     "dev": "node scripts/dev.js",

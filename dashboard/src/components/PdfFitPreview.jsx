@@ -140,18 +140,13 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
 
   return (
     <div ref={wrapRef} className="scanner-pdf-fit-wrap" aria-label={alt}>
-      <canvas
-        ref={canvasRef}
-        className={`scanner-pdf-canvas${loading && !error ? ' is-loading' : ''}`}
-      />
       {loading && !error && (
-        <div className="scanner-pdf-fit-status" aria-live="polite">
-          Loading preview...
-        </div>
+        <div className="scanner-pdf-fit-status">Loading preview...</div>
       )}
       {error && (
         <div className="scanner-pdf-fit-status scanner-pdf-fit-status-error">{error}</div>
       )}
+      <canvas ref={canvasRef} className="scanner-pdf-canvas" />
     </div>
   );
 }

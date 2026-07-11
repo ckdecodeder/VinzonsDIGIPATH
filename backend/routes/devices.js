@@ -30,6 +30,8 @@ const {
   broadcastCommandUpdated,
   broadcastDataInvalidate,
   pushCommandToDevice,
+  getLatestStreamFrame,
+  relayStreamFrame,
 } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
@@ -38,6 +40,13 @@ const scannerCommandRoles = allowRoles('Admin', 'Receptionist');
 const updateOptions = { new: true, runValidators: true };
 
 const scannerCommandStaleMs = Number(process.env.SCANNER_COMMAND_STALE_MS || 60000);
+const bridgeSnapshotWsFallbackMaxAgeMs = Number(process.env.BRIDGE_SNAPSHOT_WS_FALLBACK_MAX_AGE_MS || 60000);
+
+const deviceUsesWsJpegStream = (device) => (
+  device?.payload?.streamMode === 'jpeg-ws'
+  || device?.payload?.bridgeVersion === 'ws-jpeg-1.0'
+  || Boolean(device?.streamWsConnected)
+);
 
 const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
 
@@ -131,7 +140,9 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       }])
     : [];
 
-  const subject = req.body.subject?.trim() || req.body.extractedTitle?.trim() || 'Scanned Document';
+  const subject = req.body.extractedTitle?.trim()
+    || (typeof req.body.subject === 'string' ? req.body.subject.trim() : '')
+    || 'Scanned Document';
   const requestedScanStatus = req.body.status || command?.payload?.status;
   const registrationStatus = registrationStatuses.includes(normalizeWorkflowStatus(requestedScanStatus))
     ? normalizeWorkflowStatus(requestedScanStatus)
@@ -144,7 +155,7 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
     status: registrationStatus,
     intakeStatus: 'Pending Review',
     priorityLevel: req.body.priorityLevel || 'normal',
-    dateReceived: req.body.dateReceived || now.split('T')[0],
+    dateReceived: req.body.dateReceived || req.body.extractedDate?.trim() || now.split('T')[0],
     createdAt: now,
     updatedAt: now,
     documentTypeId: req.body.documentTypeId || 'DT-001',
@@ -209,9 +220,17 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   );
 
   if (req.body.commandId) {
+    const commandSet = {
+      status: 'Executed',
+      resultDocumentId: doc.id,
+      executedAt: now,
+    };
+    if (req.body.aiExtractPending) {
+      commandSet['payload.aiExtractPending'] = true;
+    }
     await Command.findOneAndUpdate(
       { id: req.body.commandId },
-      { status: 'Executed', resultDocumentId: doc.id, executedAt: now },
+      { $set: commandSet },
       updateOptions,
     );
   }
@@ -253,7 +272,9 @@ router.put('/devices/scans/:documentId', deviceLimiter, requireDeviceApiKey, asy
   const set = { updatedAt: now };
 
   const aiTitle = req.body.extractedTitle?.trim() || req.body.subject?.trim();
-  if (aiTitle) set.subject = aiTitle;
+  if (aiTitle && !/^scanned document$/i.test(aiTitle) && !/^untitled document$/i.test(aiTitle)) {
+    set.subject = aiTitle;
+  }
 
   const aiText = req.body.scannedText || req.body.extractedText;
   if (aiText && String(aiText).trim()) set.scannedText = String(aiText).trim();
@@ -286,6 +307,25 @@ router.put('/devices/scans/:documentId', deviceLimiter, requireDeviceApiKey, asy
 
   res.json({ documentId: updated.id, document: resultDoc });
 }));
+
+// Pi uploads preview JPEG over HTTPS when dev-tunnel binary WS is unreliable.
+router.post(
+  '/devices/stream/frame',
+  deviceLimiter,
+  requireDeviceApiKey,
+  asyncHandler(async (req, res) => {
+    const deviceId = req.query.deviceId?.trim() || 'DEV-001';
+    const frame = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
+    if (!frame.length || frame.length < 64) {
+      return res.status(400).json({ message: 'Empty preview frame' });
+    }
+    if (frame[0] !== 0xff || frame[1] !== 0xd8) {
+      return res.status(400).json({ message: 'Preview frame must be JPEG' });
+    }
+    relayStreamFrame(deviceId, frame);
+    res.json({ ok: true, bytes: frame.length });
+  }),
+);
 
 // ─── ADMIN / USER FRONTEND ENDPOINTS ───────────────────────────────────────────
 router.use(protect);
@@ -426,6 +466,42 @@ router.get('/device/bridge/status', allRoles, asyncHandler(async (req, res) => {
 router.get('/device/bridge/snapshot', allRoles, asyncHandler(async (req, res) => {
   const deviceId = req.query.deviceId || 'DEV-001';
   const device = await getDeviceSnapshot(deviceId);
+
+  const getWsFallbackState = () => {
+    const cached = getLatestStreamFrame(deviceId);
+    if (!cached?.frame?.length) return { ok: false, reason: 'no_cached_ws_frame', ageMs: null };
+    const ageMs = Date.now() - cached.at;
+    if (bridgeSnapshotWsFallbackMaxAgeMs > 0 && ageMs > bridgeSnapshotWsFallbackMaxAgeMs) {
+      return { ok: false, reason: 'stale_cached_ws_frame', ageMs };
+    }
+    return { ok: true, reason: 'ok', ageMs, frame: cached.frame };
+  };
+
+  const sendWsSnapshotFallback = (reason = '') => {
+    const state = getWsFallbackState();
+    if (!state.ok) return false;
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Scanner-Snapshot-Source', reason ? `ws-fallback:${reason}` : 'ws-fallback');
+    res.setHeader('X-Scanner-Snapshot-Age-Ms', String(state.ageMs || 0));
+    res.send(state.frame);
+    return true;
+  };
+
+  // Pi WS scanner has no HTTP bridge — never block on unreachable LAN :8080.
+  if (deviceUsesWsJpegStream(device)) {
+    if (sendWsSnapshotFallback('ws-primary')) {
+      return;
+    }
+    const wsState = getWsFallbackState();
+    return res.status(503).json({
+      message: 'Camera preview buffer is empty. Wait for Pi stream frames.',
+      reason: wsState.reason,
+      ageMs: wsState.ageMs,
+      deviceStreamWsConnected: Boolean(device?.streamWsConnected),
+    });
+  }
+
   const bridgeUrl = getBridgeBaseUrl(req, device);
   if (!bridgeUrl) {
     return res.status(400).json({ message: 'Scanner bridge URL is not available yet. Wait for the Pi to send a heartbeat.' });
@@ -438,10 +514,22 @@ router.get('/device/bridge/snapshot', allRoles, asyncHandler(async (req, res) =>
       headers: { Accept: 'image/jpeg,image/*;q=0.9,*/*;q=0.5' },
     });
   } catch (err) {
-    return res.status(502).json({ message: `Scanner preview is not reachable through ${bridgeUrl}: ${err.message}` });
+    const wsState = getWsFallbackState();
+    if (sendWsSnapshotFallback('bridge-unreachable')) return;
+    return res.status(502).json({
+      message: `Scanner preview is not reachable through ${bridgeUrl}: ${err.message}`,
+      wsFallback: {
+        available: wsState.ok,
+        reason: wsState.reason,
+        ageMs: wsState.ageMs,
+        deviceStreamWsConnected: Boolean(device?.streamWsConnected),
+      },
+    });
   }
 
   if (!response.ok) {
+    const wsState = getWsFallbackState();
+    if (sendWsSnapshotFallback(`bridge-${response.status}`)) return;
     const details = await response.text().catch(() => '');
     let cleanDetails = cleanBridgeErrorText(details);
     try {
@@ -460,7 +548,15 @@ router.get('/device/bridge/snapshot', allRoles, asyncHandler(async (req, res) =>
     } catch {
       // Keep the original preview error when status diagnostics are unavailable.
     }
-    return res.status(502).json({ message: `Scanner preview is not ready (${response.status}). ${cleanDetails}`.trim() });
+    return res.status(502).json({
+      message: `Scanner preview is not ready (${response.status}). ${cleanDetails}`.trim(),
+      wsFallback: {
+        available: wsState.ok,
+        reason: wsState.reason,
+        ageMs: wsState.ageMs,
+        deviceStreamWsConnected: Boolean(device?.streamWsConnected),
+      },
+    });
   }
 
   const contentType = response.headers.get('content-type') || 'image/jpeg';

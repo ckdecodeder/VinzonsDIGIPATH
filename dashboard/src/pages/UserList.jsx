@@ -208,20 +208,15 @@ const UserList = ({
     <>
       <PageShell
         header={
-          <div className="page-header page-header--align-bottom">
+          <div className="page-header">
             <div className="page-header-left">
               <h1>User Management</h1>
               <p>Manage system users and their access levels</p>
             </div>
-            <div className="page-header-actions page-header-actions--inline">
-              <button className="btn btn-primary" onClick={() => openForm()}>
-                <Plus size={16} /> New User
-              </button>
-            </div>
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row">
+          <div className="page-toolbar-row page-toolbar-stacked">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -234,6 +229,9 @@ const UserList = ({
                 />
               </div>
             </div>
+            <button className="btn btn-primary" onClick={() => openForm()}>
+              <Plus size={16} /> New User
+            </button>
           </div>
         }
       >

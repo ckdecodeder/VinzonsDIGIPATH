@@ -1,0 +1,11 @@
+cd ~/Desktop/VinzonsDIGIPATH-Pi
+# Fix "No such file or directory" after USB copy (CRLF):
+bash fix-pi-scripts.sh
+# Python 3.13 audioop (run before WebRTC if import fails):
+bash scripts/pi-audioop-fix.sh
+# WebRTC install (either name works):
+bash scripts/webrtc.sh
+# bash scripts/pi-install-webrtc.sh
+# Full reinstall (slow — deletes .venv):
+# bash scripts/pi-webrtc-fix-all.sh
+bash scripts/pi-fix-and-run-ws.sh

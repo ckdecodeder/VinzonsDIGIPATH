@@ -28,11 +28,24 @@ function Copy-PiFile {
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
   }
   Copy-Item -Path $from -Destination $to -Force
-  if ($RelativePath -like "*.sh") {
+  if ($RelativePath -like "*.sh" -or $RelativePath -like "*.env*" -or $RelativePath -eq ".env") {
     Convert-ToLf $to
-    Write-Host "Copied (LF): $RelativePath"
+    if ($RelativePath -like "*.sh") {
+      Write-Host "Copied (LF): $RelativePath"
+    } else {
+      Write-Host "Copied (LF env): $RelativePath"
+    }
   } else {
     Write-Host "Copied: $RelativePath"
+  }
+}
+
+function Remove-UsbLegacy {
+  param([string]$RelativePath)
+  $target = Join-Path $Destination $RelativePath
+  if (Test-Path $target) {
+    Remove-Item $target -Recurse -Force
+    Write-Host "Removed legacy: $RelativePath"
   }
 }
 
@@ -40,55 +53,145 @@ if (-not (Test-Path $Destination)) {
   New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 }
 
+# Minimal USB package — JPEG preview over WebSocket only (no WebRTC)
+
 $rootFiles = @(
+  "pi_ws_scanner.py",
+  "pi_ws_scanner.env.example",
+  "PI-WS-FIX.txt",
+  "README-USB.txt",
+  "fix-pi-scripts.sh"
+)
+
+$scriptFiles = @(
+  "scripts/pi-apt-lib.sh",
+  "scripts/pi-venv-lib.sh",
+  "scripts/pi-bootstrap-ws.sh",
+  "scripts/pi-load-env.sh",
+  "scripts/ws.sh",
+  "scripts/pi-usb-auto-update.sh",
+  "scripts/pi-install-usb-hook.sh",
+  "scripts/pi-restart-ws-scanner.sh"
+)
+
+$legacyPaths = @(
+  "pi_webrtc.py",
+  "PI-WEBRTC-FIX.txt",
   "pi_scanner_bridge.py",
   "motor_controller.py",
   "relay_controller.py",
   "install-pi-deps.sh",
+  "bridge.env",
   "bridge.env.example",
   "README-PI.txt",
   "verify-pi-deps.py",
   "requirements-pi.txt",
-  "fix-pi-scripts.sh",
   "network.env.example",
-  "start.sh"
-)
-
-$scriptFiles = @(
+  "start.sh",
+  "run-pi-ws-scanner.sh",
+  "pi-run-all-ws.sh",
+  "pi-fix-and-run-ws.sh",
+  "New Text Document.txt",
+  "raspberry_pi",
   "scripts/pi-start-all.sh",
-  "scripts/pi-update-network.sh",
   "scripts/pi-test-backend.sh",
   "scripts/pi-restart-clean.sh",
   "scripts/pi-install-network-hook.sh",
-  "scripts/pi-usb-auto-update.sh",
-  "scripts/pi-install-usb-hook.sh"
+  "scripts/pi-install-ws-service.sh",
+  "scripts/pi-desktop-notify.sh",
+  "scripts/pi-install-webrtc.sh",
+  "scripts/pi-webrtc-fix-all.sh",
+  "scripts/pi-audioop-fix.sh",
+  "scripts/webrtc.sh",
+  "scripts/pi-unlock-apt.sh",
+  "scripts/pi-fix-and-run-ws.sh",
+  "scripts/pi-run-all-ws.sh",
+  "scripts/pi-update-network.sh",
+  "scripts/pi-uninstall-all.sh",
+  "scripts/fetch-devtunnel-token.ps1",
+  "scripts/deploy-pi-bridge.ps1",
+  "scripts/dev.js",
+  "scripts/install-windows-autostart.ps1",
+  "scripts/remove-windows-autostart.ps1",
+  "scripts/start-all.js",
+  "scripts/start-all.ps1",
+  "scripts/sync-network-config.js",
+  "scripts/sync-pi-package.ps1"
 )
 
-$raspberryFiles = @(
-  "raspberry_pi/install_digipath_scanner.sh",
-  "raspberry_pi/digipath-scanner.service",
-  "raspberry_pi/digipath-scanner.env.example"
+$allowedRelative = [System.Collections.Generic.HashSet[string]]::new(
+  [string[]]($rootFiles + $scriptFiles + @(".env")),
+  [System.StringComparer]::OrdinalIgnoreCase
 )
 
-foreach ($file in ($rootFiles + $scriptFiles + $raspberryFiles)) {
+function Remove-UsbStrays {
+  if (-not (Test-Path $Destination)) { return }
+  Get-ChildItem -Path $Destination -Recurse -File | ForEach-Object {
+    $rel = $_.FullName.Substring($Destination.Length).TrimStart('\', '/').Replace('\', '/')
+    if (-not $allowedRelative.Contains($rel)) {
+      Remove-Item $_.FullName -Force
+      Write-Host "Removed stray: $rel"
+    }
+  }
+  Get-ChildItem -Path $Destination -Recurse -Directory | Sort-Object FullName -Descending | ForEach-Object {
+    if (-not (Get-ChildItem -Path $_.FullName -Force | Select-Object -First 1)) {
+      Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
+foreach ($legacy in $legacyPaths) {
+  Remove-UsbLegacy $legacy
+}
+
+foreach ($file in ($rootFiles + $scriptFiles)) {
   Copy-PiFile $file
 }
 
-$dstEnv = Join-Path $Destination "bridge.env"
-$srcEnv = Join-Path $repoRoot "bridge.env"
-if (Test-Path $srcEnv) {
-  Copy-Item -Path $srcEnv -Destination $dstEnv -Force
-  Write-Host "Copied bridge.env (with stream + network settings)"
-} elseif (-not (Test-Path $dstEnv)) {
-  Write-Host "No bridge.env found in repo or destination"
-} else {
-  Write-Host "Kept existing bridge.env on destination"
+Remove-UsbStrays
+
+$wsEnvDst = Join-Path $Destination ".env"
+$wsEnvSrc = Join-Path $repoRoot "pi_ws_scanner.env"
+if (Test-Path $wsEnvSrc) {
+  Copy-Item -Path $wsEnvSrc -Destination $wsEnvDst -Force
+  Convert-ToLf $wsEnvDst
+  Write-Host "Copied .env for pi_ws_scanner (from pi_ws_scanner.env, LF)"
+} elseif (-not (Test-Path $wsEnvDst) -and (Test-Path (Join-Path $repoRoot "pi_ws_scanner.env.example"))) {
+  Copy-Item -Path (Join-Path $repoRoot "pi_ws_scanner.env.example") -Destination $wsEnvDst -Force
+  Convert-ToLf $wsEnvDst
+  Write-Host "Created .env from pi_ws_scanner.env.example (LF)"
 }
 
-# Ensure repo shell scripts are LF too (for git / future copies)
-Get-ChildItem -Path $repoRoot -Filter "*.sh" -Recurse | ForEach-Object {
-  Convert-ToLf $_.FullName
+$venvOnUsb = Join-Path $Destination ".venv"
+if (Test-Path $venvOnUsb) {
+  Remove-Item $venvOnUsb -Recurse -Force
+  Write-Host "Removed .venv from USB package (Pi creates it locally)."
+}
+
+$required = @(
+  "pi_ws_scanner.py",
+  "PI-WS-FIX.txt",
+  "scripts/ws.sh",
+  "scripts/pi-bootstrap-ws.sh"
+)
+
+$missing = @()
+foreach ($rel in $required) {
+  if (-not (Test-Path (Join-Path $Destination $rel))) {
+    $missing += $rel
+  }
 }
 
 Write-Host ""
-Write-Host "Pi package synced to $Destination (shell scripts use Unix LF line endings)."
+if ($missing.Count -gt 0) {
+  Write-Error "Package incomplete - missing: $($missing -join ', ')"
+}
+
+Write-Host "USB package ($($rootFiles.Count + $scriptFiles.Count) files):"
+foreach ($rel in ($rootFiles + $scriptFiles)) {
+  $info = Get-Item (Join-Path $Destination $rel)
+  Write-Host "  $($info.Name) - $($info.Length) bytes"
+}
+
+Write-Host ""
+Write-Host "Synced to $Destination"

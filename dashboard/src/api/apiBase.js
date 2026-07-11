@@ -1,7 +1,29 @@
 const API_URL_KEY = 'dp_api_url';
 
 let resolvedApiBase = null;
+let resolvedWsUrl = null;
+let resolvedIceServers = null;
 let bootstrapPromise = null;
+
+const FALLBACK_ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+];
+
+function parseEnvIceServers() {
+  const raw = import.meta.env.VITE_ICE_SERVERS?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getCachedIceServers() {
+  return resolvedIceServers || parseEnvIceServers() || FALLBACK_ICE_SERVERS;
+}
 
 export function getStoredApiUrl() {
   if (typeof window === 'undefined') return null;
@@ -28,6 +50,10 @@ export function normalizeApiBase(raw) {
   }
 
   return url.endsWith('/api') ? url : `${url}/api`;
+}
+
+export function getResolvedWsUrl() {
+  return resolvedWsUrl;
 }
 
 export function getApiBase() {
@@ -75,7 +101,65 @@ function getProbeRoot(base) {
   return base.replace(/\/api\/?$/, '');
 }
 
-const PROBE_TIMEOUT_MS = 4000;
+const PROBE_TIMEOUT_MS = 8000;
+
+function rememberConfigUrls(cfg) {
+  const canonical = cfg?.apiUrl?.trim().replace(/\/$/, '');
+  if (canonical) {
+    resolvedApiBase = normalizeApiBase(canonical);
+  }
+  const ws = cfg?.wsUrl?.trim().replace(/\/$/, '');
+  if (ws) {
+    resolvedWsUrl = ws.endsWith('/ws') ? ws : `${ws}/ws`;
+  }
+  if (Array.isArray(cfg?.iceServers) && cfg.iceServers.length) {
+    resolvedIceServers = cfg.iceServers;
+  }
+}
+
+async function preloadIceServersFromConfig(root, signal) {
+  if (resolvedIceServers) return resolvedIceServers;
+  const envIce = parseEnvIceServers();
+  if (envIce) {
+    resolvedIceServers = envIce;
+    return resolvedIceServers;
+  }
+  try {
+    const cfgRes = await fetch(`${root}/api/config`, {
+      cache: 'default',
+      signal,
+    });
+    if (cfgRes.ok) {
+      const cfg = await cfgRes.json();
+      rememberConfigUrls(cfg);
+      if (resolvedIceServers) {
+        return resolvedIceServers;
+      }
+    }
+  } catch {
+    // fall through
+  }
+  resolvedIceServers = FALLBACK_ICE_SERVERS;
+  return resolvedIceServers;
+}
+
+export async function preloadIceServers() {
+  if (resolvedIceServers) return resolvedIceServers;
+  const envIce = parseEnvIceServers();
+  if (envIce) {
+    resolvedIceServers = envIce;
+    return resolvedIceServers;
+  }
+  const apiBase = getApiBase();
+  const root = getProbeRoot(apiBase);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  try {
+    return await preloadIceServersFromConfig(root, controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function probeApiUrl(base) {
   const root = getProbeRoot(base);
@@ -101,12 +185,19 @@ async function probeApiUrl(base) {
     try {
       const cfgRes = await fetch(`${root}/api/config`, {
         cache: 'no-store',
+        signal: controller.signal,
       });
 
       if (cfgRes.ok) {
         const cfg = await cfgRes.json();
+        rememberConfigUrls(cfg);
+        if (resolvedApiBase) {
+          await preloadIceServersFromConfig(root, controller.signal);
+          return resolvedApiBase;
+        }
         const canonical = cfg.apiUrl?.trim().replace(/\/$/, '');
         if (canonical) {
+          await preloadIceServersFromConfig(root, controller.signal);
           return normalizeApiBase(canonical);
         }
       }
@@ -125,6 +216,7 @@ async function probeApiUrl(base) {
 export async function bootstrapApiBase(options = {}) {
   if (options.force) {
     resolvedApiBase = null;
+    resolvedWsUrl = null;
     bootstrapPromise = null;
   }
 
@@ -166,4 +258,6 @@ export async function bootstrapApiBase(options = {}) {
 
 export function invalidateApiBaseCache() {
   resolvedApiBase = null;
+  resolvedWsUrl = null;
+  resolvedIceServers = null;
 }

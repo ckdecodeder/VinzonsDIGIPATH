@@ -131,27 +131,6 @@ function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const mergeReceptionistDocuments = (incoming = [], previous = [], user) => {
-    if (!user || getRoleKey(user) !== 'receptionist') {
-      return sortNewest(incoming, ['createdAt', 'updatedAt', 'dateReceived']);
-    }
-
-    const merged = new Map((incoming || []).map((doc) => [doc.id, doc]));
-    for (const doc of previous) {
-      const touchedByMe = (doc.timeline || []).some((event) => event.userId === user.id);
-      const atMyOffice = [
-        doc.originOfficeId,
-        doc.currentOfficeId,
-        doc.destinationOfficeId,
-      ].includes(user.officeId);
-      if ((touchedByMe || atMyOffice) && !merged.has(doc.id)) {
-        merged.set(doc.id, doc);
-      }
-    }
-
-    return sortNewest([...merged.values()], ['createdAt', 'updatedAt', 'dateReceived']);
-  };
-
   const loadData = async ({ silent = hasLoadedData, quiet = false } = {}) => {
     if (silent) {
       if (!quiet) {
@@ -166,7 +145,7 @@ function App() {
 
     try {
       const data = await appDataService.loadAll();
-      setDocuments((prev) => mergeReceptionistDocuments(data.documents || [], prev, currentUser));
+      setDocuments(sortNewest(data.documents, ['createdAt', 'updatedAt', 'dateReceived']));
       setTransmissions(sortNewest(data.transmissions, ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']));
       setArchives(sortNewest(data.archives, ['createdAt', 'updatedAt', 'date']));
       setDevice(data.device);
@@ -317,12 +296,17 @@ function App() {
 
     const offDevice = realtimeClient.on('device:updated', (message) => {
       if (message.device) {
-        setDevice(message.device);
+        setDevice((prev) => ({ ...(prev || {}), ...message.device }));
       }
     });
 
-    const offInvalidate = realtimeClient.on('data:invalidate', () => {
-      loadData({ silent: true, quiet: true });
+    const offInvalidate = realtimeClient.on('data:invalidate', (message) => {
+      const collections = Array.isArray(message?.collections) ? message.collections : [];
+      const shouldReload = !collections.length
+        || collections.some((name) => ['device', 'device-events', 'documents', 'logs'].includes(name));
+      if (shouldReload) {
+        loadData({ silent: true, quiet: true });
+      }
     });
 
     return () => {
@@ -693,12 +677,7 @@ function App() {
     });
 
     if (currentRole === 'receptionist') {
-      const atUserOffice = [
-        doc.originOfficeId,
-        doc.currentOfficeId,
-        doc.destinationOfficeId,
-      ].includes(userOfficeId);
-      return atUserOffice || touchedByUser || visibleViaTransmission;
+      return touchedByUser || visibleViaTransmission;
     }
 
     return [

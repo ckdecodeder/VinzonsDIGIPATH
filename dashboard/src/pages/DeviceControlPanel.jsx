@@ -24,7 +24,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { bridgeService, commandService, deviceService } from '../api/documentService';
-import { useOptionalRealtime } from '../context/RealtimeContext';
+import { useLiveDevice } from '../hooks/useLiveDevice';
 import { getWsUrl } from '../ws/realtimeClient';
 import { users as defaultUsers } from '../data/mockData';
 
@@ -68,22 +68,57 @@ const bridgeUrlFromIp = (ip, port = DEFAULT_BRIDGE_PORT) => (
   ip ? normalizeBridgeUrl(`http://${ip}:${port}`) : ''
 );
 
-const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, offices = [], deviceEvents = [] }) => {
-  const realtime = useOptionalRealtime();
-  const [liveDevice, setLiveDevice] = useState(device);
+const getBridgeMode = (scanner) => {
+  const version = String(scanner?.payload?.bridgeVersion || '').toLowerCase();
+  if (version.startsWith('ws-only')) return 'websocket';
+  return 'http-bridge';
+};
+
+const computeConnectionStatus = (scanner, now = Date.now()) => {
+  const timeoutMs = scanner.heartbeatTimeoutMs || 12000;
+  const lastSignal = scanner.lastSignalAt || scanner.lastActive;
+  const lastMs = lastSignal ? new Date(lastSignal).getTime() : NaN;
+  const secondsSinceSignal = Number.isNaN(lastMs)
+    ? null
+    : Math.max(0, Math.floor((now - lastMs) / 1000));
+  const heartbeatFresh = !Number.isNaN(lastMs)
+    && (now - lastMs) <= timeoutMs
+    && scanner.lastEventType !== 'device_disconnected';
+  const hasSignal = Boolean(lastSignal);
+  const wsLive = Boolean(scanner.streamWsConnected);
+  const connected = wsLive || (hasSignal && heartbeatFresh);
+
+  return {
+    connected,
+    heartbeatFresh,
+    wsLive,
+    secondsSinceSignal,
+    cameraReady: Boolean(scanner.payload?.cameraReady),
+    bridgeMode: getBridgeMode(scanner),
+    bridgeVersion: scanner.payload?.bridgeVersion || scanner.firmware || 'unknown',
+    waitingForDevice: scanner.connectionState === 'waiting_for_device' || !hasSignal,
+  };
+};
+
+const formatSignalAge = (seconds) => {
+  if (seconds === null) return 'No signal yet';
+  if (seconds < 5) return 'Just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+};
+
+const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defaultUsers, offices = [], deviceEvents = [] }) => {
+  const { device: liveDevice } = useLiveDevice(deviceProp);
+  const [clockMs, setClockMs] = useState(Date.now());
+  const [showLegacyBridgeControls, setShowLegacyBridgeControls] = useState(false);
 
   useEffect(() => {
-    setLiveDevice(device);
-  }, [device]);
-
-  useEffect(() => {
-    if (!realtime?.client) return undefined;
-    return realtime.subscribe('device:updated', (message) => {
-      if (message.device) {
-        setLiveDevice(message.device);
-      }
-    });
-  }, [realtime]);
+    const tickId = setInterval(() => setClockMs(Date.now()), 1000);
+    return () => clearInterval(tickId);
+  }, []);
 
   const scanner = liveDevice || {
     id: 'DEV-001',
@@ -97,7 +132,9 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
     heartbeatTimeoutMs: 30000,
   };
 
-  const isConnected = Boolean(scanner.connected);
+  const connection = computeConnectionStatus(scanner, clockMs);
+  const isConnected = connection.connected;
+  const isWsOnlyBridge = connection.bridgeMode === 'websocket';
   const detectedIp = resolveDetectedIp(scanner);
   const getReportedBridgeUrl = () => {
     const deviceIp = detectedIp;
@@ -389,76 +426,92 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
     >
       <div className="card" style={{ marginBottom: '1.25rem' }}>
         <div className="card-header">
-          <h3 className="card-title">Scanner Bridge</h3>
-          <span className={`status-badge ${isConnected ? 'status-online' : 'status-warning'}`} style={{ fontSize: '0.65rem' }}>
-            {isConnected ? 'Live' : 'Ready'}
+          <h3 className="card-title">Scanner Connection</h3>
+          <span className={`status-badge ${isConnected ? 'status-online' : 'status-offline'}`} style={{ fontSize: '0.65rem' }}>
+            {isConnected ? 'Online' : 'Offline'}
           </span>
         </div>
-        <div className="scanner-bridge-controls">
-          <div className="form-group" style={{ marginBottom: 0 }}>
-            <label className="form-label">Scanner Bridge URL</label>
-            <input
-              className="form-input"
-              value={manualBridgeUrl}
-              onChange={(e) => {
-                setBridgeUrlDirty(true);
-                setManualBridgeUrl(e.target.value);
+
+        <p style={{ margin: '0 0 1rem', fontSize: '0.84rem', color: 'var(--text-secondary)' }}>
+          {isWsOnlyBridge
+            ? 'Status updates automatically from the Pi WebSocket heartbeat. No manual connect is required.'
+            : 'Status updates automatically when the Pi sends heartbeats to the backend.'}
+        </p>
+
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '0.75rem',
+          marginBottom: '1rem',
+        }}>
+          {[
+            {
+              label: 'Heartbeat',
+              value: isConnected ? 'Fresh' : connection.waitingForDevice ? 'Waiting' : 'Stale',
+              tone: isConnected ? 'var(--success)' : connection.waitingForDevice ? 'var(--warning)' : 'var(--danger)',
+            },
+            {
+              label: 'Last signal',
+              value: formatSignalAge(connection.secondsSinceSignal),
+              tone: 'var(--text-secondary)',
+            },
+            {
+              label: 'WebSocket',
+              value: connection.wsLive ? 'Connected' : 'Disconnected',
+              tone: connection.wsLive ? 'var(--success)' : 'var(--danger)',
+            },
+            {
+              label: 'Camera',
+              value: connection.cameraReady ? 'Ready' : 'Not ready',
+              tone: connection.cameraReady ? 'var(--success)' : 'var(--text-muted)',
+            },
+            {
+              label: 'Bridge',
+              value: isWsOnlyBridge ? 'WebSocket-only' : 'HTTP bridge',
+              tone: 'var(--accent)',
+            },
+            {
+              label: 'Firmware',
+              value: connection.bridgeVersion,
+              tone: 'var(--text-secondary)',
+            },
+          ].map((row) => (
+            <div
+              key={row.label}
+              style={{
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-md)',
+                padding: '0.75rem',
+                background: 'var(--bg-elevated)',
               }}
-              placeholder="http://raspberry-pi-ip:8080"
-            />
-            <p className="field-hint">
-              {bridgeUrlSource === 'auto'
-                ? `Auto-detected IP (${detectedIp || 'waiting for heartbeat'}). You can edit this. Click Connect — it will not auto-connect.`
-                : bridgeUrlSource === 'manual'
-                  ? 'Using a manual URL. Click Connect to establish the connection.'
-                  : 'Wait for the Pi heartbeat to detect the IP, or type the bridge URL manually.'}
-            </p>
-            {detectedIp && manualBridgeUrl && (() => {
-              try {
-                return new URL(normalizeBridgeUrl(manualBridgeUrl) || manualBridgeUrl).hostname !== detectedIp;
-              } catch {
-                return false;
-              }
-            })() && (
-              <p className="field-hint" style={{ color: 'var(--warning)' }}>
-                The filled URL is outdated. Detected IP is now: {detectedIp}. Click &quot;Reset to auto-detected&quot; or Refresh.
-              </p>
-            )}
-            {autoBridgeUrl && bridgeUrlDirty && (
-              <button
-                type="button"
-                className="btn btn-link"
-                style={{ marginTop: '0.35rem', padding: 0, fontSize: '0.75rem' }}
-                onClick={() => {
-                  setBridgeUrlDirty(false);
-                  setManualBridgeUrl(autoBridgeUrl);
-                }}
-              >
-                Reset to auto-detected ({autoBridgeUrl})
-              </button>
-            )}
-          </div>
-          <button className="btn btn-primary" onClick={handleBridgeConnect} disabled={isBridgeConnecting}>
-            {isBridgeConnecting ? <RefreshCcw size={16} className="animate-spin" /> : <Wifi size={16} />}
-            Connect
-          </button>
-          <button className="btn btn-secondary" onClick={handleBridgeStatus} disabled={isBridgeConnecting}>
-            <Signal size={16} />
-            Check
-          </button>
-          <button className="btn btn-secondary" onClick={handleBridgeDisconnect} disabled={isBridgeConnecting}>
-            <WifiOff size={16} />
-            Disconnect
-          </button>
+            >
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>{row.label}</div>
+              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: row.tone }}>{row.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             className="btn btn-secondary"
             onClick={handleCancelPendingScan}
-            disabled={isCancellingCommand || isBridgeConnecting}
+            disabled={isCancellingCommand}
           >
             {isCancellingCommand ? <RefreshCcw size={16} className="animate-spin" /> : <XCircle size={16} />}
             Cancel Pending Scan
           </button>
+          {!isWsOnlyBridge && (
+            <button
+              type="button"
+              className="btn btn-link"
+              style={{ padding: 0, fontSize: '0.78rem' }}
+              onClick={() => setShowLegacyBridgeControls((prev) => !prev)}
+            >
+              {showLegacyBridgeControls ? 'Hide legacy HTTP bridge controls' : 'Show legacy HTTP bridge controls'}
+            </button>
+          )}
         </div>
+
         {bridgeActionMessage && (
           <div style={{
             marginTop: '0.85rem',
@@ -472,21 +525,53 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
             {bridgeActionMessage}
           </div>
         )}
-        {bridgeStatus && (
-          <div style={{
-            marginTop: '0.75rem',
-            display: 'flex',
-            gap: '0.5rem',
-            flexWrap: 'wrap',
-            color: 'var(--text-secondary)',
-            fontSize: '0.78rem',
-          }}>
-            <span className="td-mono">bridge: {bridgeStatus.bridgeVersion || bridgeStatus.status || 'online'}</span>
-            <span className="td-mono">camera: {(bridgeStatus.cameraReady ?? bridgeStatus.camera) ? 'ready' : 'not ready'}</span>
-            <span className="td-mono">configured: {bridgeStatus.cameraConfigured ? 'yes' : 'no'}</span>
-            {bridgeStatus.cameraBackends?.length ? <span className="td-mono">backends: {bridgeStatus.cameraBackends.join(', ')}</span> : null}
-            <span className="td-mono">capturing: {bridgeStatus.capturing ? 'yes' : 'no'}</span>
-            {bridgeStatus.cameraError ? <span className="td-mono">error: {bridgeStatus.cameraError}</span> : null}
+
+        {!isWsOnlyBridge && showLegacyBridgeControls && (
+          <div className="scanner-bridge-controls" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label className="form-label">Legacy Scanner Bridge URL</label>
+              <input
+                className="form-input"
+                value={manualBridgeUrl}
+                onChange={(e) => {
+                  setBridgeUrlDirty(true);
+                  setManualBridgeUrl(e.target.value);
+                }}
+                placeholder="http://raspberry-pi-ip:8080"
+              />
+              <p className="field-hint">
+                {bridgeUrlSource === 'auto'
+                  ? `Auto-detected IP (${detectedIp || 'waiting for heartbeat'}). Optional manual control for older HTTP bridges.`
+                  : bridgeUrlSource === 'manual'
+                    ? 'Using a manual URL for legacy HTTP bridge control.'
+                    : 'Wait for the Pi heartbeat to detect the IP, or type the bridge URL manually.'}
+              </p>
+            </div>
+            <button className="btn btn-secondary" onClick={handleBridgeConnect} disabled={isBridgeConnecting}>
+              {isBridgeConnecting ? <RefreshCcw size={16} className="animate-spin" /> : <Wifi size={16} />}
+              Connect
+            </button>
+            <button className="btn btn-secondary" onClick={handleBridgeStatus} disabled={isBridgeConnecting}>
+              <Signal size={16} />
+              Check
+            </button>
+            <button className="btn btn-secondary" onClick={handleBridgeDisconnect} disabled={isBridgeConnecting}>
+              <WifiOff size={16} />
+              Disconnect
+            </button>
+            {bridgeStatus && (
+              <div style={{
+                width: '100%',
+                display: 'flex',
+                gap: '0.5rem',
+                flexWrap: 'wrap',
+                color: 'var(--text-secondary)',
+                fontSize: '0.78rem',
+              }}>
+                <span className="td-mono">bridge: {bridgeStatus.bridgeVersion || bridgeStatus.status || 'online'}</span>
+                <span className="td-mono">camera: {(bridgeStatus.cameraReady ?? bridgeStatus.camera) ? 'ready' : 'not ready'}</span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -561,10 +646,10 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
             )}
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
               {isConnected
-                ? `Last heartbeat received within ${heartbeatSeconds} seconds`
-                : scanner.lastSignalAt
-                  ? `Last signal was ${formatDateTime(scanner.lastSignalAt)} — stale or not reaching backend`
-                  : 'Waiting for the physical scanner to connect to the backend'}
+                ? `Scanner is online — last heartbeat ${formatSignalAge(connection.secondsSinceSignal)} (timeout ${heartbeatSeconds}s)`
+                : connection.waitingForDevice
+                  ? 'Waiting for the Pi to connect and send its first heartbeat'
+                  : `Scanner is offline — last signal ${formatDateTime(scanner.lastSignalAt)} (${formatSignalAge(connection.secondsSinceSignal)})`}
             </p>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem 2rem' }}>
@@ -641,7 +726,7 @@ const DeviceControlPanel = ({ device, onRefresh, logs, users = defaultUsers, off
             <div>
               <h3 className="card-title" style={{ marginBottom: '0.25rem' }}>No Real Device Signal</h3>
               <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: '0.86rem' }}>
-                The backend has not received a fresh hardware heartbeat via WebSocket. The scanner will stay disconnected until the Pi bridge connects and sends device_connected / heartbeat messages.
+                The Pi is not sending a fresh heartbeat right now. Start <span className="td-mono">pi_ws_scanner.py</span> on the Raspberry Pi — status will turn online automatically when heartbeats arrive (every {heartbeatSeconds}s timeout).
               </p>
             </div>
           </div>

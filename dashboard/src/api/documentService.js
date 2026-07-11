@@ -336,8 +336,10 @@ export const bridgeService = {
   },
 
   snapshot(payload = {}) {
-    return apiBlobRequest(`/device/bridge/snapshot${buildQuery(payload)}`, {
+    const { signal, ...rest } = payload;
+    return apiBlobRequest(`/device/bridge/snapshot${buildQuery(rest)}`, {
       headers: { Accept: 'image/jpeg,image/*;q=0.9,*/*;q=0.5' },
+      signal,
     });
   },
 };

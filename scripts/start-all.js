@@ -107,7 +107,11 @@ const startService = (name, args) => {
 
 const maybeStartTunnel = () => {
   if (!autoTunnel) return;
-  const tunnel = spawn('devtunnel', ['host', '-p', '5000', '--allow-anonymous'], {
+  const tunnelId = (networkEnv.DIGIPATH_TUNNEL_ID || '').trim();
+  const args = tunnelId
+    ? ['host', tunnelId, '-p', '5000', '--allow-anonymous']
+    : ['host', '-p', '5000', '--allow-anonymous'];
+  const tunnel = spawn('devtunnel', args, {
     cwd: root,
     shell: true,
     stdio: ['inherit', 'pipe', 'pipe'],

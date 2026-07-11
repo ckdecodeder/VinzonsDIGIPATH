@@ -6,6 +6,7 @@ set -eu
 
 BACKEND_URL="https://46hdfmgm-5000.asse.devtunnels.ms/api"
 DEVICE_KEY="dev-device-key-change-me"
+DEVTUNNEL_TOKEN=""
 
 update_env_file() {
   local file="$1"
@@ -22,6 +23,14 @@ update_env_file() {
     sed -i "s|^DIGIPATH_DEVICE_API_KEY=.*|DIGIPATH_DEVICE_API_KEY=${DEVICE_KEY}|" "$file"
   else
     echo "DIGIPATH_DEVICE_API_KEY=${DEVICE_KEY}" >> "$file"
+  fi
+
+  if [ -n "${DEVTUNNEL_TOKEN}" ]; then
+    if grep -q '^DIGIPATH_DEVTUNNEL_TOKEN=' "$file"; then
+      sed -i "s|^DIGIPATH_DEVTUNNEL_TOKEN=.*|DIGIPATH_DEVTUNNEL_TOKEN=${DEVTUNNEL_TOKEN}|" "$file"
+    else
+      echo "DIGIPATH_DEVTUNNEL_TOKEN=${DEVTUNNEL_TOKEN}" >> "$file"
+    fi
   fi
 
   if grep -q '^DIGIPATH_USE_WEBSOCKET=' "$file"; then
@@ -44,8 +53,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 for candidate in \
   "/etc/digipath-scanner.env" \
+  "$HOME/Desktop/VinzonsDIGIPATH-Pi/.env" \
   "$HOME/Desktop/VinzonsDIGIPATH-Pi/bridge.env" \
+  "$HOME/VinzonsDIGIPATH-Pi/.env" \
   "$HOME/VinzonsDIGIPATH-Pi/bridge.env" \
+  "$REPO_ROOT/.env" \
   "$REPO_ROOT/bridge.env"; do
   update_env_file "$candidate"
 done

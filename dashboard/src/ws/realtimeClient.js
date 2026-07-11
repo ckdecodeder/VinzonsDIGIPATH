@@ -1,8 +1,14 @@
-import { getApiBase } from '../api/apiBase';
+import { getApiBase, getResolvedWsUrl } from '../api/apiBase';
 
 const getAuthToken = () => {
-  if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem('dp_authToken');
+  if (typeof sessionStorage !== 'undefined') {
+    const sessionToken = sessionStorage.getItem('dp_authToken');
+    if (sessionToken) return sessionToken;
+  }
+  if (typeof localStorage !== 'undefined') {
+    return localStorage.getItem('dp_authToken');
+  }
+  return null;
 };
 
 const isLocalViteDev = () => {
@@ -44,6 +50,11 @@ export const getWsUrl = () => {
     return normalized.endsWith('/ws') ? normalized : `${normalized}/ws`;
   }
 
+  const configuredWs = getResolvedWsUrl();
+  if (configuredWs) {
+    return configuredWs;
+  }
+
   const apiBase = getApiBase();
 
   // Local Vite + local API: proxy WS to laptop backend.
@@ -65,14 +76,45 @@ export class RealtimeClient {
     this.connected = false;
     this.authenticated = false;
     this.activeChannels = new Set();
+    this.reconnectAttempt = 0;
+    this.closing = false;
+    this.pendingScannerFrame = null;
+    this.scannerFrameFlushScheduled = false;
+  }
+
+  flushScannerFrame() {
+    this.scannerFrameFlushScheduled = false;
+    const frame = this.pendingScannerFrame;
+    this.pendingScannerFrame = null;
+    if (frame?.length) {
+      this.emit('scanner:frame', { frame });
+    }
+  }
+
+  queueScannerFrame(frame) {
+    this.pendingScannerFrame = frame;
+    if (this.scannerFrameFlushScheduled) return;
+    this.scannerFrameFlushScheduled = true;
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(() => this.flushScannerFrame());
+      return;
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => this.flushScannerFrame());
+      return;
+    }
+    this.flushScannerFrame();
   }
 
   connect() {
-    const token = getAuthToken();
-    if (!token) return;
-
     this.shouldConnect = true;
     this.clearReconnect();
+
+    const token = getAuthToken();
+    if (!token) {
+      this.scheduleReconnect();
+      return;
+    }
 
     if (this.ws?.readyState === WebSocket.OPEN) {
       return;
@@ -85,14 +127,16 @@ export class RealtimeClient {
     const ws = new WebSocket(getWsUrl());
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
+    this.closing = false;
 
     ws.onopen = () => {
+      this.reconnectAttempt = 0;
       ws.send(JSON.stringify({ type: 'auth', token }));
     };
 
     ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
-        this.emit('scanner:frame', { frame: new Uint8Array(event.data) });
+        this.queueScannerFrame(new Uint8Array(event.data));
         return;
       }
 
@@ -120,6 +164,9 @@ export class RealtimeClient {
       }
 
       this.emit(message.type, message);
+      if (message.type?.startsWith('scanner:webrtc:')) {
+        this.emit('scanner:webrtc', message);
+      }
       if (message.type && message.channel) {
         this.emit(`${message.type}:${message.channel}`, message);
       }
@@ -129,8 +176,10 @@ export class RealtimeClient {
       this.connected = false;
       this.authenticated = false;
       this.ws = null;
-      this.emit('connection:close');
-      this.scheduleReconnect();
+      if (!this.closing) {
+        this.emit('connection:close');
+        this.scheduleReconnect();
+      }
     };
 
     ws.onerror = () => {
@@ -140,6 +189,7 @@ export class RealtimeClient {
 
   disconnect() {
     this.shouldConnect = false;
+    this.closing = true;
     this.clearReconnect();
     this.connected = false;
     this.authenticated = false;
@@ -163,10 +213,12 @@ export class RealtimeClient {
 
   scheduleReconnect() {
     if (!this.shouldConnect || this.reconnectTimer) return;
+    const delay = Math.min(1000 * (2 ** this.reconnectAttempt), 10000);
+    this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, 3000);
+    }, delay);
   }
 
   clearReconnect() {
@@ -187,6 +239,12 @@ export class RealtimeClient {
     this.activeChannels.delete(channel);
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'unsubscribe', channel }));
+    }
+  }
+
+  sendMessage(payload) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(payload));
     }
   }
 

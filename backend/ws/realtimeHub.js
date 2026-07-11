@@ -4,18 +4,36 @@ const { URL } = require('url');
 const { getDeviceApiKey } = require('../utils/bridge');
 
 const getJwtSecret = () => process.env.JWT_SECRET || 'dev-only-change-this-secret';
+
 const getStreamMinIntervalMs = () => {
   const configured = Number(process.env.REALTIME_STREAM_MIN_INTERVAL_MS);
   if (Number.isFinite(configured) && configured >= 0) return configured;
   return 0;
 };
-// Drop frames for a client whose send buffer is backed up (slow tunnel/network).
-// Without this, buffered frames pile up and the preview freezes then goes black.
+
 const getStreamMaxBufferedBytes = () => {
   const configured = Number(process.env.REALTIME_STREAM_MAX_BUFFERED_BYTES);
   if (Number.isFinite(configured) && configured > 0) return configured;
-  return 1_500_000; // ~1.5MB (a few frames) before we start dropping.
+  return 680_000;
 };
+
+const getStreamMaxClientBufferFrames = () => {
+  const configured = Number(process.env.REALTIME_STREAM_MAX_CLIENT_BUFFER_FRAMES);
+  if (Number.isFinite(configured) && configured > 0) return Math.floor(configured);
+  return 1;
+};
+
+const getStreamMaxPayloadBytes = () => {
+  const configured = Number(process.env.REALTIME_STREAM_MAX_PAYLOAD_BYTES);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return 1_048_576;
+};
+
+const WEBRTC_SIGNAL_TYPES = new Set([
+  'scanner:webrtc:offer',
+  'scanner:webrtc:answer',
+  'scanner:webrtc:ice',
+]);
 
 const parseJson = (raw) => {
   try {
@@ -31,14 +49,24 @@ const sendJson = (ws, payload) => {
   }
 };
 
+/** Pre-stringified send for hot WebRTC signaling paths (no compression). */
+const sendRaw = (ws, raw) => {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(raw);
+  }
+};
+
 class RealtimeHub {
   constructor() {
     this.userClients = new Set();
+    this.userClientsById = new Map();
     this.deviceClients = new Map();
     this.presenceHandler = null;
     this.wss = null;
     this.pingTimer = null;
     this.streamThrottle = new Map();
+    this.latestStreamFrames = new Map();
+    this.streamRelayPending = new Map();
   }
 
   setPresenceHandler(handler) {
@@ -46,7 +74,11 @@ class RealtimeHub {
   }
 
   attach(server) {
-    this.wss = new WebSocketServer({ noServer: true });
+    this.wss = new WebSocketServer({
+      noServer: true,
+      perMessageDeflate: false,
+      maxPayload: getStreamMaxPayloadBytes(),
+    });
 
     server.on('upgrade', (request, socket, head) => {
       let pathname = '/';
@@ -61,6 +93,9 @@ class RealtimeHub {
         socket.destroy();
         return;
       }
+
+      socket.setNoDelay(true);
+      socket.setKeepAlive(true, 15000);
 
       this.wss.handleUpgrade(request, socket, head, (ws) => {
         ws.isAlive = true;
@@ -110,6 +145,59 @@ class RealtimeHub {
     this.pingTimer.unref?.();
   }
 
+  trackUserClient(ws) {
+    this.userClients.add(ws);
+    if (!ws.auth?.userId) return;
+    const userId = ws.auth.userId;
+    if (!this.userClientsById.has(userId)) {
+      this.userClientsById.set(userId, new Set());
+    }
+    this.userClientsById.get(userId).add(ws);
+  }
+
+  untrackUserClient(ws) {
+    this.userClients.delete(ws);
+    if (!ws.auth?.userId) return;
+    const clients = this.userClientsById.get(ws.auth.userId);
+    if (!clients) return;
+    clients.delete(ws);
+    if (!clients.size) {
+      this.userClientsById.delete(ws.auth.userId);
+    }
+  }
+
+  handlePresenceAsync(ws, msg) {
+    if (!this.presenceHandler || !ws.auth?.deviceId) return;
+    const eventType = msg.type === 'heartbeat' ? 'device_heartbeat' : msg.type;
+    const isHeartbeat = eventType === 'device_heartbeat';
+
+    // Ack heartbeats immediately so Pi does not wait on MongoDB before next ping.
+    if (isHeartbeat) {
+      sendJson(ws, { type: 'presence:ok', eventType });
+    }
+
+    setImmediate(async () => {
+      try {
+        const result = await this.presenceHandler(
+          msg.payload || {},
+          eventType,
+          ws.auth.deviceId,
+          { lightweight: isHeartbeat },
+        );
+        if (result?.device) {
+          this.broadcastDeviceUpdated(result.device);
+        }
+        if (!isHeartbeat) {
+          sendJson(ws, { type: 'presence:ok', eventType });
+        }
+      } catch (err) {
+        if (!isHeartbeat) {
+          sendJson(ws, { type: 'presence:error', message: err.message || 'Presence update failed' });
+        }
+      }
+    });
+  }
+
   clearAuthTimer(ws) {
     if (ws.pendingAuthTimer) {
       clearTimeout(ws.pendingAuthTimer);
@@ -118,9 +206,10 @@ class RealtimeHub {
   }
 
   handleUserSocket(ws) {
-    this.userClients.add(ws);
+    this.trackUserClient(ws);
 
     ws.on('message', (data, isBinary) => {
+      ws.isAlive = true;
       if (isBinary) return;
 
       const msg = parseJson(data.toString());
@@ -136,21 +225,51 @@ class RealtimeHub {
         return;
       }
 
+      if (WEBRTC_SIGNAL_TYPES.has(msg.type)) {
+        if (msg.type === 'scanner:webrtc:offer' && msg.channel && msg.sdp) {
+          const parts = msg.channel.split(':');
+          const deviceId = msg.deviceId || parts[1];
+          if (!deviceId) return;
+          this.relayWebRtcToDevice(ws.auth.userId, deviceId, {
+            type: 'scanner:webrtc:offer',
+            channel: msg.channel,
+            userId: ws.auth.userId,
+            sdp: msg.sdp,
+          });
+        } else if (msg.type === 'scanner:webrtc:ice' && msg.channel && msg.candidate) {
+          const parts = msg.channel.split(':');
+          const deviceId = msg.deviceId || parts[1];
+          if (!deviceId) return;
+          this.relayWebRtcToDevice(ws.auth.userId, deviceId, {
+            type: 'scanner:webrtc:ice',
+            channel: msg.channel,
+            userId: ws.auth.userId,
+            candidate: msg.candidate,
+          });
+        }
+        return;
+      }
+
       if (msg.type === 'subscribe' && msg.channel) {
         ws.subscriptions.add(msg.channel);
         sendJson(ws, { type: 'subscribed', channel: msg.channel });
+        const streamMatch = /^scanner:([^:]+):stream$/.exec(msg.channel);
+        if (streamMatch) {
+          this.pushLatestStreamFrameToClient(ws, streamMatch[1]);
+        }
         return;
       }
 
       if (msg.type === 'unsubscribe' && msg.channel) {
         ws.subscriptions.delete(msg.channel);
         sendJson(ws, { type: 'unsubscribed', channel: msg.channel });
+        return;
       }
     });
 
     ws.on('close', () => {
       this.clearAuthTimer(ws);
-      this.userClients.delete(ws);
+      this.untrackUserClient(ws);
     });
   }
 
@@ -168,8 +287,11 @@ class RealtimeHub {
         userId: decoded.id,
         role: decoded.role,
       };
+      this.untrackUserClient(ws);
+      this.trackUserClient(ws);
       this.clearAuthTimer(ws);
       sendJson(ws, { type: 'auth:ok', userId: decoded.id, role: decoded.role });
+      this.pushDeviceSnapshotToClient(ws);
     } catch {
       sendJson(ws, { type: 'auth:error', message: 'Invalid or expired token' });
       ws.close(4401, 'Invalid token');
@@ -185,9 +307,12 @@ class RealtimeHub {
       ws.auth = { kind: 'device', deviceId };
       this.clearAuthTimer(ws);
       sendJson(ws, { type: 'auth:ok', deviceId });
+      this.recordDeviceConnected(deviceId);
+      this.broadcastDevicePresence(deviceId);
     };
 
-    ws.on('message', async (data, isBinary) => {
+    ws.on('message', (data, isBinary) => {
+      ws.isAlive = true;
       if (isBinary) {
         if (!ws.auth?.deviceId) return;
         this.relayStreamFrame(ws.auth.deviceId, data);
@@ -214,51 +339,173 @@ class RealtimeHub {
         return;
       }
 
-      if (msg.type === 'heartbeat' || msg.type === 'device_connected' || msg.type === 'device_disconnected') {
-        if (!this.presenceHandler) return;
-        const eventType = msg.type === 'heartbeat' ? 'device_heartbeat' : msg.type;
-        try {
-          const result = await this.presenceHandler(msg.payload || {}, eventType, ws.auth.deviceId);
-          if (result?.device) {
-            this.broadcastDeviceUpdated(result.device);
-          }
-          sendJson(ws, { type: 'presence:ok', eventType });
-        } catch (err) {
-          sendJson(ws, { type: 'presence:error', message: err.message || 'Presence update failed' });
+      if (WEBRTC_SIGNAL_TYPES.has(msg.type)) {
+        if (msg.type === 'scanner:webrtc:answer' && msg.userId && msg.sdp) {
+          this.relayWebRtcToUser(msg.userId, {
+            type: 'scanner:webrtc:answer',
+            channel: msg.channel,
+            sdp: msg.sdp,
+          });
+        } else if (msg.type === 'scanner:webrtc:ice' && msg.userId && msg.candidate) {
+          this.relayWebRtcToUser(msg.userId, {
+            type: 'scanner:webrtc:ice',
+            channel: msg.channel,
+            candidate: msg.candidate,
+          });
         }
+        return;
+      }
+
+      if (msg.type === 'heartbeat' || msg.type === 'device_connected' || msg.type === 'device_disconnected') {
+        this.handlePresenceAsync(ws, msg);
       }
     });
 
     ws.on('close', () => {
       this.clearAuthTimer(ws);
       if (ws.auth?.deviceId) {
-        const clients = this.deviceClients.get(ws.auth.deviceId);
+        const deviceId = ws.auth.deviceId;
+        const clients = this.deviceClients.get(deviceId);
         if (clients) {
           clients.delete(ws);
           if (!clients.size) {
-            this.deviceClients.delete(ws.auth.deviceId);
+            this.deviceClients.delete(deviceId);
+            this.broadcastDevicePresence(deviceId);
           }
         }
       }
     });
   }
 
+  broadcastDevicePresence(deviceId) {
+    setImmediate(async () => {
+      try {
+        const { getDeviceSnapshot } = require('../services/devicePresence');
+        const device = await getDeviceSnapshot(deviceId);
+        this.broadcastDeviceUpdated(device);
+      } catch {
+        // ignore snapshot errors during socket churn
+      }
+    });
+  }
+
+  recordDeviceConnected(deviceId) {
+    if (!this.presenceHandler) return;
+    setImmediate(async () => {
+      try {
+        const result = await this.presenceHandler(
+          { deviceId, name: 'Physical Document Scanner', type: 'Scanner', status: 'Online' },
+          'device_connected',
+          deviceId,
+        );
+        if (result?.device) {
+          this.broadcastDeviceUpdated(result.device);
+        }
+      } catch (err) {
+        console.warn('[Realtime] device_connected presence failed:', err.message || err);
+      }
+    });
+  }
+
+  pushDeviceSnapshotToClient(ws) {
+    setImmediate(async () => {
+      try {
+        const { getDeviceSnapshot } = require('../services/devicePresence');
+        const device = await getDeviceSnapshot('DEV-001');
+        sendJson(ws, { type: 'device:updated', device });
+      } catch {
+        // ignore snapshot errors for a single client
+      }
+    });
+  }
+
+  pushLatestStreamFrameToClient(ws, deviceId = 'DEV-001') {
+    const cached = this.getLatestStreamFrame(deviceId);
+    if (!cached?.frame?.length || ws.readyState !== ws.OPEN) return false;
+    const maxAgeMs = Number(process.env.BRIDGE_SNAPSHOT_WS_FALLBACK_MAX_AGE_MS || 30000);
+    if (maxAgeMs > 0 && Date.now() - cached.at > maxAgeMs) return false;
+    try {
+      ws.send(cached.frame, { binary: true, compress: false });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   relayStreamFrame(deviceId, frameBuffer) {
+    const buf = Buffer.isBuffer(frameBuffer) ? frameBuffer : Buffer.from(frameBuffer);
+    const now = Date.now();
+    this.latestStreamFrames.set(deviceId, { frame: buf, at: now });
+
+    let state = this.streamRelayPending.get(deviceId);
+    if (!state) {
+      state = { latest: buf, flushScheduled: false };
+      this.streamRelayPending.set(deviceId, state);
+    } else {
+      state.latest = buf;
+    }
+    if (state.flushScheduled) return;
+    state.flushScheduled = true;
+    setImmediate(() => this.flushStreamRelay(deviceId));
+  }
+
+  flushStreamRelay(deviceId) {
+    const state = this.streamRelayPending.get(deviceId);
+    if (!state) return;
+    state.flushScheduled = false;
+
     const minIntervalMs = getStreamMinIntervalMs();
     const now = Date.now();
     const lastSent = this.streamThrottle.get(deviceId) || 0;
-    if (minIntervalMs > 0 && now - lastSent < minIntervalMs) return;
+    if (minIntervalMs > 0 && now - lastSent < minIntervalMs) {
+      state.flushScheduled = true;
+      setImmediate(() => this.flushStreamRelay(deviceId));
+      return;
+    }
     this.streamThrottle.set(deviceId, now);
 
+    const buf = state.latest;
     const channel = `scanner:${deviceId}:stream`;
-    const maxBuffered = getStreamMaxBufferedBytes();
+    const frameBudget = getStreamMaxBufferedBytes();
+    let anySkipped = false;
+
     for (const client of this.userClients) {
       if (!client.auth || !client.subscriptions.has(channel)) continue;
       if (client.readyState !== client.OPEN) continue;
-      // Skip this frame for clients that are behind (slow tunnel). Sending more
-      // would grow the buffer until the stream freezes and turns black.
-      if (client.bufferedAmount > maxBuffered) continue;
-      client.send(frameBuffer, { binary: true });
+      // One frame in flight max — skip only when a full JPEG is already queued.
+      if (client.bufferedAmount > frameBudget) {
+        anySkipped = true;
+        continue;
+      }
+      try {
+        client.send(buf, { binary: true, compress: false });
+      } catch {
+        anySkipped = true;
+      }
+    }
+
+    if (anySkipped && !state.flushScheduled) {
+      state.flushScheduled = true;
+      setTimeout(() => this.flushStreamRelay(deviceId), 6);
+    }
+  }
+
+  relayWebRtcToDevice(userId, deviceId, payload) {
+    const clients = this.deviceClients.get(deviceId);
+    if (!clients?.size) return;
+    const message = { ...payload, userId };
+    const raw = JSON.stringify(message);
+    for (const client of clients) {
+      sendRaw(client, raw);
+    }
+  }
+
+  relayWebRtcToUser(userId, payload) {
+    const clients = this.userClientsById.get(userId);
+    if (!clients?.size) return;
+    const raw = JSON.stringify(payload);
+    for (const client of clients) {
+      sendRaw(client, raw);
     }
   }
 
@@ -300,6 +547,10 @@ class RealtimeHub {
   isDeviceConnected(deviceId) {
     const clients = this.deviceClients.get(deviceId);
     return Boolean(clients?.size);
+  }
+
+  getLatestStreamFrame(deviceId = 'DEV-001') {
+    return this.latestStreamFrames.get(deviceId) || null;
   }
 }
 

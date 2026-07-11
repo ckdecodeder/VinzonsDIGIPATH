@@ -1,31 +1,16 @@
 #!/usr/bin/env bash
-# Fix Windows CRLF line endings after copying from USB / laptop.
+# Fix Windows CRLF after USB copy.
 set -eu
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-fix_file() {
-  if [ -f "$1" ]; then
-    sed -i 's/\r$//' "$1"
-    chmod +x "$1" 2>/dev/null || true
-    echo "fixed $1"
+ROOT_DIR="$SCRIPT_DIR"
+if [[ -f "$SCRIPT_DIR/../pi_ws_scanner.py" ]]; then
+  ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+while IFS= read -r -d '' file; do
+  if [[ -f "$file" ]]; then
+    sed -i 's/\r$//' "$file"
+    chmod +x "$file" 2>/dev/null || true
+    echo "fixed $file"
   fi
-}
-
-for file in \
-  "$SCRIPT_DIR/fix-pi-scripts.sh" \
-  "$SCRIPT_DIR/start.sh" \
-  "$SCRIPT_DIR/install-pi-deps.sh" \
-  "$SCRIPT_DIR/verify-pi-deps.py" \
-  "$SCRIPT_DIR/raspberry_pi/install_digipath_scanner.sh" \
-  "$SCRIPT_DIR/scripts/pi-start-all.sh" \
-  "$SCRIPT_DIR/scripts/pi-restart-clean.sh" \
-  "$SCRIPT_DIR/scripts/pi-update-network.sh" \
-  "$SCRIPT_DIR/scripts/pi-test-backend.sh" \
-  "$SCRIPT_DIR/scripts/pi-install-network-hook.sh" \
-  "$SCRIPT_DIR/scripts/pi-usb-auto-update.sh" \
-  "$SCRIPT_DIR/scripts/pi-install-usb-hook.sh"; do
-  fix_file "$file"
-done
-
-echo "Done. Run: sudo bash start.sh"
+done < <(find "$SCRIPT_DIR" "$ROOT_DIR" \( -name '*.sh' -o -name '.env' -o -name 'pi_ws_scanner.env' -o -name 'pi_ws_scanner.env.example' \) -print0 2>/dev/null)
+echo "Done. Run: bash scripts/ws.sh"

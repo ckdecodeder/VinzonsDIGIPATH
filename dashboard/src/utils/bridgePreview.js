@@ -116,7 +116,7 @@ export const resolveReachableLanBridge = async (device) => {
   const base = getReportedBridgeUrl(device);
   if (!base) return null;
   const verified = await probeLanBridgeDirect(base);
-  return verified || base;
+  return verified || null;
 };
 
 export const fetchLanSnapshotAny = async (device) => {

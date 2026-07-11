@@ -43,9 +43,6 @@ const getScopedDocumentQuery = (req) => {
   if (req.user?.role === 'Receptionist') {
     return {
       $or: [
-        { originOfficeId: officeId },
-        { currentOfficeId: officeId },
-        { destinationOfficeId: officeId },
         { 'timeline.userId': req.user.id },
         { verifiedBy: req.user.id },
       ],

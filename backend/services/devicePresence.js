@@ -5,10 +5,12 @@ const {
   appendDocumentTimeline,
   createTimelineEvent,
 } = require('../utils/helpers');
-const { isDeviceWsConnected } = require('../utils/realtime');
+const { isDeviceWsConnected, broadcastDataInvalidate } = require('../utils/realtime');
 
 const deviceHeartbeatTimeoutMs = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_MS || 12000);
+const heartbeatPersistMs = Number(process.env.DEVICE_HEARTBEAT_PERSIST_MS || 45000);
 const scannerBridgePort = String(process.env.SCANNER_BRIDGE_PORT || '8080');
+const lastHeartbeatPersistAt = new Map();
 
 const resolveBridgeUrl = (device, latestHardwareEvent) => {
   const eventPayload = latestHardwareEvent?.payload || {};
@@ -54,8 +56,11 @@ const getDeviceSnapshot = async (deviceId = 'DEV-001') => {
   });
 
   const hasHardwareSignal = Boolean(latestHardwareEvent);
-  const disconnectedByDevice = latestHardwareEvent?.eventType === 'device_disconnected' || latestHardwareEvent?.status === 'Offline';
-  const connected = hasHardwareSignal && !disconnectedByDevice && isFreshHardwareSignal(latestHardwareEvent);
+  const streamWsConnected = isDeviceWsConnected(deviceId);
+  const heartbeatFresh = hasHardwareSignal
+    && latestHardwareEvent?.eventType !== 'device_disconnected'
+    && isFreshHardwareSignal(latestHardwareEvent);
+  const connected = streamWsConnected || heartbeatFresh;
   const status = connected ? 'Online' : 'Offline';
 
   if (!device || !hasHardwareSignal) {
@@ -81,7 +86,7 @@ const getDeviceSnapshot = async (deviceId = 'DEV-001') => {
     connected,
     configured: true,
     connectionState: connected ? 'connected' : 'stale_or_disconnected',
-    streamWsConnected: isDeviceWsConnected(deviceId),
+    streamWsConnected,
     heartbeatTimeoutMs: deviceHeartbeatTimeoutMs,
     lastActive: latestHardwareEvent.timestamp,
     lastSignalAt: latestHardwareEvent.timestamp,
@@ -173,11 +178,46 @@ const recordHardwareDeviceEvent = async (req, eventType) => {
 
   const snapshot = await getDeviceSnapshot(deviceId);
   await createLogEntry(req, 'device_event', `Hardware event: ${eventType}`, event.id, 'hardware');
+  broadcastDataInvalidate(['device-events']);
 
   return { event, device: snapshot };
 };
 
-const applyHardwareEvent = async (body, eventType, meta = {}) => {
+const shouldSkipHeavyHeartbeat = (deviceId) => {
+  if (!isDeviceWsConnected(deviceId)) return false;
+  const now = Date.now();
+  const last = lastHeartbeatPersistAt.get(deviceId) || 0;
+  return now - last < heartbeatPersistMs;
+};
+
+const applyHardwareEvent = async (body, eventType, meta = {}, options = {}) => {
+  const deviceId = body.deviceId || body.id || meta.deviceId || 'DEV-001';
+
+  if (eventType === 'device_heartbeat' && options.lightweight && shouldSkipHeavyHeartbeat(deviceId)) {
+    const snapshot = await getDeviceSnapshot(deviceId);
+    if (!snapshot?.configured) {
+      return { skipped: true, device: null };
+    }
+    const incomingPayload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+    return {
+      skipped: true,
+      device: {
+        ...snapshot,
+        payload: {
+          ...(snapshot.payload || {}),
+          ...incomingPayload,
+        },
+        resolution: body.resolution || snapshot.resolution,
+        lastActive: body.timestamp || snapshot.lastActive,
+        lastSignalAt: body.timestamp || snapshot.lastSignalAt,
+      },
+    };
+  }
+
+  if (eventType === 'device_heartbeat') {
+    lastHeartbeatPersistAt.set(deviceId, Date.now());
+  }
+
   return recordHardwareDeviceEvent(buildHardwareReq(body, meta), eventType);
 };
 
