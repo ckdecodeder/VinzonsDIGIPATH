@@ -63,18 +63,15 @@ const OfficeList = ({
               <h1>Offices</h1>
               <p>All registered offices in the municipal system</p>
             </div>
-<<<<<<< Updated upstream
-=======
             <div className="page-header-actions page-header-actions--inline page-header-actions--mobile-only">
               <button className="btn btn-primary" onClick={() => openForm()}>
                 <Plus size={16} /> New Office
               </button>
             </div>
->>>>>>> Stashed changes
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row page-toolbar-stacked">
+          <div className="page-toolbar-row">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -87,17 +84,11 @@ const OfficeList = ({
                 />
               </div>
             </div>
-<<<<<<< Updated upstream
-            <button className="btn btn-primary" onClick={() => openForm()}>
-              <Plus size={16} /> New Office
-            </button>
-=======
             <div className="page-toolbar-actions page-toolbar-actions--desktop-only">
               <button className="btn btn-primary" onClick={() => openForm()}>
                 <Plus size={16} /> New Office
               </button>
             </div>
->>>>>>> Stashed changes
           </div>
         }
       >

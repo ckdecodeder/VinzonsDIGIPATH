@@ -2081,23 +2081,6 @@ tbody tr:hover {
   margin-left: auto;
 }
 
-<<<<<<< Updated upstream
-.page-toolbar-row.page-toolbar-stacked {
-  flex-direction: column-reverse;
-  align-items: stretch;
-}
-
-.page-toolbar-row.page-toolbar-stacked .filter-dropdown-search {
-  flex: 1 1 100%;
-  width: 100%;
-}
-
-.page-toolbar-row.page-toolbar-stacked .btn {
-  align-self: flex-end;
-  margin-left: 0;
-}
-
-=======
 .page-toolbar-actions {
   display: flex;
   align-items: flex-end;
@@ -2118,7 +2101,22 @@ tbody tr:hover {
   }
 }
 
->>>>>>> Stashed changes
+@media (max-width: 768px) {
+  .page-toolbar-row.page-toolbar-stacked {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .page-toolbar-row.page-toolbar-stacked .filter-dropdown-search {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .page-toolbar-row.page-toolbar-stacked .btn {
+    align-self: flex-end;
+    margin-left: 0;
+  }
+}
 .activity-filter-row {
   display: flex;
   gap: 1.25rem;

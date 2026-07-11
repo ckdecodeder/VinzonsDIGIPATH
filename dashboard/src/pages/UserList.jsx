@@ -213,18 +213,15 @@ const UserList = ({
               <h1>User Management</h1>
               <p>Manage system users and their access levels</p>
             </div>
-<<<<<<< Updated upstream
-=======
             <div className="page-header-actions page-header-actions--inline page-header-actions--mobile-only">
               <button className="btn btn-primary" onClick={() => openForm()}>
                 <Plus size={16} /> New User
               </button>
             </div>
->>>>>>> Stashed changes
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row page-toolbar-stacked">
+          <div className="page-toolbar-row">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -237,17 +234,11 @@ const UserList = ({
                 />
               </div>
             </div>
-<<<<<<< Updated upstream
-            <button className="btn btn-primary" onClick={() => openForm()}>
-              <Plus size={16} /> New User
-            </button>
-=======
             <div className="page-toolbar-actions page-toolbar-actions--desktop-only">
               <button className="btn btn-primary" onClick={() => openForm()}>
                 <Plus size={16} /> New User
               </button>
             </div>
->>>>>>> Stashed changes
           </div>
         }
       >
