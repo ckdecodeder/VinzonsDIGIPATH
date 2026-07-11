@@ -486,7 +486,7 @@ class RealtimeHub {
 
     if (anySkipped && !state.flushScheduled) {
       state.flushScheduled = true;
-      setTimeout(() => this.flushStreamRelay(deviceId), 6);
+      setTimeout(() => this.flushStreamRelay(deviceId), 2);
     }
   }
 

@@ -169,14 +169,22 @@ WS_STALE_SECS = max(15.0, float(os.environ.get("DIGIPATH_WS_STALE_SECS", "90")))
 WS_RECONNECT_MAX_SECS = max(2.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_MAX_SECS", "12")))
 WS_PING_INTERVAL = int(os.environ.get("DIGIPATH_WS_PING_INTERVAL", "0"))
 WS_PING_TIMEOUT = max(10, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "30")))
-STREAM_HTTP_UPLOAD = os.environ.get("DIGIPATH_STREAM_HTTP_UPLOAD", "1").strip().lower() not in (
-    "0",
-    "false",
-    "no",
-    "off",
-)
+STREAM_HTTP_UPLOAD_RAW = os.environ.get("DIGIPATH_STREAM_HTTP_UPLOAD", "auto").strip().lower()
+STREAM_HTTP_UPLOAD = STREAM_HTTP_UPLOAD_RAW not in ("0", "false", "no", "off")
+STREAM_HTTP_WS_PRIORITY = STREAM_HTTP_UPLOAD_RAW in ("auto", "ws", "1", "true", "yes", "on")
 _last_http_frame_upload_at = 0.0
 _http_frame_upload_boot = 0
+_http_upload_session = None
+_last_ws_frame_sent_at = 0.0
+_last_http_upload_error_log_at = 0.0
+
+
+def _http_upload_session_get():
+    global _http_upload_session
+    if _http_upload_session is None:
+        _http_upload_session = requests.Session()
+        _http_upload_session.headers.update({**DEVICE_HEADERS, "Connection": "keep-alive"})
+    return _http_upload_session
 
 PICAMERA2_AVAILABLE = False
 try:
@@ -283,7 +291,8 @@ def should_try_picamera2() -> bool:
         return False
     if USE_PICAMERA2_RAW in ("1", "true", "yes", "on"):
         return PICAMERA2_AVAILABLE
-    return PICAMERA2_AVAILABLE
+    # auto: only when no USB capture nodes (CSI-only Pi)
+    return PICAMERA2_AVAILABLE and not _discover_usb_capture_indices()
 
 
 def ws_url() -> str:
@@ -432,20 +441,17 @@ def encode_jpeg(frame, quality: int, *, optimize: bool = True) -> bytes | None:
 
 
 def encode_stream_jpeg(frame) -> bytes | None:
-    """2K JPEG encode — target sharp quality first, rare step-down only if over size cap."""
+    """Fast preview JPEG — single encode first, brief quality step-down if oversized."""
     if frame is None:
         return None
-    jpeg = encode_jpeg(frame, PREVIEW_JPEG_QUALITY, optimize=False)
+    quality = PREVIEW_JPEG_QUALITY
+    jpeg = encode_jpeg(frame, quality, optimize=False)
     if jpeg and len(jpeg) <= STREAM_JPEG_MAX_BYTES:
         return jpeg
-    quality = PREVIEW_JPEG_QUALITY - 4
-    while quality >= STREAM_JPEG_MIN_QUALITY:
+    for quality in range(PREVIEW_JPEG_QUALITY - 6, STREAM_JPEG_MIN_QUALITY - 1, -6):
         jpeg = encode_jpeg(frame, quality, optimize=False)
-        if not jpeg:
-            return None
-        if len(jpeg) <= STREAM_JPEG_MAX_BYTES:
+        if jpeg and len(jpeg) <= STREAM_JPEG_MAX_BYTES:
             return jpeg
-        quality -= 4
     return jpeg
 
 
@@ -576,6 +582,26 @@ def _v4l2_control_names(device: str) -> set[str]:
     return names
 
 
+def _v4l2_device_supports_capture(device: str) -> bool:
+    proc = _run_v4l2_ctl(device, "--all")
+    if not proc or proc.returncode != 0:
+        return False
+    text = (proc.stdout or "") + (proc.stderr or "")
+    return "Video Capture" in text
+
+
+def _discover_usb_capture_indices() -> list[int]:
+    """Return /dev/videoN indices that actually support Video Capture (skip metadata nodes)."""
+    indices: list[int] = []
+    for idx in range(0, CAMERA_SCAN_MAX + 4):
+        dev = f"/dev/video{idx}"
+        if not os.path.exists(dev):
+            continue
+        if _v4l2_device_supports_capture(dev):
+            indices.append(idx)
+    return indices
+
+
 def discover_v4l2_focus_devices(preferred_index=None) -> list[str]:
     """Find /dev/video* nodes that expose focus controls (may differ from OpenCV index)."""
     candidates: list[str] = []
@@ -686,7 +712,7 @@ def initialize_camera_autofocus(cap, device_index=None) -> str:
 
 
 def autofocus_settle(cap, device_index=None, *, for_capture: bool = False):
-    """Let autofocus converge — triggers a refocus pulse before still capture."""
+    """Let autofocus converge — light settle for live stream, full settle for scan."""
     if not CAMERA_AUTOFOCUS or cap is None or not cap.isOpened():
         return
 
@@ -699,8 +725,12 @@ def autofocus_settle(cap, device_index=None, *, for_capture: bool = False):
 
     apply_usb_camera_tuning(cap, device_index=device_index)
 
-    frames = SCAN_WARMUP_FRAMES if for_capture else max(6, int(FOCUS_SETTLE_SECS * 12))
-    min_secs = FOCUS_SETTLE_SECS if for_capture else min(CAMERA_WARMUP_SECS, FOCUS_SETTLE_SECS)
+    if for_capture:
+        frames = SCAN_WARMUP_FRAMES
+        min_secs = FOCUS_SETTLE_SECS
+    else:
+        frames = max(2, int(CAMERA_WARMUP_SECS * 2))
+        min_secs = min(0.2, CAMERA_WARMUP_SECS)
     warmup_camera_frames(cap, frames, min_secs=min_secs)
 
 
@@ -861,8 +891,52 @@ def _scan_output_dims(profile: dict | None = None) -> tuple[int, int]:
 
 
 def _camera_dims_for_scan(profile: dict | None = None) -> tuple[int, int]:
-    """Open camera at landscape stream size — no dimension swap."""
-    return _scan_output_dims(profile)
+    """Prefer native stream size; upscale to scan output in _finalize_scan_frame."""
+    out_w, out_h = _scan_output_dims(profile)
+    if active_capture_width > 0 and active_capture_height > 0:
+        if active_capture_width >= out_w and active_capture_height >= out_h:
+            return out_w, out_h
+        return active_capture_width, active_capture_height
+    return out_w, out_h
+
+
+def configure_capture_for_scan(cap, width: int, height: int):
+    """2K still capture — MJPEG + longer read timeout for USB mode switch."""
+    configure_capture(cap, width, height)
+    read_timeout = _cap_prop("CAP_PROP_READ_TIMEOUT_MSEC")
+    if read_timeout is not None:
+        try:
+            cap.set(read_timeout, float(max(CAMERA_READ_TIMEOUT_MS, 12000)))
+        except Exception:
+            pass
+    try:
+        cap.set(cv2.CAP_PROP_FPS, min(CAMERA_FPS, 15.0))
+    except Exception:
+        pass
+
+
+def _scan_capture_candidates(profile: dict | None = None) -> list[tuple[int, int]]:
+    """Try native 2K first, then common hi-res modes before upscale fallback."""
+    out_w, out_h = _scan_output_dims(profile)
+    seen: set[tuple[int, int]] = set()
+    candidates: list[tuple[int, int]] = []
+
+    def add(w: int, h: int):
+        if w > 0 and h > 0 and (w, h) not in seen:
+            seen.add((w, h))
+            candidates.append((w, h))
+
+    add(out_w, out_h)
+    add(FRAME_WIDTH, FRAME_HEIGHT)
+    add(2560, 1440)
+    add(2560, 1080)
+    add(2048, 1536)
+    add(1920, 1080)
+    if active_capture_width > 0 and active_capture_height > 0:
+        add(active_capture_width, active_capture_height)
+    add(PREVIEW_WIDTH, PREVIEW_HEIGHT)
+    add(1280, 720)
+    return candidates
 
 
 def _finalize_scan_frame(frame, profile: dict | None = None) -> bytes | None:
@@ -885,35 +959,65 @@ def _finalize_scan_frame(frame, profile: dict | None = None) -> bytes | None:
     return jpeg
 
 
-def _capture_still_frame(cap):
+def _capture_still_frame(cap, *, for_2k: bool = False):
     """Exclusive still capture — preview worker must be paused."""
     autofocus_settle(cap, active_camera_index, for_capture=True)
-    _drain_capture_buffer(cap, SCAN_CAPTURE_DRAIN)
-    frame = read_sharpest_frame(cap)
-    if frame is None or _frame_looks_corrupt(frame):
-        _drain_capture_buffer(cap, max(4, SCAN_CAPTURE_DRAIN // 2))
-        frame = read_sharpest_frame(cap, attempts=max(SCAN_BURST_FRAMES, 8))
+    drain_reads = max(SCAN_CAPTURE_DRAIN, 12 if for_2k else SCAN_CAPTURE_DRAIN)
+    _drain_capture_buffer(cap, drain_reads)
+    burst = max(SCAN_BURST_FRAMES, 10 if for_2k else SCAN_BURST_FRAMES)
+    frame = read_sharpest_frame(cap, attempts=burst)
+    if frame is None:
+        _drain_capture_buffer(cap, max(6, drain_reads // 2))
+        frame = read_sharpest_frame(cap, attempts=burst + 4)
     return frame
 
 
+def _try_scan_capture_at(cap, cam_w: int, cam_h: int, profile: dict | None) -> tuple[object | None, tuple[int, int] | None]:
+    target_w, target_h = _scan_output_dims(profile)
+    is_2k_target = cam_w >= target_w and cam_h >= target_h
+    configure_capture_for_scan(cap, cam_w, cam_h)
+    if is_2k_target:
+        warmup_camera_frames(cap, max(SCAN_WARMUP_FRAMES, 12), min_secs=max(0.45, FOCUS_SETTLE_SECS * 0.5))
+    else:
+        warmup_camera_frames(cap, max(4, SCAN_BURST_FRAMES // 2), min_secs=0.12)
+    frame = _capture_still_frame(cap, for_2k=is_2k_target)
+    if frame is None:
+        return None, None
+    actual_h, actual_w = frame.shape[:2]
+    return frame, (actual_w, actual_h)
+
+
 def capture_scan_snapshot(profile: dict | None = None) -> bytes | None:
-    """Hi-res still without leaving the stream stuck on the wrong resolution."""
+    """Hi-res still — native 2K when supported; never downscale through preview resize."""
     cap = active_capture_cap
     if cap is None or not cap.isOpened():
         return None
 
+    target_w, target_h = _scan_output_dims(profile)
     with capture_cap_lock:
-        cam_w, cam_h = _camera_dims_for_scan(profile)
         saved_w, saved_h = active_capture_width, active_capture_height
-        configure_capture(cap, cam_w, cam_h)
-        frame = _capture_still_frame(cap)
+        frame = None
+        used_dims = None
+        for cam_w, cam_h in _scan_capture_candidates(profile):
+            frame, used_dims = _try_scan_capture_at(cap, cam_w, cam_h, profile)
+            if frame is not None:
+                break
+            print(f"[PiWS] Scan capture miss at {cam_w}x{cam_h} — trying fallback...")
         if STREAM_FAST and saved_w > 0 and saved_h > 0:
             configure_capture(cap, saved_w, saved_h)
-            warmup_camera_frames(cap, 5, min_secs=0.15)
+            warmup_camera_frames(cap, 3, min_secs=0.08)
         if frame is None:
             return None
-        preview = _prepare_preview_frame(frame)
-        return _finalize_scan_frame(preview, profile)
+        if used_dims:
+            native_2k = used_dims[0] >= target_w and used_dims[1] >= target_h
+            if native_2k:
+                print(f"[PiWS] Scan captured native 2K at {used_dims[0]}x{used_dims[1]}")
+            else:
+                print(
+                    f"[PiWS] Scan captured at {used_dims[0]}x{used_dims[1]}, "
+                    f"upscaling to {target_w}x{target_h}"
+                )
+        return _finalize_scan_frame(frame, profile)
 
 
 def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
@@ -931,13 +1035,10 @@ def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
             frame = _capture_still_frame(cap)
             if frame is None:
                 return None
-            preview = _prepare_preview_frame(frame)
-            _store_camera_frames(frame, preview)
-            print(
-                f"[PiWS] Scan frame {preview.shape[1]}x{preview.shape[0]} "
-                f"(WYSIWYG, no rotate)"
-            )
-            return _finalize_scan_frame(preview, profile)
+            _store_camera_frames(frame, _prepare_preview_frame(frame))
+            actual_h, actual_w = frame.shape[:2]
+            print(f"[PiWS] Scan frame {actual_w}x{actual_h} (WYSIWYG, no rotate)")
+            return _finalize_scan_frame(frame, profile)
     finally:
         _scan_in_progress.clear()
 
@@ -953,7 +1054,11 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
         )
         snap = capture_scan_bytes(profile)
         if not snap:
-            update_command_status(cmd_id, "Failed", "No camera frame available")
+            update_command_status(
+                cmd_id,
+                "Failed",
+                "No camera frame available — replug USB cam or retry capture",
+            )
             return
         update_command_status(cmd_id, "Executing")
         upload_scan(snap, cmd_id)
@@ -976,7 +1081,7 @@ def _is_ws_closed_error(err) -> bool:
 
 def _drain_latest_frame(cap, max_reads: int | None = None):
     """Flush the USB driver queue, keep one fresh frame (pipeline depth stays 1)."""
-    reads = max_reads if max_reads is not None else STREAM_DRIVER_DRAIN
+    reads = 1 if max_reads is None else max(1, max_reads)
     frame = None
     ok = False
     with capture_cap_lock:
@@ -984,13 +1089,13 @@ def _drain_latest_frame(cap, max_reads: int | None = None):
             return False, None
         for _ in range(reads):
             ok_read, candidate = _camera_read(cap, retries=1)
-            if not ok_read or candidate is None or _frame_looks_corrupt(candidate):
+            if not ok_read or candidate is None or not getattr(candidate, "size", 0):
                 continue
             ok = True
             frame = candidate
         if not ok:
             ok_read, candidate = _camera_read(cap)
-            if ok_read and candidate is not None and not _frame_looks_corrupt(candidate):
+            if ok_read and candidate is not None and getattr(candidate, "size", 0):
                 ok = True
                 frame = candidate
     return ok, frame
@@ -1007,40 +1112,54 @@ def send_ws_frame(frame: bytes):
 
 
 def upload_stream_frame_http(jpeg: bytes):
-    """HTTPS preview upload — primary path for dev tunnels (dashboard snapshot cache)."""
-    global _last_http_frame_upload_at, _http_frame_upload_boot
+    """HTTPS preview cache — skipped when WS is actively sending (avoids duplicate tunnel load)."""
+    global _last_http_frame_upload_at, _http_frame_upload_boot, _last_http_upload_error_log_at
     if not STREAM_HTTP_UPLOAD or not jpeg or not BACKEND_BASE_URL:
         return
+    if STREAM_HTTP_WS_PRIORITY and ws_authenticated:
+        if (time.monotonic() - _last_ws_frame_sent_at) < 3.0:
+            return
     now = time.monotonic()
     min_gap = 1.0 / max(1.0, WS_MAX_FPS)
-    warming = _http_frame_upload_boot < 40
-    if not warming and now - _last_http_frame_upload_at < min_gap * 0.85:
+    if now - _last_http_frame_upload_at < min_gap * 0.7:
         return
     _last_http_frame_upload_at = now
     _http_frame_upload_boot += 1
 
     def _worker():
+        global _last_http_upload_error_log_at
         try:
-            response = requests.post(
+            response = _http_upload_session_get().post(
                 f"{BACKEND_BASE_URL}/devices/stream/frame",
                 params={"deviceId": DEVICE_ID},
                 data=jpeg,
-                headers={**DEVICE_HEADERS, "Content-Type": "image/jpeg"},
-                timeout=15,
+                headers={"Content-Type": "image/jpeg"},
+                timeout=4,
             )
             if response.status_code >= 400:
-                print(f"[PiWS] HTTP frame upload {response.status_code}: {response.text[:120]}")
+                if time.monotonic() - _last_http_upload_error_log_at > 30:
+                    print(f"[PiWS] HTTP frame upload {response.status_code}: {response.text[:120]}")
+                    _last_http_upload_error_log_at = time.monotonic()
             elif _http_frame_upload_boot <= 3:
                 print(f"[PiWS] HTTP frame upload OK ({len(jpeg)} bytes)")
         except Exception as err:
-            print(f"[PiWS] HTTP frame upload failed: {err}")
+            if time.monotonic() - _last_http_upload_error_log_at > 30:
+                err_text = str(err)
+                if "name resolution" in err_text.lower() or "failed to resolve" in err_text.lower():
+                    print(
+                        "[PiWS] HTTP frame upload DNS fail (WS preview still works) — "
+                        "check Pi internet/DNS or set nameserver 8.8.8.8"
+                    )
+                else:
+                    print(f"[PiWS] HTTP frame upload failed: {err_text[:160]}")
+                _last_http_upload_error_log_at = time.monotonic()
 
     threading.Thread(target=_worker, daemon=True).start()
 
 
 def ws_frame_sender_worker():
     """Send only the newest JPEG over WS (drops stale sends)."""
-    global _ws_frame_slot
+    global _ws_frame_slot, _last_ws_frame_sent_at
     while not stop_event.is_set():
         if not _ws_frame_send_event.wait(timeout=0.25):
             continue
@@ -1056,6 +1175,7 @@ def ws_frame_sender_worker():
         try:
             realtime_ws.send(jpeg, opcode=websocket.ABNF.OPCODE_BINARY)
             _touch_ws_activity()
+            _last_ws_frame_sent_at = time.monotonic()
         except Exception as err:
             if _is_ws_closed_error(err):
                 print(f"[PiWS] WS closed during frame send: {err}")
@@ -1070,7 +1190,7 @@ def preview_encode_send_worker():
     """Encode + send latest frame only — paced to WS_MAX_FPS for steady 2K."""
     global _last_encoded_version
     while not stop_event.is_set():
-        if not _preview_encode_event.wait(timeout=0.5):
+        if not _preview_encode_event.wait(timeout=0.12):
             continue
         _preview_encode_event.clear()
 
@@ -1104,8 +1224,8 @@ def preview_encode_send_worker():
                     _signal_preview_encode()
                     continue
 
-            upload_stream_frame_http(jpeg)
             send_ws_frame(jpeg)
+            upload_stream_frame_http(jpeg)
         finally:
             _preview_encode_lock.release()
 
@@ -1570,7 +1690,7 @@ def stream_producer_worker():
     def try_open_index(index: int, backend):
         cap = cv2.VideoCapture(index, backend)
         try:
-            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 1500)
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)
         except Exception:
             pass
         if not cap.isOpened():
@@ -1586,15 +1706,10 @@ def stream_producer_worker():
 
         for width, height in capture_resolution_candidates():
             configure_capture(cap, width, height)
-            autofocus_settle(cap, index, for_capture=False)
-            sized = read_test_frame(cap, attempts=4)
+            sized = read_test_frame(cap, attempts=3)
             if sized is not None:
                 autofocus_settle(cap, index, for_capture=False)
-                warmup_camera_frames(
-                    cap,
-                    max(8, int(CAMERA_WARMUP_SECS * 10)),
-                    min_secs=CAMERA_WARMUP_SECS,
-                )
+                warmup_camera_frames(cap, max(3, int(CAMERA_WARMUP_SECS * 2)), min_secs=CAMERA_WARMUP_SECS)
                 cam_w, cam_h = sized.shape[1], sized.shape[0]
                 _log_stream_resolution(cam_w, cam_h, opened=True)
                 return cap, index, cam_w, cam_h
@@ -1604,19 +1719,30 @@ def stream_producer_worker():
         return cap, index, w, h
 
     def discover_indices():
+        capture_nodes = _discover_usb_capture_indices()
         if CAMERA_INDEX_RAW and CAMERA_INDEX_RAW != "auto":
             try:
-                return [int(CAMERA_INDEX_RAW)]
+                preferred = int(CAMERA_INDEX_RAW)
+                if capture_nodes:
+                    if preferred in capture_nodes:
+                        return [preferred] + [i for i in capture_nodes if i != preferred]
+                    print(
+                        f"[PiWS] /dev/video{preferred} is not a capture node — "
+                        f"trying {capture_nodes}"
+                    )
+                    return capture_nodes
+                return [preferred]
             except ValueError:
                 pass
+        if capture_nodes:
+            return capture_nodes
         return list(range(0, CAMERA_SCAN_MAX + 1))
 
     def opencv_backends():
-        backends = []
+        # V4L2 only — CAP_ANY probes obsensor/CSI backends and breaks USB webcams.
         if hasattr(cv2, "CAP_V4L2"):
-            backends.append(cv2.CAP_V4L2)
-        backends.append(cv2.CAP_ANY)
-        return backends
+            return [cv2.CAP_V4L2]
+        return [cv2.CAP_ANY]
 
     def run_picamera2_loop():
         global active_camera_index, active_capture_width, active_capture_height
@@ -1709,7 +1835,7 @@ def stream_producer_worker():
         opened_index = None
         while not stop_event.is_set() and cap is None:
             for backend in opencv_backends():
-                backend_name = "V4L2" if backend == getattr(cv2, "CAP_V4L2", None) else "ANY"
+                backend_name = "V4L2"
                 for idx in discover_indices():
                     opened = try_open_index(idx, backend)
                     if opened is not None:
@@ -1732,7 +1858,7 @@ def stream_producer_worker():
                     return
                 print(
                     "[PiWS] No readable camera device yet, retrying in 2s... "
-                    "(USB: ls /dev/video* | Pi CSI: sudo apt install python3-picamera2)"
+                    "(USB: ls /dev/video* ; v4l2-ctl --list-devices ; replug webcam)"
                 )
                 time.sleep(2)
 
@@ -1782,14 +1908,7 @@ def stream_producer_worker():
                                 reopened = try_open_index(int(preferred), backend)
                             if reopened is not None:
                                 break
-                        if reopened is None:
-                            for backend in opencv_backends():
-                                for idx in discover_indices():
-                                    reopened = try_open_index(idx, backend)
-                                    if reopened is not None:
-                                        break
-                                if reopened is not None:
-                                    break
+                        # Never hop to /dev/video1+ on reopen — metadata nodes break USB preview.
                         if reopened is not None:
                             cap, opened_index, active_capture_width, active_capture_height = reopened
                             active_camera_index = opened_index
@@ -1800,6 +1919,10 @@ def stream_producer_worker():
                                 f"at {active_capture_width}x{active_capture_height}"
                             )
                             continue
+                        print(
+                            f"[PiWS] Camera reopen failed on /dev/video{preferred} — "
+                            "retrying same index after cooldown"
+                        )
                     reopen_camera = True
                     continue
 

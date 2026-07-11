@@ -31,7 +31,8 @@ if [[ -d "$ROOT_DIR/.venv/lib" ]]; then
   find "$ROOT_DIR/.venv/lib" -maxdepth 3 -type d \( -name 'numpy*' -o -name 'opencv*' -o -name 'cv2*' \) -exec rm -rf {} + 2>/dev/null || true
 fi
 
-"$VENV_PY" -m pip install --upgrade pip
+# Do not upgrade pip on Pi — breaks Python 3.13 venvs.
+pi_bootstrap_venv_pip "$VENV_PY" "PiWS"
 "$VENV_PY" -m pip install --upgrade websocket-client requests
 
 "$VENV_PY" -c "import cv2, websocket; print('[PiWS] OK opencv', cv2.__version__)"

@@ -128,7 +128,7 @@ const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {})
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = fitMode === 'cover' ? 'high' : 'medium';
+    ctx.imageSmoothingQuality = fitMode === 'cover' ? 'high' : 'low';
     const scale = fitMode === 'cover'
       ? Math.max(cw / bitmap.width, ch / bitmap.height)
       : Math.min(cw / bitmap.width, ch / bitmap.height);
@@ -140,12 +140,9 @@ const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {})
   };
 
   if (typeof createImageBitmap === 'function') {
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-    const resizeWidth = Math.max(1, Math.floor(canvas.width * dpr));
     createImageBitmap(blob, {
-      resizeWidth,
       premultiplyAlpha: 'none',
-      resizeQuality: 'high',
+      resizeQuality: 'low',
     })
       .then(drawBitmap)
       .catch(() => {
@@ -470,10 +467,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         previewPaintOptions,
       );
     };
-    if (typeof queueMicrotask === 'function') {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(paintLatest);
+    } else if (typeof queueMicrotask === 'function') {
       queueMicrotask(paintLatest);
     } else {
-      requestAnimationFrame(paintLatest);
+      paintLatest();
     }
   }, [previewPaintOptions]);
 
