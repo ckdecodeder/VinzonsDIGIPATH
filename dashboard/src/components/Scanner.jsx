@@ -218,6 +218,13 @@ const resolveAutoSubject = (doc) => {
   return isPlaceholderSubject(fromText) ? '' : fromText;
 };
 
+const resolveSortLayer = (priorityLevel) => {
+  const level = String(priorityLevel || 'normal').toLowerCase();
+  if (level === 'urgent' || level === 'critical') return 3;
+  if (level === 'high') return 2;
+  return 1;
+};
+
 const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device: deviceProp }) => {
   const { device, cameOnline } = useLiveDevice(deviceProp);
   const camera = useRef(null);
@@ -387,6 +394,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const streamIs2k = streamDims.width > 0
     ? is2kResolution(streamDims)
     : (device?.payload?.streamIs2K === true || is2kResolution(deviceStreamResolution || {}));
+  const adaptiveStreamFps = Number(device?.payload?.adaptiveStreamFps || device?.payload?.previewFps || 0);
   const isCapturedPdf = isPdfMedia(capturedImage, capturedFileType);
   const deviceId = device?.id || 'DEV-001';
   const streamChannel = `scanner:${deviceId}:stream`;
@@ -720,6 +728,22 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   }, [isPhysicalSource]);
 
   useEffect(() => {
+    if (!isPhysicalSource || !previewReady || !deviceId || !realtime?.client?.connected) {
+      return undefined;
+    }
+    const reportConsumerFps = () => {
+      realtime.client.sendMessage({
+        type: 'stream:consumer',
+        deviceId,
+        paintFps: streamStats.paint || 0,
+      });
+    };
+    reportConsumerFps();
+    const interval = setInterval(reportConsumerFps, 2000);
+    return () => clearInterval(interval);
+  }, [isPhysicalSource, previewReady, deviceId, realtime?.client, realtime?.connected, streamStats.paint]);
+
+  useEffect(() => {
     if (!isPhysicalSource || !streamOnline || !realtime?.client || !realtime?.connected) {
       return undefined;
     }
@@ -983,6 +1007,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         status: canSetInitialStatus ? formData.status : 'Received',
         priorityLevel: formData.priorityLevel,
         documentTypeId: formData.documentTypeId,
+        sortLayer: resolveSortLayer(formData.priorityLevel),
         scanOrientation: 'landscape',
         paperGuideId: selectedPaperGuide.id,
         scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
@@ -1336,6 +1361,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   data-fps-tier={streamStats.paint >= 45 ? 'good' : streamStats.paint >= 25 ? 'ok' : 'low'}
                 >
                   <span>{streamStats.paint} fps</span>
+                  {device?.payload?.adaptiveStream && adaptiveStreamFps > 0 && (
+                    <>
+                      <span className="scanner-stream-stats-sep">·</span>
+                      <span>cap {Math.round(adaptiveStreamFps)}</span>
+                    </>
+                  )}
                   {streamResolutionLabel && (
                     <>
                       <span className="scanner-stream-stats-sep">·</span>

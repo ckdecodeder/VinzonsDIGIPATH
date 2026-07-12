@@ -20,10 +20,10 @@ echo "[PiWS] Bootstrap: $ROOT_DIR"
 
 pi_apt_install_missing PiWS \
   python3 python3-venv python3-pip \
-  python3-numpy python3-opencv \
+  python3-numpy python3-opencv python3-gpiozero \
   libgl1 libglib2.0-0 rsync v4l-utils \
   || pi_apt_install_missing PiWS --skip-update \
-  python3 python3-venv python3-pip python3-numpy python3-opencv libgl1 rsync v4l-utils
+  python3 python3-venv python3-pip python3-numpy python3-opencv python3-gpiozero libgl1 rsync v4l-utils
 
 pi_ensure_venv "$ROOT_DIR" "PiWS"
 

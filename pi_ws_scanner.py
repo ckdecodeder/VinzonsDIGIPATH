@@ -26,6 +26,14 @@ import numpy as np
 import requests
 import websocket
 
+from digipath_mechanism import (
+    get_mechanism,
+    mechanism_prepare_for_capture,
+    mechanism_start_door_monitor,
+    mechanism_start_sort_async,
+    resolve_sort_layer,
+)
+
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -61,6 +69,18 @@ PREVIEW_JPEG_QUALITY = int(os.environ.get("DIGIPATH_PREVIEW_JPEG_QUALITY", "76")
 STREAM_JPEG_MAX_BYTES = max(120_000, int(os.environ.get("DIGIPATH_STREAM_JPEG_MAX_BYTES", "650000")))
 STREAM_JPEG_MIN_QUALITY = max(55, int(os.environ.get("DIGIPATH_STREAM_JPEG_MIN_QUALITY", "68")))
 WS_MAX_FPS = min(120.0, max(1.0, float(os.environ.get("DIGIPATH_STREAM_WS_MAX_FPS", "20"))))
+STREAM_ADAPTIVE = os.environ.get("DIGIPATH_STREAM_ADAPTIVE", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+STREAM_ADAPTIVE_MIN_FPS = max(4.0, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MIN_FPS", "8")))
+STREAM_ADAPTIVE_MAX_FPS = min(
+    120.0,
+    max(STREAM_ADAPTIVE_MIN_FPS, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MAX_FPS", str(WS_MAX_FPS)))),
+)
+STREAM_ADAPTIVE_TICK_SECS = max(1.5, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_TICK_SECS", "3")))
 STREAM_SEND_INTERVAL = (1.0 / WS_MAX_FPS) if WS_MAX_FPS > 0 else 0.05
 STREAM_BUFFER_FRAMES = max(1, int(os.environ.get("DIGIPATH_STREAM_BUFFER_FRAMES", "1")))
 STREAM_DRIVER_DRAIN = max(1, int(os.environ.get("DIGIPATH_STREAM_DRIVER_DRAIN", "3")))
@@ -178,6 +198,16 @@ _http_upload_session = None
 _last_ws_frame_sent_at = 0.0
 _last_ws_jpeg_sent: bytes | None = None
 _last_ws_jpeg_lock = threading.Lock()
+_adaptive_lock = threading.Lock()
+_adaptive_fps = WS_MAX_FPS
+_adaptive_jpeg_quality = PREVIEW_JPEG_QUALITY
+_adaptive_jpeg_max_bytes = STREAM_JPEG_MAX_BYTES
+_backend_pressure = 0.0
+_consumer_paint_fps = 0.0
+_ws_send_samples = 0
+_ws_send_slow = 0
+_last_adaptive_tick_at = 0.0
+_last_adaptive_log_at = 0.0
 _last_http_upload_error_log_at = 0.0
 
 
@@ -419,10 +449,118 @@ def device_payload(event_type: str) -> dict:
             "streamIs2K": _is_target_stream_resolution(active_stream_width, active_stream_height)
             and _is_native_camera_resolution(active_capture_width, active_capture_height),
             "streamIsHd": active_stream_width >= 1920 and active_stream_height >= 1080,
-            "previewFps": WS_MAX_FPS,
+            "previewFps": _effective_stream_fps(),
+            "adaptiveStream": STREAM_ADAPTIVE,
+            "adaptiveStreamFps": _effective_stream_fps(),
             "autofocus": camera_focus_status,
+            "mechanism": get_mechanism().status_dict(),
         },
     }
+
+
+def _effective_stream_fps() -> float:
+    if not STREAM_ADAPTIVE:
+        return WS_MAX_FPS
+    with _adaptive_lock:
+        return _adaptive_fps
+
+
+def _effective_preview_jpeg_quality() -> int:
+    if not STREAM_ADAPTIVE:
+        return PREVIEW_JPEG_QUALITY
+    with _adaptive_lock:
+        return int(_adaptive_jpeg_quality)
+
+
+def _effective_jpeg_max_bytes() -> int:
+    if not STREAM_ADAPTIVE:
+        return STREAM_JPEG_MAX_BYTES
+    with _adaptive_lock:
+        return int(_adaptive_jpeg_max_bytes)
+
+
+def _record_ws_send_sample(elapsed_ms: float):
+    global _ws_send_samples, _ws_send_slow
+    with _adaptive_lock:
+        _ws_send_samples = min(_ws_send_samples + 1, 40)
+        if elapsed_ms > 80.0:
+            _ws_send_slow = min(_ws_send_slow + 1, 40)
+
+
+def _apply_stream_hint(data: dict):
+    global _backend_pressure, _consumer_paint_fps
+    with _adaptive_lock:
+        _backend_pressure = max(0.0, min(1.0, float(data.get("pressure") or 0)))
+        consumer = float(data.get("consumerFps") or 0)
+        if consumer > 0:
+            _consumer_paint_fps = consumer
+
+
+def _adaptive_stream_tick():
+    """Raise/lower fps + JPEG size based on WS health and backend backpressure."""
+    global _adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes
+    global _ws_send_samples, _ws_send_slow, _last_adaptive_tick_at, _last_adaptive_log_at
+
+    if not STREAM_ADAPTIVE:
+        return
+
+    now = time.monotonic()
+    if now - _last_adaptive_tick_at < STREAM_ADAPTIVE_TICK_SECS:
+        return
+    _last_adaptive_tick_at = now
+
+    with _adaptive_lock:
+        score = 0.0
+        if _ws_send_samples > 0:
+            slow_ratio = _ws_send_slow / _ws_send_samples
+            score -= slow_ratio * 0.45
+        score -= _backend_pressure * 0.4
+
+        target_fps = _adaptive_fps
+        if _consumer_paint_fps > 0 and target_fps > 0:
+            utilization = _consumer_paint_fps / target_fps
+            if utilization >= 0.9:
+                score += 0.22
+            elif utilization < 0.55:
+                score -= 0.28
+
+        if _last_ws_frame_sent_at > 0 and (now - _last_ws_frame_sent_at) > 2.5:
+            score -= 0.35
+
+        prev_fps = _adaptive_fps
+        prev_q = _adaptive_jpeg_quality
+        prev_bytes = _adaptive_jpeg_max_bytes
+
+        if score > 0.12:
+            _adaptive_fps = min(STREAM_ADAPTIVE_MAX_FPS, _adaptive_fps + 1.0)
+            _adaptive_jpeg_quality = min(PREVIEW_JPEG_QUALITY, _adaptive_jpeg_quality + 2)
+            _adaptive_jpeg_max_bytes = min(
+                STREAM_JPEG_MAX_BYTES,
+                int(_adaptive_jpeg_max_bytes * 1.06) + 8000,
+            )
+        elif score < -0.12:
+            _adaptive_fps = max(STREAM_ADAPTIVE_MIN_FPS, _adaptive_fps - 1.0)
+            _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 3)
+            _adaptive_jpeg_max_bytes = max(
+                max(120_000, int(STREAM_JPEG_MAX_BYTES * 0.45)),
+                int(_adaptive_jpeg_max_bytes * 0.9),
+            )
+
+        _ws_send_samples = 0
+        _ws_send_slow = 0
+
+        changed = (
+            int(prev_fps) != int(_adaptive_fps)
+            or prev_q != _adaptive_jpeg_quality
+            or abs(prev_bytes - _adaptive_jpeg_max_bytes) > 12_000
+        )
+        if changed and (now - _last_adaptive_log_at) > 8.0:
+            _last_adaptive_log_at = now
+            print(
+                f"[PiWS] Adaptive stream -> {_adaptive_fps:.0f}fps "
+                f"q{_adaptive_jpeg_quality} max={_adaptive_jpeg_max_bytes // 1000}KB "
+                f"(pressure={_backend_pressure:.2f} consumer={_consumer_paint_fps:.0f}fps)"
+            )
 
 
 def encode_jpeg(frame, quality: int, *, optimize: bool = True) -> bytes | None:
@@ -443,22 +581,23 @@ def encode_jpeg(frame, quality: int, *, optimize: bool = True) -> bytes | None:
 
 
 def encode_stream_jpeg(frame) -> bytes | None:
-    """Fast preview JPEG — single encode first, brief quality step-down if oversized."""
+    """Fast preview JPEG — adaptive quality/size cap for network conditions."""
     if frame is None:
         return None
-    quality = PREVIEW_JPEG_QUALITY
-    jpeg = encode_jpeg(frame, quality, optimize=False)
-    if jpeg and len(jpeg) <= STREAM_JPEG_MAX_BYTES:
+    max_bytes = _effective_jpeg_max_bytes()
+    base_quality = _effective_preview_jpeg_quality()
+    jpeg = encode_jpeg(frame, base_quality, optimize=False)
+    if jpeg and len(jpeg) <= max_bytes:
         return jpeg
-    for quality in range(PREVIEW_JPEG_QUALITY - 6, STREAM_JPEG_MIN_QUALITY - 1, -6):
+    for quality in range(base_quality - 6, STREAM_JPEG_MIN_QUALITY - 1, -6):
         jpeg = encode_jpeg(frame, quality, optimize=False)
-        if jpeg and len(jpeg) <= STREAM_JPEG_MAX_BYTES:
+        if jpeg and len(jpeg) <= max_bytes:
             return jpeg
     return jpeg
 
 
 def _frame_pace_sleep(remaining_secs: float):
-    time.sleep(min(max(remaining_secs, 0.0), 0.008 if WS_MAX_FPS >= 45 else 0.02))
+    time.sleep(min(max(remaining_secs, 0.0), 0.008 if _effective_stream_fps() >= 45 else 0.02))
 
 
 def _prepare_preview_frame(frame):
@@ -1131,14 +1270,28 @@ def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
 
 
 def _run_scan_command(cmd_id: str, payload: dict | None = None):
-    """Background scan — keeps WebSocket + live preview from stalling."""
+    """Background scan — lift/sort mechanism, camera capture, upload, then sort."""
     profile = _scan_profile_from_payload(payload)
+    sort_layer = resolve_sort_layer(payload)
+    mech = get_mechanism()
     try:
         guide_label = f" ({profile['paperGuideId']})" if profile.get("paperGuideId") else ""
         print(
             f"[PiWS] Scan {cmd_id} capture "
-            f"{profile['width']}x{profile['height']} {profile['orientation']}{guide_label}"
+            f"{profile['width']}x{profile['height']} {profile['orientation']}{guide_label} "
+            f"sort_layer={sort_layer}"
         )
+        if mech.enabled:
+            try:
+                mechanism_prepare_for_capture()
+            except Exception as mech_err:
+                update_command_status(
+                    cmd_id,
+                    "Failed",
+                    f"Lift/hall prep failed: {mech_err}",
+                )
+                return
+
         snap = capture_scan_bytes(profile)
         if not snap:
             update_command_status(
@@ -1151,6 +1304,9 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
         upload_scan(snap, cmd_id)
         update_command_status(cmd_id, "Executed")
         print(f"[PiWS] Scan {cmd_id} uploaded — live preview resumed")
+        if mech.enabled:
+            print(f"[PiWS] Scan {cmd_id} — post-upload sort to layer {sort_layer}")
+            mechanism_start_sort_async(sort_layer)
     except Exception as err:
         print(f"[PiWS] Scan {cmd_id} failed: {err}")
         update_command_status(cmd_id, "Failed", str(err))
@@ -1206,10 +1362,11 @@ def upload_stream_frame_http(jpeg: bytes):
     if _scan_in_progress.is_set():
         return
     if STREAM_HTTP_WS_PRIORITY and ws_authenticated:
-        if (time.monotonic() - _last_ws_frame_sent_at) < 3.0:
+        # WS is the live path — skip HTTPS preview cache while frames are flowing.
+        if _last_ws_frame_sent_at > 0 and (time.monotonic() - _last_ws_frame_sent_at) < 90.0:
             return
     now = time.monotonic()
-    min_gap = 1.0 / max(1.0, WS_MAX_FPS)
+    min_gap = 1.0 / max(1.0, _effective_stream_fps())
     if now - _last_http_frame_upload_at < min_gap * 0.7:
         return
     _last_http_frame_upload_at = now
@@ -1262,7 +1419,9 @@ def ws_frame_sender_worker():
         if not jpeg or not ws_connected or not ws_authenticated or not realtime_ws:
             continue
         try:
+            started = time.perf_counter()
             realtime_ws.send(jpeg, opcode=websocket.ABNF.OPCODE_BINARY)
+            _record_ws_send_sample((time.perf_counter() - started) * 1000.0)
             _touch_ws_activity()
             _last_ws_frame_sent_at = time.monotonic()
             with _last_ws_jpeg_lock:
@@ -1320,6 +1479,7 @@ def preview_encode_send_worker():
 
             send_ws_frame(jpeg)
             upload_stream_frame_http(jpeg)
+            _adaptive_stream_tick()
         finally:
             _preview_encode_lock.release()
 
@@ -1892,15 +2052,17 @@ def stream_producer_worker():
                 return False
 
             print(
-                f"[PiWS] Camera worker — JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {WS_MAX_FPS}fps"
+                f"[PiWS] Camera worker — JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {_effective_stream_fps():.0f}fps"
+                f"{' (adaptive)' if STREAM_ADAPTIVE else ''}"
                 f"{' (fast capture)' if STREAM_FAST else ''}"
             )
-            frame_interval = (1.0 / WS_MAX_FPS) if WS_MAX_FPS > 0 else 0.0
+            frame_interval = (1.0 / _effective_stream_fps()) if _effective_stream_fps() > 0 else 0.0
             last_capture_at = 0.0
             while not stop_event.is_set():
                 if _scan_in_progress.is_set():
                     time.sleep(0.02)
                     continue
+                frame_interval = (1.0 / _effective_stream_fps()) if _effective_stream_fps() > 0 else 0.0
                 now = time.perf_counter()
                 if frame_interval > 0 and last_capture_at > 0:
                     wait = frame_interval - (now - last_capture_at)
@@ -1964,11 +2126,12 @@ def stream_producer_worker():
             continue
 
         print(
-            f"[PiWS] Camera worker — JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {WS_MAX_FPS}fps"
+            f"[PiWS] Camera worker — JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {_effective_stream_fps():.0f}fps"
+            f"{' (adaptive)' if STREAM_ADAPTIVE else ''}"
             f"{' (fast capture)' if STREAM_FAST else ''}"
         )
 
-        frame_interval = (1.0 / WS_MAX_FPS) if WS_MAX_FPS > 0 else 0.0
+        frame_interval = (1.0 / _effective_stream_fps()) if _effective_stream_fps() > 0 else 0.0
         last_capture_at = 0.0
         miss_reads = 0
         reopen_camera = False
@@ -1977,6 +2140,7 @@ def stream_producer_worker():
             if _scan_in_progress.is_set():
                 time.sleep(0.02)
                 continue
+            frame_interval = (1.0 / _effective_stream_fps()) if _effective_stream_fps() > 0 else 0.0
             now = time.perf_counter()
             if frame_interval > 0 and last_capture_at > 0:
                 wait = frame_interval - (now - last_capture_at)
@@ -2088,6 +2252,9 @@ def handle_realtime_control_message(message: str):
         return
     if msg_type == "command:pending":
         handle_command_message(message)
+        return
+    if msg_type == "stream:hint":
+        _apply_stream_hint(data)
         return
 
 
@@ -2211,7 +2378,8 @@ def run():
         f"[PiWS] Tuning: capture {fast_label}, "
         f"scan {SCAN_WIDTH}x{SCAN_HEIGHT} landscape "
         f"q={SCAN_JPEG_QUALITY} enhance={int(SCAN_ENHANCE)} burst={SCAN_BURST_FRAMES}, "
-        f"JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {WS_MAX_FPS}fps, "
+        f"JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {WS_MAX_FPS:.0f}fps"
+        f"{' adaptive' if STREAM_ADAPTIVE else ''}, "
         f"preview_rotate={PREVIEW_ROTATE}, "
         f"capture_match_preview={int(CAPTURE_MATCH_PREVIEW)}, "
         f"heartbeat={HEARTBEAT_SECS}s"
@@ -2223,11 +2391,19 @@ def run():
     threading.Thread(target=ws_sender_worker, daemon=True).start()
     threading.Thread(target=ws_health_watchdog, daemon=True).start()
     threading.Thread(target=heartbeat_worker, daemon=True).start()
+    try:
+        mechanism_start_door_monitor()
+    except Exception as err:
+        print(f"[PiWS] Door monitor not started: {err}")
     realtime_worker()
 
 
 def shutdown(*_):
     stop_event.set()
+    try:
+        get_mechanism().close()
+    except Exception:
+        pass
     if ws_authenticated:
         send_ws_presence("device_disconnected")
     _force_ws_reconnect("shutdown")

@@ -204,6 +204,13 @@ const syncPiWsEnv = (filePath) => {
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAPTURE_MATCH_PREVIEW', cfg.DIGIPATH_CAPTURE_MATCH_PREVIEW || '1');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAMERA_INDEX', cfg.DIGIPATH_CAMERA_INDEX || '0');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_WS_MAX_FPS', cfg.DIGIPATH_STREAM_WS_MAX_FPS || '15');
+  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_ADAPTIVE', cfg.DIGIPATH_STREAM_ADAPTIVE || '1');
+  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_ADAPTIVE_MIN_FPS', cfg.DIGIPATH_STREAM_ADAPTIVE_MIN_FPS || '8');
+  piEnv = upsertEnvLine(
+    piEnv,
+    'DIGIPATH_STREAM_ADAPTIVE_MAX_FPS',
+    cfg.DIGIPATH_STREAM_ADAPTIVE_MAX_FPS || cfg.DIGIPATH_STREAM_WS_MAX_FPS || '25',
+  );
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_BUFFER_FRAMES', cfg.DIGIPATH_STREAM_BUFFER_FRAMES || '1');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_DRIVER_DRAIN', cfg.DIGIPATH_STREAM_DRIVER_DRAIN || '1');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAMERA_READ_TIMEOUT_MS', cfg.DIGIPATH_CAMERA_READ_TIMEOUT_MS || '10000');

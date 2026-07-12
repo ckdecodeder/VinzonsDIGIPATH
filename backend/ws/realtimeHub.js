@@ -67,6 +67,9 @@ class RealtimeHub {
     this.streamThrottle = new Map();
     this.latestStreamFrames = new Map();
     this.streamRelayPending = new Map();
+    this.streamRelayStats = new Map();
+    this.streamConsumerStats = new Map();
+    this.streamHintAt = new Map();
   }
 
   setPresenceHandler(handler) {
@@ -265,6 +268,17 @@ class RealtimeHub {
         sendJson(ws, { type: 'unsubscribed', channel: msg.channel });
         return;
       }
+
+      if (msg.type === 'stream:consumer' && msg.deviceId) {
+        const paintFps = Number(msg.paintFps);
+        if (Number.isFinite(paintFps) && paintFps >= 0) {
+          this.streamConsumerStats.set(msg.deviceId, {
+            paintFps,
+            at: Date.now(),
+          });
+        }
+        return;
+      }
     });
 
     ws.on('close', () => {
@@ -432,6 +446,49 @@ class RealtimeHub {
     }
   }
 
+  maybeSendStreamHint(deviceId, { sent = 0, skipped = 0, subscribers = 0, maxBuffered = 0 } = {}) {
+    const now = Date.now();
+    const lastHint = this.streamHintAt.get(deviceId) || 0;
+    const stats = this.streamRelayStats.get(deviceId) || { sent: 0, skipped: 0 };
+    stats.sent += sent;
+    stats.skipped += skipped;
+    this.streamRelayStats.set(deviceId, stats);
+
+    const total = stats.sent + stats.skipped;
+    const shouldHint = skipped > 0 || subscribers === 0 || now - lastHint >= 2000;
+    if (!shouldHint || total < 1) return;
+
+    const skipRate = total > 0 ? stats.skipped / total : 0;
+    stats.sent = 0;
+    stats.skipped = 0;
+
+    const frameBudget = getStreamMaxBufferedBytes();
+    let pressure = skipRate;
+    if (maxBuffered > frameBudget) {
+      pressure = 1;
+    } else if (maxBuffered > frameBudget * 0.5) {
+      pressure = Math.max(pressure, 0.55);
+    }
+
+    const consumer = this.streamConsumerStats.get(deviceId);
+    const consumerFps = consumer && now - consumer.at < 5000 ? consumer.paintFps : 0;
+
+    const clients = this.deviceClients.get(deviceId);
+    if (!clients?.size) return;
+
+    this.streamHintAt.set(deviceId, now);
+    const payload = {
+      type: 'stream:hint',
+      pressure: Math.max(0, Math.min(1, pressure)),
+      skipRate: Math.max(0, Math.min(1, skipRate)),
+      consumerFps,
+      subscribers,
+    };
+    for (const client of clients) {
+      sendJson(client, payload);
+    }
+  }
+
   relayStreamFrame(deviceId, frameBuffer) {
     const buf = Buffer.isBuffer(frameBuffer) ? frameBuffer : Buffer.from(frameBuffer);
     const now = Date.now();
@@ -468,10 +525,15 @@ class RealtimeHub {
     const channel = `scanner:${deviceId}:stream`;
     const frameBudget = getStreamMaxBufferedBytes();
     let anySkipped = false;
+    let sent = 0;
+    let subscribers = 0;
+    let maxBuffered = 0;
 
     for (const client of this.userClients) {
       if (!client.auth || !client.subscriptions.has(channel)) continue;
       if (client.readyState !== client.OPEN) continue;
+      subscribers += 1;
+      maxBuffered = Math.max(maxBuffered, client.bufferedAmount || 0);
       // One frame in flight max — skip only when a full JPEG is already queued.
       if (client.bufferedAmount > frameBudget) {
         anySkipped = true;
@@ -479,10 +541,13 @@ class RealtimeHub {
       }
       try {
         client.send(buf, { binary: true, compress: false });
+        sent += 1;
       } catch {
         anySkipped = true;
       }
     }
+
+    this.maybeSendStreamHint(deviceId, { sent, skipped: anySkipped ? 1 : 0, subscribers, maxBuffered });
 
     if (anySkipped && !state.flushScheduled) {
       state.flushScheduled = true;

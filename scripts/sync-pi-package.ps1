@@ -57,6 +57,11 @@ if (-not (Test-Path $Destination)) {
 
 $rootFiles = @(
   "pi_ws_scanner.py",
+  "digipath_tb6600.py",
+  "digipath_hall_ys27.py",
+  "digipath_mechanism.py",
+  "digipath_motor_test.py",
+  "digipath_mechanism.env.example",
   "pi_ws_scanner.env.example",
   "PI-WS-FIX.txt",
   "README-USB.txt",
@@ -72,7 +77,8 @@ $scriptFiles = @(
   "scripts/pi-usb-auto-update.sh",
   "scripts/pi-install-usb-hook.sh",
   "scripts/pi-restart-ws-scanner.sh",
-  "scripts/pi-usb-ensure-scanner.sh"
+  "scripts/pi-usb-ensure-scanner.sh",
+  "scripts/test-motors.sh"
 )
 
 $legacyPaths = @(
