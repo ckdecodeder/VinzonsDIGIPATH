@@ -401,6 +401,68 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.sidebar-user-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.user-profile-trigger {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.user-profile-trigger:hover {
+  background: rgba(8, 145, 178, 0.08);
+}
+
+.user-profile-trigger:focus-visible {
+  outline: 2px solid rgba(8, 145, 178, 0.35);
+  outline-offset: 2px;
+}
+
+.user-logout-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    color 0.2s,
+    border-color 0.2s;
+}
+
+.user-logout-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: var(--danger);
+}
+
+.user-logout-btn:focus-visible {
+  outline: 2px solid rgba(239, 68, 68, 0.35);
+  outline-offset: 2px;
+}
+
 .user-info {
   width: 100%;
   display: flex;
@@ -4156,6 +4218,159 @@ body.modal-open .notification-dock {
   .office-stat {
     width: 100%;
     justify-content: flex-start;
+  }
+}
+
+/* ==================== PROFILE SETTINGS ==================== */
+.profile-settings-page {
+  width: 100%;
+  min-height: calc(100vh - 11rem);
+}
+
+.profile-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: stretch;
+  width: 100%;
+  min-height: calc(100vh - 11rem);
+}
+
+.profile-settings-side,
+.profile-settings-card {
+  min-width: 0;
+  height: 100%;
+  padding: 1.5rem;
+}
+
+.profile-settings-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+}
+
+.profile-settings-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-settings-avatar {
+  width: 4.5rem;
+  height: 4.5rem;
+  font-size: 1.15rem;
+  margin-bottom: 0.35rem;
+}
+
+.profile-settings-name {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.35;
+}
+
+.profile-settings-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0.1rem 0 0;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.profile-settings-form {
+  display: grid;
+  gap: 1.5rem;
+  flex: 1;
+}
+
+.profile-settings-form .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-settings-section .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-settings-section h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  color: var(--text-main);
+}
+
+.profile-settings-readonly {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+}
+
+.profile-settings-readonly-item {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.profile-settings-readonly-item span:last-child {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.profile-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+
+.profile-settings-error {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .profile-settings-layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .profile-settings-page {
+    min-height: auto;
+  }
+
+  .profile-settings-side {
+    flex-direction: row;
+    text-align: left;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .profile-settings-side .profile-settings-avatar {
+    margin-bottom: 0;
+  }
+
+  .profile-settings-side .profile-settings-meta {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .profile-settings-form .form-grid,
+  .profile-settings-section .form-grid,
+  .profile-settings-readonly {
+    grid-template-columns: 1fr;
   }
 }
 

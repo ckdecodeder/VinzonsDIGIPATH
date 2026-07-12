@@ -21,6 +21,7 @@ import DeviceControlPanel from './pages/DeviceControlPanel';
 import ActivityLogs from './pages/ActivityLogs';
 import Scanner from './components/Scanner';
 import ReportsPage from './pages/ReportsPage';
+import ProfileSettings from './pages/ProfileSettings';
 import {
   appDataService,
   archiveService,
@@ -41,9 +42,9 @@ import { realtimeClient } from './ws/realtimeClient';
 const PAGE_STORAGE_KEY = 'dp_currentPage';
 
 const ROLE_PAGES = {
-  admin: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents'],
-  mayor: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'reports', 'logs'],
-  receptionist: ['dashboard', 'scan-documents', 'documents', 'reports', 'logs'],
+  admin: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents', 'profile-settings'],
+  mayor: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'reports', 'logs', 'profile-settings'],
+  receptionist: ['dashboard', 'scan-documents', 'documents', 'reports', 'logs', 'profile-settings'],
 };
 
 const getRoleKey = (user) => {
@@ -369,6 +370,18 @@ function App() {
     setHasLoadedData(false);
     setDocumentFocusId('');
     setDocumentStatusFocus('All');
+  };
+
+  const handleOpenProfile = () => {
+    handleNavigate('profile-settings');
+  };
+
+  const handleUpdateProfile = async (updates) => {
+    const savedUser = await runMutation(() => userService.updateProfile(updates));
+    upsertUser(savedUser);
+    setCurrentUser(savedUser);
+    showActionToast('updated');
+    return savedUser;
   };
 
   const handleNavigate = (page) => {
@@ -880,6 +893,17 @@ function App() {
       );
     }
 
+    if (currentPage === 'profile-settings') {
+      return (
+        <ProfileSettings
+          currentUser={currentUser}
+          offices={offices}
+          onUpdateProfile={handleUpdateProfile}
+          onNotify={notifyUser}
+        />
+      );
+    }
+
     switch (currentRole) {
       case 'admin':
         switch (currentPage) {
@@ -1171,6 +1195,7 @@ function App() {
         currentUser={currentUser}
         onNavigate={handleNavigate}
         onLogout={handleLogout}
+        onOpenProfile={handleOpenProfile}
         pendingTransmissions={pendingTransmissions}
         dataError={dataError}
         saveError={saveError}

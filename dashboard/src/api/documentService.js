@@ -263,7 +263,16 @@ export const transmissionService = transmissions;
 export const archiveService = archives;
 export const logService = logs;
 export const officeService = offices;
-export const userService = users;
+export const userService = {
+  ...users,
+
+  updateProfile(updates) {
+    return apiRequest('/users/me/profile', {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  },
+};
 export const documentTypeService = documentTypes;
 export const deviceEventService = deviceEvents;
 

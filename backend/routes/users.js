@@ -37,6 +37,36 @@ router.get('/', approvalRoles, asyncHandler(async (req, res) => {
   res.json(users);
 }));
 
+router.put('/me/profile', asyncHandler(async (req, res) => {
+  const allowedFields = ['username', 'fname', 'lname', 'mname', 'password'];
+  const body = Object.fromEntries(
+    Object.entries(req.body || {}).filter(([key]) => allowedFields.includes(key)),
+  );
+  const payload = normalizeUserPayload(body, { isUpdate: true });
+
+  if (!payload.fname || !payload.lname || !payload.username) {
+    return res.status(400).json({ message: 'First name, last name, and username are required.' });
+  }
+
+  if (payload.password && payload.password.length < 6) {
+    return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+  }
+
+  const existingUser = await User.findOne({
+    username: payload.username,
+    id: { $ne: req.user.id },
+  }).lean();
+  if (existingUser) {
+    return res.status(409).json({ message: 'Username is already taken' });
+  }
+
+  const user = await User.findOneAndUpdate({ id: req.user.id }, payload, updateOptions);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  await createLogEntry(req, 'profile_updated', `Updated profile: ${user.username}`, user.id);
+  broadcastDataInvalidate(['users', 'logs']);
+  res.json(stripPassword(user));
+}));
+
 router.post('/', adminOnly, asyncHandler(async (req, res) => {
   const payload = normalizeUserPayload(req.body);
   requireFields(payload, ['username', 'password', 'fname', 'lname', 'role']);

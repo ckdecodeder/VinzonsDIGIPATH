@@ -34,6 +34,7 @@ const Layout = ({
   currentUser,
   onNavigate,
   onLogout,
+  onOpenProfile,
   pendingTransmissions,
   dataError,
   saveError,
@@ -196,20 +197,33 @@ const Layout = ({
 
         {/* Footer */}
         <div className="sidebar-footer">
-          <button
-            type="button"
-            className="user-info"
-            onClick={onLogout}
-            title="Log out"
-            aria-label={`Log out ${userName}`}
-          >
-            <div className="user-avatar" aria-hidden="true">{userInitials}</div>
-            <div className="user-details">
-              <div className="user-name">{userName}</div>
-              <div className="user-role">{userRole}</div>
-            </div>
-            <LogOut size={16} className="user-logout-icon" aria-hidden="true" />
-          </button>
+          <div className="sidebar-user-row">
+            <button
+              type="button"
+              className="user-profile-trigger"
+              onClick={() => {
+                onOpenProfile?.();
+                setIsSidebarOpen(false);
+              }}
+              title="Profile settings"
+              aria-label={`Open profile settings for ${userName}`}
+            >
+              <div className="user-avatar" aria-hidden="true">{userInitials}</div>
+              <div className="user-details">
+                <div className="user-name">{userName}</div>
+                <div className="user-role">{userRole}</div>
+              </div>
+            </button>
+            <button
+              type="button"
+              className="user-logout-btn"
+              onClick={onLogout}
+              title="Log out"
+              aria-label={`Log out ${userName}`}
+            >
+              <LogOut size={16} aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </aside>
 
