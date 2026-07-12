@@ -49,10 +49,24 @@ def _parse_lift_dir(name: str, default: str = "down") -> str:
     return "down"
 
 
+# Physical tray mapping:
+#   Layer 1 = Memorandum (DT-001)
+#   Layer 2 = Executive Order (DT-002)
+#   Layer 3 = Communication Letter (DT-003)
+DOCUMENT_TYPE_LAYER_MAP = {
+    "DT-001": 1,
+    "DT-002": 2,
+    "DT-003": 3,
+}
+
+
 def resolve_sort_layer(payload: dict | None) -> int:
     payload = payload or {}
     if payload.get("sortLayer") is not None:
         return _clamp_layer(payload.get("sortLayer"))
+    doc_type = str(payload.get("documentTypeId") or "").strip()
+    if doc_type in DOCUMENT_TYPE_LAYER_MAP:
+        return DOCUMENT_TYPE_LAYER_MAP[doc_type]
     priority = str(payload.get("priorityLevel") or "normal").strip().lower()
     if priority in ("urgent", "critical"):
         return 3

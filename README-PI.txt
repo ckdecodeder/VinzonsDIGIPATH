@@ -98,20 +98,24 @@ The lift motor has 3 deposit positions (layers) for sorted files.
 Capture + sort sequence:
   1. Rotate LEFT  — feed / align document
   2. Lift to SCAN height — camera capture
-  3. OCR + decide layer (priority or document type)
+  3. OCR + decide layer (document type)
   4. Lift to LAYER 1, 2, or 3 — deposit sorted file
   5. Return HOME (bottom)
 
-Default priority sorting:
-  Layer 1 (bottom) -> Urgent
-  Layer 2 (middle) -> High
-  Layer 3 (top)    -> Normal / Low
+Default document-type sorting:
+  Layer 1 (bottom) -> Memorandum
+  Layer 2 (middle) -> Executive Order
+  Layer 3 (top)    -> Communication Letter
 
 Tune layer heights in bridge.env:
   DIGIPATH_LIFT_SCAN_STEPS=800
   DIGIPATH_LAYER1_STEPS=250
   DIGIPATH_LAYER2_STEPS=500
   DIGIPATH_LAYER3_STEPS=750
+  DIGIPATH_SORT_RULE=document_type
+  DIGIPATH_SORT_DOCUMENT_TYPE_LAYERS={"DT-001":1,"DT-002":2,"DT-003":3}
+
+Legacy priority sorting (optional):
   DIGIPATH_SORT_RULE=priority
   DIGIPATH_SORT_LAYER_URGENT=1
   DIGIPATH_SORT_LAYER_HIGH=2

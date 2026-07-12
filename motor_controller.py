@@ -142,15 +142,9 @@ class MotorController:
         raw = os.environ.get("DIGIPATH_SORT_DOCUMENT_TYPE_LAYERS", "").strip()
         if not raw:
             return {
-                "DT-001": 1,
-                "DT-002": 1,
-                "DT-003": 2,
-                "DT-004": 2,
-                "DT-005": 3,
-                "DT-006": 3,
-                "DT-007": 2,
-                "DT-008": 2,
-                "DT-009": 3,
+                "DT-001": 1,  # Memorandum
+                "DT-002": 2,  # Executive Order
+                "DT-003": 3,  # Communication Letter
             }
         try:
             parsed = json.loads(raw)

@@ -36,6 +36,7 @@ import {
   priorityLevels,
   getPriorityInfo,
 } from "../data/mockData";
+import { getSortLayerHint, resolveSortLayer } from "../utils/sortLayer";
 
 const OTHER_OFFICE_VALUE = '__external_source__';
 const PHYSICAL_CAMERA_VALUE = 'physical-scanner';
@@ -216,13 +217,6 @@ const resolveAutoSubject = (doc) => {
   }
   const fromText = getSubjectFromOcr(doc.scannedText || '', '');
   return isPlaceholderSubject(fromText) ? '' : fromText;
-};
-
-const resolveSortLayer = (priorityLevel) => {
-  const level = String(priorityLevel || 'normal').toLowerCase();
-  if (level === 'urgent' || level === 'critical') return 3;
-  if (level === 'high') return 2;
-  return 1;
 };
 
 const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device: deviceProp }) => {
@@ -1007,7 +1001,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         status: canSetInitialStatus ? formData.status : 'Received',
         priorityLevel: formData.priorityLevel,
         documentTypeId: formData.documentTypeId,
-        sortLayer: resolveSortLayer(formData.priorityLevel),
+        sortLayer: resolveSortLayer(formData.documentTypeId),
         scanOrientation: 'landscape',
         paperGuideId: selectedPaperGuide.id,
         scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
@@ -1516,6 +1510,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                         <option key={dt.id} value={dt.id}>{dt.category}</option>
                       ))}
                     </select>
+                    {getSortLayerHint(formData.documentTypeId) && (
+                      <p className="field-hint">{getSortLayerHint(formData.documentTypeId)}</p>
+                    )}
                     {isOtherDocumentType(formData.documentTypeId) && (
                       <input
                         className="form-input"

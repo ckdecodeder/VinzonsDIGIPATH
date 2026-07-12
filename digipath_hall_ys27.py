@@ -5,9 +5,9 @@ Mapping (default):
   1 = door (closed = magnet detected)
   2 = main / home (lift rests here after sort)
   3 = capture / exact camera frame
-  4 = sort layer 1
-  5 = sort layer 2
-  6 = sort layer 3
+  4 = sort layer 1 (Memorandum)
+  5 = sort layer 2 (Executive Order)
+  6 = sort layer 3 (Communication Letter)
 """
 
 from __future__ import annotations
@@ -49,9 +49,9 @@ SENSOR_LABELS = {
     DOOR: "door",
     MAIN: "main",
     CAPTURE: "capture",
-    LAYER_1: "layer1",
-    LAYER_2: "layer2",
-    LAYER_3: "layer3",
+    LAYER_1: "layer1-memorandum",
+    LAYER_2: "layer2-executive-order",
+    LAYER_3: "layer3-communication-letter",
 }
 
 
