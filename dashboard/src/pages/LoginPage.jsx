@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertCircle, ArrowRight, CheckCircle2, Clock, Eye, EyeOff, FileText, Flag, Loader2, LogIn, MapPin, RefreshCw, Search, X } from 'lucide-react';
 import { authService, trackingService } from '../api/documentService';
 import ModalOverlay from '../components/ModalOverlay';
+import ThemeToggle from '../components/ThemeToggle';
 
 const LoginPage = ({ onLogin, systemMessage = '' }) => {
   const [username, setUsername] = useState('');
@@ -80,6 +81,9 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
 
   return (
     <div className="login-page">
+      <div className="login-theme-toggle-wrap">
+        <ThemeToggle />
+      </div>
       <div className="login-bg-pattern" aria-hidden="true">
         <span className="connection-line connection-line-1"></span>
         <span className="connection-line connection-line-2"></span>

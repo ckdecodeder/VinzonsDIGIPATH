@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import "./index.css";
+import { ThemeProvider } from "./context/ThemeContext";
 import { bootstrapApiBase, normalizeApiBase, getStoredApiUrl, preloadIceServers } from "./api/apiBase";
 
 // Prefer the configured public/tunnel API over a stale saved LAN URL.
@@ -25,7 +26,9 @@ bootstrapApiBase()
   .finally(() => {
     ReactDOM.createRoot(document.getElementById("root")).render(
       <React.StrictMode>
-        <App />
+        <ThemeProvider>
+          <App />
+        </ThemeProvider>
       </React.StrictMode>,
     );
   });

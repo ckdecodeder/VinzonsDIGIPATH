@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import ThemeToggle from './ThemeToggle';
 import formatBadgeCount from '../utils/formatBadgeCount';
 import {
   LayoutDashboard,
@@ -165,14 +166,17 @@ const Layout = ({
               <span className="logo-subtitle">Vinzon's Document System</span>
             </div>
           </div>
-          <button
-            type="button"
-            className="sidebar-close-btn"
-            onClick={() => setIsSidebarOpen(false)}
-            aria-label="Close menu"
-          >
-            <X size={18} />
-          </button>
+          <div className="sidebar-header-actions">
+            <ThemeToggle />
+            <button
+              type="button"
+              className="sidebar-close-btn"
+              onClick={() => setIsSidebarOpen(false)}
+              aria-label="Close menu"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Navigation */}
@@ -246,6 +250,7 @@ const Layout = ({
               <span className="mobile-topbar-subtitle">Document System</span>
             </div>
           </div>
+          <ThemeToggle className="mobile-topbar-theme" />
         </div>
         <div className="page-content" ref={pageContentRef}>
           {(dataError || saveError) && (
