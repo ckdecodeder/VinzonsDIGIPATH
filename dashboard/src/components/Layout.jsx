@@ -136,14 +136,11 @@ const Layout = ({
   };
 
   const pageContentRef = useRef(null);
+  const mainContentRef = useRef(null);
 
   useEffect(() => {
-    const scrollArea = pageContentRef.current?.querySelector('.page-scroll-area');
-    if (scrollArea) {
-      scrollArea.scrollTo({ top: 0, behavior: 'auto' });
-      return;
-    }
-    pageContentRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    const scrollEl = mainContentRef.current || pageContentRef.current;
+    scrollEl?.scrollTo({ top: 0, behavior: 'auto' });
   }, [currentPage]);
 
   return (
@@ -216,7 +213,7 @@ const Layout = ({
         </div>
       </aside>
 
-      <main className="main-content">
+      <main className="main-content" ref={mainContentRef}>
         <div className="mobile-topbar">
           <button
             type="button"

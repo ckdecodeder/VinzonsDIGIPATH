@@ -1218,97 +1218,64 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       }
     >
       {/* Step Indicator */}
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        gap: '0.5rem', marginBottom: '1.5rem',
-      }}>
+      <nav className="scanner-progress" aria-label="Scan workflow steps">
         {stepLabels.map((s, i) => (
           <React.Fragment key={s.num}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '0.5rem',
-            }}>
-              <div style={{
-                width: '32px', height: '32px', borderRadius: '50%',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '0.8rem', fontWeight: 700,
-                background: step >= s.num ? 'var(--gradient-primary)' : 'var(--bg-elevated)',
-                color: step >= s.num ? 'white' : 'var(--text-muted)',
-                border: step >= s.num ? 'none' : '1px solid var(--border)',
-                transition: 'all 0.3s',
-              }}>
+            <div className={`scanner-progress-step${step >= s.num ? ' is-active' : ''}${step > s.num ? ' is-done' : ''}`}>
+              <div className="scanner-progress-badge" aria-hidden="true">
                 {step > s.num ? <CheckCircle2 size={16} /> : s.num}
               </div>
-              <span style={{
-                fontSize: '0.8rem', fontWeight: 500,
-                color: step >= s.num ? 'var(--text-main)' : 'var(--text-muted)',
-              }}>
-                {s.label}
-              </span>
+              <span className="scanner-progress-label">{s.label}</span>
             </div>
-            {i < 3 && (
-              <div style={{
-                width: '50px', height: '2px',
-                background: step > s.num ? 'var(--primary)' : 'var(--border)',
-                borderRadius: '1px', transition: 'background 0.3s',
-              }}></div>
+            {i < stepLabels.length - 1 && (
+              <div className={`scanner-progress-connector${step > s.num ? ' is-done' : ''}`} aria-hidden="true" />
             )}
           </React.Fragment>
         ))}
-      </div>
+      </nav>
 
       {/* ============ STEP 1: Scan Document (FIRST!) ============ */}
       {step === 1 && (
-        <div className="scanner-step-scan scanner-step-scan--wide">
-          <div className="card scanner-step-scan-main">
-            <div className="scanner-step-scan-header">
-              <div>
-                <h2 className="scanner-step-title">
-                  <Scan style={{ color: 'var(--primary-light)' }} />
-                  Scan Document
-                </h2>
-                <p className="scanner-step-subtitle">
-                  Align the document, then capture — guide overlay is optional
-                </p>
-              </div>
-            </div>
-
-            <div className="scanner-preview-toolbar">
-              <div className="scanner-preview-toolbar-group">
-                <label className="form-label" htmlFor="paper-guide-size">Paper guide</label>
-                <select
-                  id="paper-guide-size"
-                  className="form-select"
-                  value={paperGuideId}
-                  onChange={(e) => setPaperGuideId(e.target.value)}
+        <div className="scanner-scan-page">
+          <div className="scanner-scan-layout">
+            <div className="card scanner-scan-main">
+              <div className="scanner-preview-toolbar scanner-preview-toolbar--bar">
+                <div className="scanner-preview-toolbar-group">
+                  <label className="form-label" htmlFor="paper-guide-size">Paper guide</label>
+                  <select
+                    id="paper-guide-size"
+                    className="form-select"
+                    value={paperGuideId}
+                    onChange={(e) => setPaperGuideId(e.target.value)}
+                  >
+                    {paperGuides.map((guide) => (
+                      <option key={guide.id} value={guide.id}>{guide.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <label className="scanner-toggle-row scanner-toggle-row--inline">
+                  <input
+                    type="checkbox"
+                    checked={showPaperGuide}
+                    onChange={(e) => setShowPaperGuide(e.target.checked)}
+                  />
+                  <span>Show guide</span>
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm scanner-toolbar-refresh"
+                  onClick={() => {
+                    setStreamHasError(false);
+                    setPreviewErrorMessage('');
+                    setStreamReloadKey((value) => value + 1);
+                  }}
                 >
-                  {paperGuides.map((guide) => (
-                    <option key={guide.id} value={guide.id}>{guide.label}</option>
-                  ))}
-                </select>
+                  <RefreshCw size={15} />
+                  Refresh
+                </button>
               </div>
-              <label className="scanner-toggle-row scanner-toggle-row--inline">
-                <input
-                  type="checkbox"
-                  checked={showPaperGuide}
-                  onChange={(e) => setShowPaperGuide(e.target.checked)}
-                />
-                <span>Show guide</span>
-              </label>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => {
-                  setStreamHasError(false);
-                  setPreviewErrorMessage('');
-                  setStreamReloadKey((value) => value + 1);
-                }}
-              >
-                <RefreshCw size={15} />
-                Refresh
-              </button>
-            </div>
 
-            <div className={previewShellClassName}>
+              <div className={previewShellClassName}>
               <canvas
                 ref={previewCanvasRef}
                 className={`scanner-live-stream scanner-live-canvas${directStreamUrl ? ' scanner-live-stream--hidden' : ''}`}
@@ -1393,9 +1360,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               )}
 
               {isPhysicalSource && !streamOnline && (
-                <div className="scanner-preview-overlay">
-                  <WifiOff size={32} />
-                  <span>Physical scanner is offline</span>
+                <div className="scanner-preview-overlay scanner-preview-overlay--offline">
+                  <div className="scanner-offline-icon">
+                    <WifiOff size={28} />
+                  </div>
+                  <strong>Scanner offline</strong>
+                  <span>Waiting for Pi heartbeat — check power and network</span>
                 </div>
               )}
 
@@ -1415,34 +1385,55 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </div>
               )}
             </div>
-
-            <div className="scanner-step-actions">
-              <button
-                onClick={handleCapture}
-                disabled={isExtracting || isDeviceScanning || (isPhysicalSource && !device?.connected)}
-                className="btn btn-primary scanner-capture-btn"
-              >
-                {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
-                {isExtracting ? 'Processing...' : 'Capture with Physical Scanner'}
-              </button>
-              {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
-                <button
-                  onClick={handleCancelPhysicalScan}
-                  disabled={isExtracting}
-                  className="btn btn-secondary"
-                >
-                  <XCircle size={18} />
-                  Cancel Scan
-                </button>
-              )}
             </div>
 
-            {deviceScanStatus && (
-              <div className="scanner-device-status-banner">
-                <AlertCircle size={14} />
-                <span>{deviceScanStatus}</span>
+            <aside className="card scanner-scan-sidebar">
+              <div className={`scanner-scan-connection${(device?.connected || hardwareScannedDoc) ? ' is-online' : ' is-offline'}`}>
+                {(device?.connected || hardwareScannedDoc) ? <Wifi size={18} /> : <WifiOff size={18} />}
+                <div>
+                  <strong>{(device?.connected || hardwareScannedDoc) ? 'Scanner ready' : 'Scanner offline'}</strong>
+                  <p>
+                    {(device?.connected || hardwareScannedDoc)
+                      ? 'Live preview active. Align the document in the frame, then capture.'
+                      : 'Start the Pi scanner service and wait for the device heartbeat.'}
+                  </p>
+                </div>
               </div>
-            )}
+
+              <ul className="scanner-scan-tips">
+                <li>Use the paper guide to match document size</li>
+                <li>Close the door to auto-move to capture position</li>
+                <li>Capture uploads the scan and triggers sorting</li>
+              </ul>
+
+              <div className="scanner-scan-actions">
+                <button
+                  onClick={handleCapture}
+                  disabled={isExtracting || isDeviceScanning || (isPhysicalSource && !device?.connected)}
+                  className="btn btn-primary scanner-capture-btn scanner-capture-btn--block"
+                >
+                  {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
+                  {isExtracting ? 'Processing...' : 'Capture Document'}
+                </button>
+                {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
+                  <button
+                    onClick={handleCancelPhysicalScan}
+                    disabled={isExtracting}
+                    className="btn btn-secondary scanner-capture-btn--block"
+                  >
+                    <XCircle size={18} />
+                    Cancel Scan
+                  </button>
+                )}
+              </div>
+
+              {deviceScanStatus && (
+                <div className="scanner-device-status-banner">
+                  <AlertCircle size={14} />
+                  <span>{deviceScanStatus}</span>
+                </div>
+              )}
+            </aside>
           </div>
         </div>
       )}

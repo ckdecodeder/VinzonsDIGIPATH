@@ -1,7 +1,17 @@
 import React, { useState } from "react";
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
-import { Building2, Users, Search, Plus, X, Edit2, Trash2 } from "lucide-react";
+import {
+  Building2,
+  Users,
+  Search,
+  Plus,
+  X,
+  Edit2,
+  Trash2,
+  ArrowUpRight,
+  ArrowDownLeft,
+} from "lucide-react";
 
 const OfficeList = ({
   offices,
@@ -92,137 +102,118 @@ const OfficeList = ({
           </div>
         }
       >
-      <div className="device-grid">
-        {filteredOffices.map((office) => {
-          const officeUsers = users.filter((u) => u.officeId === office.id);
-          const outgoing = transmissions.filter(
-            (t) => t.fromOfficeId === office.id,
-          ).length;
-          const incoming = transmissions.filter(
-            (t) => t.toOfficeId === office.id,
-          ).length;
+        <div className="office-page">
+          <p className="office-page-summary">
+            Showing {filteredOffices.length} of {offices.length} offices
+          </p>
 
-          return (
-            <div
-              key={office.id}
-              className="device-card"
-              style={{ display: "flex", flexDirection: "column" }}
-            >
-              <div className="device-card-header">
-                <div
-                  className="device-icon-wrapper"
-                  style={{ background: "var(--primary-glow)" }}
-                >
-                  <Building2
-                    size={22}
-                    style={{ color: "var(--primary-light)" }}
-                  />
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "0.5rem",
-                    alignItems: "center",
-                  }}
-                >
-                  <span className="td-mono" style={{ fontSize: "0.7rem" }}>
-                    {office.id}
-                  </span>
-                  <button
-                    className="btn-icon"
-                    style={{ padding: "0.2rem" }}
-                    onClick={() => openForm(office)}
-                  >
-                    <Edit2 size={12} />
-                  </button>
-                  <button
-                    className="btn-icon"
-                    style={{ padding: "0.2rem", color: "var(--danger)" }}
-                    onClick={() => onDeleteOffice(office.id)}
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
+          {filteredOffices.length === 0 ? (
+            <div className="empty-state office-empty-state">
+              <div className="empty-state-icon">
+                <Building2 size={24} color="var(--text-muted)" />
               </div>
-              <div className="device-name">{office.name}</div>
-              <div
-                className="device-meta"
-                style={{ marginTop: "0.75rem", flex: 1 }}
-              >
-                <div className="device-meta-row">
-                  <span className="device-meta-label">
-                    <Users
-                      size={13}
-                      style={{
-                        marginRight: "0.375rem",
-                        verticalAlign: "middle",
-                      }}
-                    />
-                    Staff
-                  </span>
-                  <span className="device-meta-value">
-                    {officeUsers.length} members
-                  </span>
-                </div>
-                <div className="device-meta-row">
-                  <span className="device-meta-label">Sent</span>
-                  <span className="device-meta-value">{outgoing}</span>
-                </div>
-                <div className="device-meta-row">
-                  <span className="device-meta-label">Received</span>
-                  <span className="device-meta-value">{incoming}</span>
-                </div>
-              </div>
-              {officeUsers.length > 0 && (
-                <div
-                  className="device-actions"
-                  style={{
-                    flexDirection: "column",
-                    gap: "0.375rem",
-                    marginTop: "1rem",
-                  }}
-                >
-                  {officeUsers.map((u) => (
-                    <div
-                      key={u.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem",
-                        fontSize: "0.78rem",
-                      }}
-                    >
-                      <div
-                        className="user-avatar"
-                        style={{
-                          width: "24px",
-                          height: "24px",
-                          fontSize: "0.6rem",
-                        }}
-                      >
-                        {u.fname[0]}
-                        {u.lname[0]}
-                      </div>
-                      <span style={{ color: "var(--text-secondary)" }}>
-                        {u.fname} {u.lname}
-                      </span>
-                      <span
-                        style={{
-                          marginLeft: "auto",
-                          color: "var(--text-muted)",
-                          fontSize: "0.7rem",
-                        }}
-                      >
-                        {u.role}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <h3>No offices found</h3>
+              <p>
+                {search
+                  ? "Try a different search term or clear the filter."
+                  : "Create the first office to start assigning staff and routing documents."}
+              </p>
             </div>
-          );
-        })}
-      </div>
+          ) : (
+            <div className="office-grid">
+              {filteredOffices.map((office) => {
+                const officeUsers = users.filter(
+                  (u) => u.officeId === office.id,
+                );
+                const outgoing = transmissions.filter(
+                  (t) => t.fromOfficeId === office.id,
+                ).length;
+                const incoming = transmissions.filter(
+                  (t) => t.toOfficeId === office.id,
+                ).length;
+                const visibleStaff = officeUsers.slice(0, 4);
+                const hiddenStaffCount = Math.max(
+                  officeUsers.length - visibleStaff.length,
+                  0,
+                );
+
+                return (
+                  <article key={office.id} className="office-card">
+                    <div className="office-card-top">
+                      <div className="office-card-icon">
+                        <Building2 size={20} />
+                      </div>
+                      <div className="office-card-actions">
+                        <span className="office-card-id td-mono">
+                          {office.id}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-icon"
+                          title="Edit office"
+                          onClick={() => openForm(office)}
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-icon office-card-delete"
+                          title="Delete office"
+                          onClick={() => onDeleteOffice(office.id)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <h2 className="office-card-name">{office.name}</h2>
+
+                    <div className="office-card-stats">
+                      <div className="office-stat">
+                        <Users size={13} />
+                        <span>{officeUsers.length} staff</span>
+                      </div>
+                      <div className="office-stat">
+                        <ArrowUpRight size={13} />
+                        <span>{outgoing} sent</span>
+                      </div>
+                      <div className="office-stat">
+                        <ArrowDownLeft size={13} />
+                        <span>{incoming} received</span>
+                      </div>
+                    </div>
+
+                    {officeUsers.length > 0 && (
+                      <div className="office-staff">
+                        <div className="office-staff-label">Assigned staff</div>
+                        <ul className="office-staff-list">
+                          {visibleStaff.map((u) => (
+                            <li key={u.id} className="office-staff-row">
+                              <div className="office-staff-avatar user-avatar">
+                                {u.fname?.[0] || "?"}
+                                {u.lname?.[0] || ""}
+                              </div>
+                              <span className="office-staff-name">
+                                {u.fname} {u.lname}
+                              </span>
+                              <span className="office-staff-role">{u.role}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {hiddenStaffCount > 0 && (
+                          <p className="office-staff-more">
+                            +{hiddenStaffCount} more staff member
+                            {hiddenStaffCount === 1 ? "" : "s"}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </PageShell>
 
       {showForm && (

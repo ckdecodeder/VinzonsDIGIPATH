@@ -76,6 +76,7 @@ $scriptFiles = @(
   "scripts/ws.sh",
   "scripts/pi-usb-auto-update.sh",
   "scripts/pi-install-usb-hook.sh",
+  "scripts/pi-install-ws-service.sh",
   "scripts/pi-restart-ws-scanner.sh",
   "scripts/pi-usb-ensure-scanner.sh",
   "scripts/test-motors.sh"
