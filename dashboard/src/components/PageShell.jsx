@@ -1,7 +1,7 @@
 import React from 'react';
 
-const PageShell = ({ header, toolbar, children }) => (
-  <div className="page-layout">
+const PageShell = ({ header, toolbar, children, className = '' }) => (
+  <div className={className ? `page-layout ${className}` : 'page-layout'}>
     {(header || toolbar) && (
       <div className="page-top">
         {header}
