@@ -22,6 +22,13 @@ if [[ "${DIGIPATH_FULL_UNINSTALL:-1}" == "1" ]]; then
   rm -rf "$HOME/Desktop/VinzonsDIGIPATH-Pi"
 fi
 
+# Stop WiFi provision service if present.
+sudo systemctl stop digipath-wifi-provision 2>/dev/null || true
+sudo systemctl disable digipath-wifi-provision 2>/dev/null || true
+sudo rm -f /etc/systemd/system/digipath-wifi-provision.service
+sudo rm -f /etc/NetworkManager/dispatcher.d/98-digipath-wifi-provision
+sudo rm -f /run/digipath-wifi-provisioning.lock
+
 # Stop WS scanner service if present.
 sudo systemctl stop digipath-ws-scanner 2>/dev/null || true
 sudo systemctl disable digipath-ws-scanner 2>/dev/null || true

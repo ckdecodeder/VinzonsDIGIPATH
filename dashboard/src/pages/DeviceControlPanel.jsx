@@ -438,12 +438,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
             : 'Status updates automatically when the Pi sends heartbeats to the backend.'}
         </p>
 
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-          gap: '0.75rem',
-          marginBottom: '1rem',
-        }}>
+        <div className="inline-stats-grid">
           {[
             {
               label: 'Heartbeat',
@@ -476,17 +471,9 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
               tone: 'var(--text-secondary)',
             },
           ].map((row) => (
-            <div
-              key={row.label}
-              style={{
-                border: '1px solid var(--border-color)',
-                borderRadius: 'var(--radius-md)',
-                padding: '0.75rem',
-                background: 'var(--bg-elevated)',
-              }}
-            >
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>{row.label}</div>
-              <div style={{ fontSize: '0.9rem', fontWeight: 700, color: row.tone }}>{row.value}</div>
+            <div key={row.label} className="inline-stat-card">
+              <div className="inline-stat-card-label">{row.label}</div>
+              <div className="inline-stat-card-value" style={{ color: row.tone }}>{row.value}</div>
             </div>
           ))}
         </div>

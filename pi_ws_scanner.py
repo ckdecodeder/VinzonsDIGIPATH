@@ -1894,10 +1894,30 @@ def upload_scan(image_bytes: bytes, command_id: str):
     return result
 
 
+def _user_scan_error_message(err) -> str:
+    text = str(err or "").strip()
+    if not text:
+        return "Scan could not be completed. Please try again."
+    lower = text.lower()
+    if "no preview frame" in lower or "wait for live stream" in lower:
+        return "No preview frame yet — wait for live stream, then capture again."
+    if "lift/hall" in lower or "mechanism" in lower or "hall prep" in lower:
+        return "Scanner mechanism error. Check motors and sensors, then try again."
+    if "groq" in lower or "api.groq" in lower or "digipath_groq" in lower:
+        return "Scan could not be completed. Enter the document details manually."
+    if "timeout" in lower or "timed out" in lower:
+        return "Scan timed out. Please try again."
+    if "connection" in lower and ("refused" in lower or "error" in lower):
+        return "Could not reach the server. Check network connection and try again."
+    if len(text) > 160 or "traceback" in lower or "http://" in lower or "https://" in lower:
+        return "Scan could not be completed. Please try again."
+    return text
+
+
 def update_command_status(command_id: str, status: str, error: str = ""):
     body = {"status": status}
     if error:
-        body["errorMessage"] = error
+        body["errorMessage"] = _user_scan_error_message(error)
     requests.put(
         f"{BACKEND_BASE_URL}/devices/commands/{command_id}",
         json=body,

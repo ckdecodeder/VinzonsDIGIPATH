@@ -57,6 +57,7 @@ if (-not (Test-Path $Destination)) {
 
 $rootFiles = @(
   "pi_ws_scanner.py",
+  "pi_wifi_provision.py",
   "digipath_tb6600.py",
   "digipath_hall_ys27.py",
   "digipath_mechanism.py",
@@ -73,10 +74,14 @@ $scriptFiles = @(
   "scripts/pi-venv-lib.sh",
   "scripts/pi-bootstrap-ws.sh",
   "scripts/pi-load-env.sh",
+  "scripts/pi-install-lib.sh",
   "scripts/ws.sh",
   "scripts/pi-usb-auto-update.sh",
   "scripts/pi-install-usb-hook.sh",
   "scripts/pi-install-ws-service.sh",
+  "scripts/pi-install-wifi-provision.sh",
+  "scripts/pi-install-all.sh",
+  "scripts/pi-wifi-provision.sh",
   "scripts/pi-restart-ws-scanner.sh",
   "scripts/pi-usb-ensure-scanner.sh",
   "scripts/test-motors.sh"

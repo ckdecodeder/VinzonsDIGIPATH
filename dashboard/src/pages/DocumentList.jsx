@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import ScannedPreviewModal from '../components/ScannedPreviewModal';
+import DocumentWorkflowPipeline from '../components/DocumentWorkflowPipeline';
 import {
   Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
   Flag, User, Phone, Mail, MessageSquare, ChevronDown, ChevronUp,
@@ -16,9 +17,7 @@ import {
   getPriorityInfo,
 } from '../data/mockData';
 import { compareNewest } from '../utils/sorting';
-import {
-  downloadAttachment,
-} from '../utils/attachmentDownload';
+import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
 
 const OTHER_OFFICE_VALUE = '__external_source__';
 
@@ -94,8 +93,12 @@ const DocumentList = ({
   const [previewDoc, setPreviewDoc] = useState(null);
   const [rejectDoc, setRejectDoc] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [rejectError, setRejectError] = useState('');
   const [processingAction, setProcessingAction] = useState(null);
   const [processingNote, setProcessingNote] = useState('');
+  const [processingError, setProcessingError] = useState('');
+  const [documentFormErrors, setDocumentFormErrors] = useState({});
+  const [documentFormErrorSummary, setDocumentFormErrorSummary] = useState('');
   const [routeForm, setRouteForm] = useState({
     fromOfficeId: currentUser?.officeId || offices[0]?.id || 'OFF-001',
     toOfficeId: offices[1]?.id || offices[0]?.id || 'OFF-001',
@@ -384,6 +387,8 @@ const DocumentList = ({
 
   const handleOpenForm = (doc = null) => {
     setAttachmentFile(null);
+    setDocumentFormErrors({});
+    setDocumentFormErrorSummary('');
     if (doc) {
       setEditDoc(doc);
       setFormData({
@@ -422,6 +427,25 @@ const DocumentList = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const validation = validateRequiredFields([
+      { key: 'subject', label: 'Document subject', value: formData.subject },
+      {
+        key: 'documentTypeOther',
+        label: 'Document type',
+        value: formData.documentTypeOther,
+        when: isOtherDocumentType(formData.documentTypeId),
+      },
+    ]);
+
+    if (!validation.isValid) {
+      setDocumentFormErrors(validation.errors);
+      setDocumentFormErrorSummary(validation.summary);
+      return;
+    }
+
+    setDocumentFormErrors({});
+    setDocumentFormErrorSummary('');
 
     const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
     const isReceptionist = currentUser?.role === 'Receptionist';
@@ -509,11 +533,17 @@ const DocumentList = ({
   const handleRejectDocument = (doc) => {
     setRejectDoc(doc);
     setRejectReason(doc.rejectionReason || '');
+    setRejectError('');
   };
 
   const handleRejectSubmit = async (e) => {
     e.preventDefault();
-    if (!rejectDoc || !rejectReason.trim()) return;
+    if (!rejectDoc) return;
+    if (!rejectReason.trim()) {
+      setRejectError('Rejection reason is required.');
+      return;
+    }
+    setRejectError('');
     await onVerifyDocument?.(rejectDoc.id, 'Rejected', rejectReason.trim());
     setRejectDoc(null);
     setRejectReason('');
@@ -543,13 +573,18 @@ const DocumentList = ({
   const openProcessingAction = (doc, action) => {
     setProcessingAction({ doc, action });
     setProcessingNote('');
+    setProcessingError('');
   };
 
   const handleProcessingSubmit = async (e) => {
     e.preventDefault();
     if (!processingAction) return;
     const config = processingActionLabels[processingAction.action];
-    if (config?.required && !processingNote.trim()) return;
+    if (config?.required && !processingNote.trim()) {
+      setProcessingError('Action note is required.');
+      return;
+    }
+    setProcessingError('');
     const { doc, action } = processingAction;
     const note = processingNote.trim();
     setProcessingAction(null);
@@ -952,6 +987,12 @@ const DocumentList = ({
                   {isExpanded && (
                     <tr>
                       <td colSpan="10" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)' }}>
+                        <DocumentWorkflowPipeline
+                          doc={doc}
+                          hasPendingTransmission={Boolean(pendingTransmission)}
+                          locationLabel={getCurrentLocation(doc)}
+                          workflowNote={workflowExplanation}
+                        />
                         <div className="document-detail-grid">
                           <div className="document-detail-section">
                             <h4><User size={14} /> Sender and Metadata</h4>
@@ -1103,6 +1144,12 @@ const DocumentList = ({
                 <button className="btn-icon" onClick={() => setDetailDoc(null)}><X size={18} /></button>
               </div>
               <div className="modal-body">
+                <DocumentWorkflowPipeline
+                  doc={doc}
+                  hasPendingTransmission={Boolean(pendingTransmission)}
+                  locationLabel={getCurrentLocation(doc)}
+                  workflowNote={workflowExplanation}
+                />
                 <div className="document-detail-grid">
                   <div className="document-detail-section">
                     <h4><MapPin size={14} /> Location</h4>
@@ -1219,18 +1266,27 @@ const DocumentList = ({
               <h2>{editDoc ? 'Edit Document' : 'New Document'}</h2>
               <button className="btn-icon" onClick={() => setShowForm(false)}><X size={18} /></button>
             </div>
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} noValidate>
               <div className="modal-body">
+                {documentFormErrorSummary && (
+                  <div className="form-error-summary" role="alert">{documentFormErrorSummary}</div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Document Subject</label>
                   <input
-                    className="form-input"
+                    className={`form-input${documentFormErrors.subject ? ' is-invalid' : ''}`}
                     type="text"
                     value={formData.subject}
-                    onChange={e => setFormData({ ...formData, subject: e.target.value })}
+                    onChange={e => {
+                      setFormData({ ...formData, subject: e.target.value });
+                      setDocumentFormErrors(prev => clearFieldError(prev, 'subject'));
+                      if (documentFormErrorSummary) setDocumentFormErrorSummary('');
+                    }}
                     placeholder="Enter document subject"
-                    required
                   />
+                  {documentFormErrors.subject && (
+                    <p className="form-field-error">{documentFormErrors.subject}</p>
+                  )}
                   <p className="field-hint">Shortly describe the document so staff can recognize it in lists, reports, and tracking.</p>
                 </div>
                 <div className="form-grid">
@@ -1249,14 +1305,20 @@ const DocumentList = ({
                     {isOtherDocumentType(formData.documentTypeId) && (
                       <>
                         <input
-                          className="form-input"
+                          className={`form-input${documentFormErrors.documentTypeOther ? ' is-invalid' : ''}`}
                           type="text"
                           value={formData.documentTypeOther}
-                          onChange={e => setFormData({ ...formData, documentTypeOther: e.target.value })}
+                          onChange={e => {
+                            setFormData({ ...formData, documentTypeOther: e.target.value });
+                            setDocumentFormErrors(prev => clearFieldError(prev, 'documentTypeOther'));
+                            if (documentFormErrorSummary) setDocumentFormErrorSummary('');
+                          }}
                           placeholder="Specify document type"
-                          required
                           style={{ marginTop: '0.5rem' }}
                         />
+                        {documentFormErrors.documentTypeOther && (
+                          <p className="form-field-error">{documentFormErrors.documentTypeOther}</p>
+                        )}
                         <p className="field-hint">Names the custom document type when it is not in the list.</p>
                       </>
                     )}
@@ -1472,8 +1534,11 @@ const DocumentList = ({
               </div>
               <button className="btn-icon" onClick={() => setRejectDoc(null)}><X size={18} /></button>
             </div>
-            <form onSubmit={handleRejectSubmit}>
+            <form onSubmit={handleRejectSubmit} noValidate>
               <div className="modal-body">
+                {rejectError && (
+                  <div className="form-error-summary" role="alert">{rejectError}</div>
+                )}
                 <div className="reject-warning">
                   <AlertTriangle size={18} />
                   <div>
@@ -1484,12 +1549,14 @@ const DocumentList = ({
                 <div className="form-group">
                   <label className="form-label">Rejection Reason</label>
                   <textarea
-                    className="form-input"
+                    className={`form-input${rejectError ? ' is-invalid' : ''}`}
                     value={rejectReason}
-                    onChange={e => setRejectReason(e.target.value)}
+                    onChange={e => {
+                      setRejectReason(e.target.value);
+                      if (rejectError) setRejectError('');
+                    }}
                     placeholder="Explain what needs to be corrected before approval"
                     rows={5}
-                    required
                     autoFocus
                     style={{ resize: 'vertical' }}
                   />
@@ -1498,7 +1565,7 @@ const DocumentList = ({
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setRejectDoc(null)}>Cancel</button>
-                <button type="submit" className="btn btn-danger" disabled={!rejectReason.trim()}>
+                <button type="submit" className="btn btn-danger">
                   <X size={16} /> Reject Document
                 </button>
               </div>
@@ -1522,8 +1589,11 @@ const DocumentList = ({
                 </div>
                 <button className="btn-icon" onClick={() => setProcessingAction(null)}><X size={18} /></button>
               </div>
-              <form onSubmit={handleProcessingSubmit}>
+              <form onSubmit={handleProcessingSubmit} noValidate>
                 <div className="modal-body">
+                  {processingError && (
+                    <div className="form-error-summary" role="alert">{processingError}</div>
+                  )}
                   <div className="reject-warning">
                     <Clock size={18} />
                     <div>
@@ -1534,21 +1604,26 @@ const DocumentList = ({
                   <div className="form-group">
                     <label className="form-label">{config?.required ? 'Action Note' : 'Remarks'}</label>
                     <textarea
-                      className="form-input"
+                      className={`form-input${processingError ? ' is-invalid' : ''}`}
                       value={processingNote}
-                      onChange={e => setProcessingNote(e.target.value)}
+                      onChange={e => {
+                        setProcessingNote(e.target.value);
+                        if (processingError) setProcessingError('');
+                      }}
                       placeholder={config?.required ? 'Enter the action taken or instruction' : 'Optional remarks for the timeline'}
                       rows={4}
-                      required={config?.required}
                       autoFocus
                       style={{ resize: 'vertical' }}
                     />
+                    {processingError && (
+                      <p className="form-field-error">{processingError}</p>
+                    )}
                     <p className="field-hint">Records the action on the document timeline for audit and tracking.</p>
                   </div>
                 </div>
                 <div className="modal-footer">
                   <button type="button" className="btn btn-secondary" onClick={() => setProcessingAction(null)}>Cancel</button>
-                  <button type="submit" className="btn btn-primary" disabled={config?.required && !processingNote.trim()}>
+                  <button type="submit" className="btn btn-primary">
                     <CheckCircle2 size={16} /> {config?.button || 'Save Update'}
                   </button>
                 </div>

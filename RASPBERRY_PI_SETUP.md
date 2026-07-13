@@ -70,6 +70,34 @@ http://RASPBERRY_PI_IP:8080/stream.mjpg
 
 ## Automatic Startup
 
+### Phone WiFi setup (first boot / no network)
+
+When the Pi has no saved office WiFi, it automatically:
+
+1. Turns on hotspot **`DigiPath-Setup`**
+2. Your phone can join that network
+3. A **sign-in / setup page** opens (captive portal) — or browse to `http://10.42.0.1`
+4. Pick your office WiFi and enter the password
+5. Hotspot **turns off** after a successful connection
+
+Install on the Pi:
+
+```bash
+sudo bash scripts/pi-install-wifi-provision.sh
+```
+
+Optional `.env` settings:
+
+```env
+DIGIPATH_WIFI_PROVISION=1
+DIGIPATH_WIFI_HOTSPOT_SSID=DigiPath-Setup
+DIGIPATH_WIFI_HOTSPOT_PASSWORD=
+```
+
+If WiFi is lost later, the hotspot opens again automatically.
+
+### Deploy scanner bridge
+
 From this Windows project folder, deploy the bridge over SSH:
 
 ```powershell

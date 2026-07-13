@@ -26,7 +26,6 @@ touch "$LOCK"
 trap 'rm -f "$LOCK"' EXIT
 
 log "USB insert detected — waiting for mount..."
-sleep 6
 
 resolve_usb_mount() {
   local src="$1"
@@ -55,11 +54,12 @@ eject_usb_source() {
   local mount_point=""
   local part_dev=""
   local disk_dev=""
+  local attempt=""
 
   mount_point="$(resolve_usb_mount "$src" || true)"
   if [[ -z "$mount_point" ]]; then
     log "Could not resolve USB mount point — skip eject."
-    return 0
+    return 1
   fi
 
   part_dev="$(findmnt -n -o SOURCE --target "$mount_point" 2>/dev/null || true)"
@@ -68,12 +68,33 @@ eject_usb_source() {
   sync
   sleep 1
 
-  if umount "$mount_point" 2>/dev/null; then
-    log "Unmounted $mount_point"
-  else
-    log "WARN: Failed to unmount $mount_point"
+  for attempt in 1 2 3; do
+    if command -v udisksctl >/dev/null 2>&1 && [[ -n "$part_dev" ]]; then
+      if udisksctl unmount -b "$part_dev" >>"$LOG" 2>&1; then
+        log "udisksctl unmount OK (attempt $attempt)"
+        break
+      fi
+    fi
+
+    if findmnt -n "$mount_point" &>/dev/null; then
+      fuser -km "$mount_point" >>"$LOG" 2>&1 || true
+      sleep 1
+      if umount "$mount_point" >>"$LOG" 2>&1; then
+        log "umount OK (attempt $attempt)"
+        break
+      fi
+      umount -l "$mount_point" >>"$LOG" 2>&1 || true
+      sleep 1
+    else
+      break
+    fi
+  done
+
+  if findmnt -n "$mount_point" &>/dev/null; then
+    log "WARN: Failed to unmount $mount_point — USB will stay plugged in."
     return 1
   fi
+  log "Unmounted $mount_point"
 
   if [[ -n "$part_dev" ]]; then
     disk_dev="$(lsblk -n -o PKNAME "$part_dev" 2>/dev/null | head -1 || true)"
@@ -83,6 +104,9 @@ eject_usb_source() {
       disk_dev="$part_dev"
     fi
   fi
+
+  sync
+  sleep 1
 
   if [[ -n "$disk_dev" ]] && command -v udisksctl >/dev/null 2>&1; then
     if udisksctl power-off -b "$disk_dev" >>"$LOG" 2>&1; then
@@ -99,6 +123,7 @@ eject_usb_source() {
   fi
 
   log "USB unmounted — safe to remove."
+  return 0
 }
 
 find_usb_package() {
@@ -139,13 +164,31 @@ find_usb_package() {
   return 1
 }
 
-SRC="$(find_usb_package || true)"
+find_usb_package_with_retry() {
+  local attempt found=""
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    found="$(find_usb_package || true)"
+    if [[ -n "$found" ]]; then
+      echo "$found"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+SRC="$(find_usb_package_with_retry || true)"
 if [[ -z "$SRC" ]]; then
   log "No VinzonsDIGIPATH-Pi package found on USB."
   exit 0
 fi
 
+USB_MOUNT="$(resolve_usb_mount "$SRC" || true)"
+
 log "Found USB package: $SRC"
+if [[ -n "$USB_MOUNT" ]]; then
+  log "USB mount point: $USB_MOUNT"
+fi
 log "Copying to $DEST (overwrite)..."
 log "Run user: $RUN_USER | Home: $USER_HOME"
 
@@ -184,8 +227,13 @@ DEST_STATS="$(calc_stats "$DEST")"
 log "Source stats: ${SRC_STATS}"
 log "Dest stats:   ${DEST_STATS}"
 if [[ "$SRC_STATS" != "$DEST_STATS" ]]; then
-  log "ERROR: Copy integrity check failed (file count/bytes mismatch). Skip eject."
-  exit 1
+  log "WARN: Copy stats mismatch (src=$SRC_STATS dest=$DEST_STATS)."
+  if [[ -f "$DEST/$MARKER_NEW" || -f "$DEST/$MARKER_OLD" ]]; then
+    log "Marker file present — continuing with eject anyway."
+  else
+    log "ERROR: Copy integrity check failed. Skip eject."
+    exit 1
+  fi
 fi
 
 sync
@@ -207,7 +255,11 @@ else
   log "WARN: pi-restart-ws-scanner.sh missing — scanner not restarted."
 fi
 
-eject_usb_source "$SRC" || true
+if [[ -n "$USB_MOUNT" ]]; then
+  eject_usb_source "$USB_MOUNT" || eject_usb_source "$SRC" || true
+else
+  eject_usb_source "$SRC" || true
+fi
 
 # Safety net: if unmount still killed the process, start again from Desktop.
 if [[ -f "$DEST/scripts/pi-usb-ensure-scanner.sh" ]]; then
