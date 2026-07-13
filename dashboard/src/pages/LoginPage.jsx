@@ -7,7 +7,7 @@ import ThemeToggle from '../components/ThemeToggle';
 const LoginPage = ({ onLogin, systemMessage = '' }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [passwordHidden, setPasswordHidden] = useState(true);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [trackingNumber, setTrackingNumber] = useState(() => {
@@ -160,20 +160,22 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                     <div style={{ position: 'relative' }}>
                       <input
                         className="form-input"
-                        type={showPassword ? 'text' : 'password'}
+                        type={passwordHidden ? 'password' : 'text'}
                         value={password}
                         onChange={e => setPassword(e.target.value)}
                         placeholder="Enter your password"
                         required
+                        autoComplete="current-password"
                         style={{ paddingRight: '2.5rem' }}
                       />
                       <button
                         type="button"
-                        onClick={() => setShowPassword(!showPassword)}
+                        onClick={() => setPasswordHidden((hidden) => !hidden)}
                         className="login-password-toggle"
-                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        aria-label={passwordHidden ? 'Show password' : 'Hide password'}
+                        aria-pressed={!passwordHidden}
                       >
-                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        {passwordHidden ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                     </div>
                     <p className="field-hint">Enter the password linked to your municipal user account.</p>

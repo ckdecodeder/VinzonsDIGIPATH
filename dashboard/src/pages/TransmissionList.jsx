@@ -33,6 +33,7 @@ const TransmissionList = ({
 }) => {
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("All");
+  const [filterDate, setFilterDate] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [detailTransmission, setDetailTransmission] = useState(null);
   const [pageSize, setPageSize] = useState(20);
@@ -68,18 +69,16 @@ const TransmissionList = ({
       : "Unknown";
   };
 
-  const renderRouteOfficeRight = (officeName) => {
-    const name = officeName || "Unknown Office";
-    const parts = name.split(" & ");
-    if (parts.length < 2) return name;
-    const firstLine = parts[0];
-    const rest = parts.slice(1).join(" & ");
-    return (
-      <span className="transfer-office-split">
-        <span className="transfer-office-line">{firstLine}</span>
-        <span className="transfer-office-line">{`& ${rest}`}</span>
-      </span>
-    );
+  const getTransmissionDateKey = (transmission) => {
+    const raw = transmission?.receivedAt || transmission?.transmissionDate;
+    if (!raw) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) return String(raw);
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return String(raw).slice(0, 10);
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   };
 
   const getDocument = (documentId) =>
@@ -187,6 +186,7 @@ const TransmissionList = ({
         !term ||
         (doc?.subject || "").toLowerCase().includes(term) ||
         (doc?.trackingNumber || "").toLowerCase().includes(term) ||
+        t.id.toLowerCase().includes(term) ||
         getOfficeName(t.fromOfficeId).toLowerCase().includes(term) ||
         getOfficeName(t.toOfficeId).toLowerCase().includes(term) ||
         (t.transmissionType || "").toLowerCase().includes(term) ||
@@ -196,7 +196,9 @@ const TransmissionList = ({
           : false);
       const matchType =
         filterType === "All" || t.transmissionType === filterType;
-      return matchSearch && matchType;
+      const matchDate =
+        !filterDate || getTransmissionDateKey(t) === filterDate;
+      return matchSearch && matchType && matchDate;
     })
     .sort((a, b) =>
       compareNewest(a, b, [
@@ -210,7 +212,7 @@ const TransmissionList = ({
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterType]);
+  }, [search, filterType, filterDate]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTrans.length / pageSize));
   const paginatedTransmissions = filteredTrans.slice(
@@ -314,6 +316,7 @@ const TransmissionList = ({
   return (
     <>
       <PageShell
+        className="documents-page transmissions-page"
         header={
           <div className="page-header page-header--align-bottom">
             <div className="page-header-left">
@@ -321,7 +324,7 @@ const TransmissionList = ({
               <p>Track document movement between offices</p>
             </div>
             {visibleRouteDocuments.length > 0 && (
-              <div className="page-header-actions page-header-actions--inline page-header-actions--mobile-only">
+              <div className="page-header-actions page-header-actions--inline">
                 <button className="btn btn-primary" onClick={openCreateForm}>
                   <Plus size={16} /> New Transmission
                 </button>
@@ -330,7 +333,7 @@ const TransmissionList = ({
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row transmissions-toolbar">
+          <div className="document-toolbar">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -343,32 +346,40 @@ const TransmissionList = ({
                 />
               </div>
             </div>
-            <div className="filter-dropdown filter-dropdown-inline">
-              <label>Type</label>
-              <select
-                className="form-select"
-                value={filterType}
-                onChange={(e) => setFilterType(e.target.value)}
-              >
-                {types.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ))}
-              </select>
+
+            <div className="filter-dropdown filter-dropdown-date">
+              <label htmlFor="transmission-date-filter">Date</label>
+              <input
+                id="transmission-date-filter"
+                className="form-input"
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+              />
             </div>
-            {visibleRouteDocuments.length > 0 && (
-              <div className="page-toolbar-actions page-toolbar-actions--desktop-only">
-                <button className="btn btn-primary" onClick={openCreateForm}>
-                  <Plus size={16} /> New Transmission
-                </button>
+
+            <div className="filter-dropdowns">
+              <div className="filter-dropdown">
+                <label>Type</label>
+                <select
+                  className="form-select"
+                  value={filterType}
+                  onChange={(e) => setFilterType(e.target.value)}
+                >
+                  {types.map((type) => (
+                    <option key={type} value={type}>
+                      {type === "All" ? "All Types" : type}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
+            </div>
           </div>
         }
       >
-      <div className="table-container">
-        <table className="transmissions-table">
+      <section className="document-panel">
+        <div className="table-container documents-table-container">
+        <table className="transmissions-table documents-table">
           <thead>
             <tr>
               <th className="transmissions-col-id">ID</th>
@@ -379,7 +390,6 @@ const TransmissionList = ({
               <th className="transmissions-col-date">Date</th>
               <th className="transmissions-col-type">Type</th>
               <th className="transmissions-col-status">Status</th>
-              <th className="transmissions-col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -392,34 +402,33 @@ const TransmissionList = ({
                   <tr
                     key={t.id}
                     className="clickable-row"
+                    aria-label="View transmission details"
                     onClick={() => setDetailTransmission(t)}
-                    title="View transmission details"
                   >
-                    <td className="transmissions-col-id">
-                      <span className="td-mono">{t.id}</span>
+                    <td className="transmissions-col-id" title={t.id}>
+                      <span className="td-mono documents-tracking-code">{t.id}</span>
                     </td>
-                    <td className="td-primary transmissions-col-document">
+                    <td
+                      className="td-primary transmissions-col-document"
+                      title={doc?.subject || "Unknown Document"}
+                    >
                       {doc?.subject || "Unknown Document"}
                     </td>
-                    <td className="transmissions-col-route">
-                      <div className="transfer-visual">
-                        <span className="transfer-office transfer-office-left">
-                          {getOfficeName(t.fromOfficeId)}
-                        </span>
-                        <ArrowRight size={14} className="transfer-arrow" />
-                        <span className="transfer-office transfer-office-right">
-                          {renderRouteOfficeRight(getOfficeName(t.toOfficeId))}
-                        </span>
+                    <td className="transmissions-col-route" title={`${getOfficeName(t.fromOfficeId)} → ${getOfficeName(t.toOfficeId)}`}>
+                      <div className="transmissions-route-label">
+                        <span className="transmissions-route-office">{getOfficeName(t.fromOfficeId)}</span>
+                        <ArrowRight size={11} className="transfer-arrow" />
+                        <span className="transmissions-route-office">{getOfficeName(t.toOfficeId)}</span>
                       </div>
                     </td>
-                    <td className="transmissions-col-sent-by">{getUserFullName(t.sentBy)}</td>
-                    <td className="transmissions-col-received-by">
+                    <td className="transmissions-col-sent-by" title={getUserFullName(t.sentBy)}>
+                      {getUserFullName(t.sentBy)}
+                    </td>
+                    <td className="transmissions-col-received-by" title={t.receivedBy ? getUserFullName(t.receivedBy) : `Pending at ${getOfficeName(t.toOfficeId)}`}>
                       {t.receivedBy ? (
                         getUserFullName(t.receivedBy)
                       ) : (
-                        <span className="transmissions-pending-text">
-                          Pending: awaiting {getOfficeName(t.toOfficeId)}
-                        </span>
+                        <span className="transmissions-pending-text">Pending</span>
                       )}
                     </td>
                     <td className="transmissions-col-date">
@@ -429,45 +438,25 @@ const TransmissionList = ({
                       </div>
                     </td>
                     <td className="transmissions-col-type">
-                      <span className="transmissions-type-chip">
-                        {t.transmissionType}
-                      </span>
+                      <span className="transmissions-type-chip">{t.transmissionType}</span>
                     </td>
                     <td className="transmissions-col-status">
                       {t.receivedBy ? (
                         <span className="status-badge status-archived">
-                          <CheckCircle2 size={12} /> Completed
+                          <CheckCircle2 size={10} /> Completed
                         </span>
                       ) : (
                         <span className="status-badge status-in-transit">
-                          <Clock size={12} /> In Transit
+                          <Clock size={10} /> In Transit
                         </span>
                       )}
-                      <small className="workflow-explanation">
-                        {getTransmissionPendingReason(t)}
-                      </small>
-                    </td>
-                    <td className="transmissions-col-actions">
-                      <div className="transmissions-actions-wrap">
-                        {canReceiveTransmission(t) && (
-                          <button
-                            className="btn btn-sm btn-success"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleReceive(t.id).catch(() => {});
-                            }}
-                          >
-                            <CheckCircle2 size={14} /> Receive
-                          </button>
-                        )}
-                      </div>
                     </td>
                   </tr>
                 );
               })
             ) : (
               <tr>
-                <td colSpan="9">
+                <td colSpan="8">
                   <div className="empty-state">
                     <div className="empty-state-icon">
                       <ArrowRightLeft size={24} />
@@ -525,6 +514,7 @@ const TransmissionList = ({
           </button>
         </div>
       </div>
+      </section>
       </PageShell>
 
       {detailTransmission &&

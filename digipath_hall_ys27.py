@@ -1,13 +1,13 @@
 """
-YS-27 Hall sensor modules on Raspberry Pi GPIO (6 sensors).
+YS-27 Hall sensor modules on Raspberry Pi GPIO.
 
-Mapping (default):
-  1 = door (closed = magnet detected)
-  2 = main / home (lift rests here after sort)
-  3 = capture / exact camera frame
-  4 = sort layer 1 (Memorandum)
-  5 = sort layer 2 (Executive Order)
-  6 = sort layer 3 (Communication Letter)
+Vinzons 5-sensor wiring:
+  1 = door          GPIO 5
+  2 = main + layer 1 (shared)  GPIO 6
+  3 = capture       GPIO 13
+  4 = layer 1 (logical; same as main)
+  5 = layer 2       GPIO 19
+  6 = layer 3       GPIO 12
 """
 
 from __future__ import annotations
@@ -47,12 +47,19 @@ LAYER_TO_SENSOR = {
 
 SENSOR_LABELS = {
     DOOR: "door",
-    MAIN: "main",
+    MAIN: "main+layer1",
     CAPTURE: "capture",
     LAYER_1: "layer1-memorandum",
     LAYER_2: "layer2-executive-order",
     LAYER_3: "layer3-communication-letter",
 }
+
+
+def layer_has_hall(pin_map: dict[int, int], layer: int) -> bool:
+    sensor = LAYER_TO_SENSOR.get(layer)
+    if not sensor:
+        return False
+    return int(pin_map.get(sensor, 0) or 0) > 0
 
 
 @dataclass(frozen=True)
@@ -62,13 +69,13 @@ class HallReading:
 
 
 class HallSensorBank:
-    """Six YS-27 digital outputs — LOW = magnet detected (active-low, pull-up)."""
+    """YS-27 digital outputs — LOW = magnet detected (active-low, pull-up)."""
 
     def __init__(self, pin_map: dict[int, int], *, active_low: bool = True, simulate: bool = False):
         self.pin_map = {int(k): int(v) for k, v in pin_map.items()}
         self.active_low = active_low
         self.simulate = simulate
-        self._inputs: dict[int, object] = {}
+        self._inputs_by_bcm: dict[int, object] = {}
         self._sim_state: dict[int, bool] = {sid: False for sid in self.pin_map}
 
         if simulate:
@@ -77,30 +84,46 @@ class HallSensorBank:
         from gpiozero import DigitalInputDevice
 
         for sensor_id, bcm in self.pin_map.items():
-            self._inputs[sensor_id] = DigitalInputDevice(
+            if bcm <= 0:
+                continue
+            if bcm in self._inputs_by_bcm:
+                continue
+            self._inputs_by_bcm[bcm] = DigitalInputDevice(
                 bcm,
                 pull_up=True,
                 bounce_time=0.02,
             )
 
     def close(self):
-        for dev in self._inputs.values():
+        for dev in self._inputs_by_bcm.values():
             try:
                 dev.close()
             except Exception:
                 pass
-        self._inputs.clear()
+        self._inputs_by_bcm.clear()
 
     def simulate_trigger(self, sensor_id: int, triggered: bool = True):
-        if sensor_id in self._sim_state:
-            self._sim_state[sensor_id] = triggered
+        if sensor_id not in self.pin_map:
+            return
+        bcm = self.pin_map[sensor_id]
+        if bcm <= 0:
+            return
+        self._sim_state[sensor_id] = triggered
+        for sid, pin in self.pin_map.items():
+            if pin == bcm:
+                self._sim_state[sid] = triggered
 
     def is_triggered(self, sensor_id: int) -> bool:
         if sensor_id not in self.pin_map:
             return False
+        bcm = int(self.pin_map[sensor_id])
+        if bcm <= 0:
+            return False
         if self.simulate:
             return bool(self._sim_state.get(sensor_id, False))
-        dev = self._inputs[sensor_id]
+        dev = self._inputs_by_bcm.get(bcm)
+        if not dev:
+            return False
         raw = bool(dev.is_active)
         return raw if not self.active_low else not raw
 
@@ -108,7 +131,18 @@ class HallSensorBank:
         return {sid: self.is_triggered(sid) for sid in sorted(self.pin_map)}
 
     def read_all_labeled(self) -> dict[str, bool]:
-        return {SENSOR_LABELS.get(sid, f"s{sid}"): self.is_triggered(sid) for sid in sorted(self.pin_map)}
+        seen_bcms: set[int] = set()
+        labeled: dict[str, bool] = {}
+        for sid in sorted(self.pin_map):
+            bcm = int(self.pin_map[sid])
+            if bcm <= 0:
+                labeled[SENSOR_LABELS.get(sid, f"s{sid}")] = False
+                continue
+            if bcm in seen_bcms:
+                continue
+            seen_bcms.add(bcm)
+            labeled[SENSOR_LABELS.get(sid, f"s{sid}")] = self.is_triggered(sid)
+        return labeled
 
     def wait_for(
         self,
@@ -163,13 +197,20 @@ class HallSensorBank:
 
 
 def build_default_bank(simulate: bool = False) -> HallSensorBank:
+    main_bcm = _env_int("DIGIPATH_HALL_MAIN_BCM", 6)
+    layer1_bcm = _env_int("DIGIPATH_HALL_LAYER1_BCM", main_bcm)
+
     pin_map = {
         DOOR: _env_int("DIGIPATH_HALL_DOOR_BCM", 5),
-        MAIN: _env_int("DIGIPATH_HALL_MAIN_BCM", 6),
+        MAIN: main_bcm,
         CAPTURE: _env_int("DIGIPATH_HALL_CAPTURE_BCM", 13),
-        LAYER_1: _env_int("DIGIPATH_HALL_LAYER1_BCM", 19),
-        LAYER_2: _env_int("DIGIPATH_HALL_LAYER2_BCM", 12),
-        LAYER_3: _env_int("DIGIPATH_HALL_LAYER3_BCM", 16),
+        LAYER_1: layer1_bcm,
+        LAYER_2: _env_int("DIGIPATH_HALL_LAYER2_BCM", 19),
+        LAYER_3: _env_int("DIGIPATH_HALL_LAYER3_BCM", 12),
     }
     active_low = _env_bool("DIGIPATH_HALL_ACTIVE_LOW", "1")
-    return HallSensorBank(pin_map, active_low=active_low, simulate=simulate)
+    bank = HallSensorBank(pin_map, active_low=active_low, simulate=simulate)
+    print(
+        "[Hall] Vinzons map: door=5 main+layer1=6 capture=13 layer2=19 layer3=12"
+    )
+    return bank
