@@ -180,26 +180,14 @@ const ReportsPage = ({
 
   // ====== STAT CARD COMPONENT ======
   const StatCard = ({ label, value, icon, color, sub }) => (
-    <div style={{
-      background: 'var(--bg-card)',
-      border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)',
-      padding: '1.25rem',
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: '0.75rem',
-    }}>
-      <div style={{
-        width: '40px', height: '40px', borderRadius: 'var(--radius-md)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: `${color}18`, color: color,
-      }}>
+    <div className="report-stat-card">
+      <div className="report-stat-card-icon" style={{ background: `${color}18`, color }}>
         {icon}
       </div>
-      <div>
-        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: '0.25rem' }}>{label}</p>
-        <p style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', lineHeight: 1.1 }}>{value}</p>
-        {sub && <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{sub}</p>}
+      <div className="report-stat-card-body">
+        <p className="report-stat-card-label">{label}</p>
+        <p className="report-stat-card-value">{value}</p>
+        {sub && <p className="report-stat-card-sub">{sub}</p>}
       </div>
     </div>
   );
@@ -650,12 +638,7 @@ const ReportsPage = ({
       {/* ==================== SUMMARY ==================== */}
       {activeCategory === 'summary' && (
         <div>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: '1rem',
-            marginBottom: '1.5rem',
-          }}>
+          <div className="reports-stats-grid">
             <StatCard label="Total Documents" value={filteredDocs.length} icon={<FileText size={20} />} color="#0f4c75" />
             <StatCard label="In Transit" value={statusCounts['In Transit']} icon={<ArrowRightLeft size={20} />} color="#f59e0b" />
             <StatCard label="For Filing" value={statusCounts['For Filing']} icon={<CheckCircle2 size={20} />} color="#087f8f" />
@@ -871,12 +854,7 @@ const ReportsPage = ({
       {}
       {activeCategory === 'transmissions' && (
         <div>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: '1rem',
-            marginBottom: '1.5rem',
-          }}>
+          <div className="reports-stats-grid reports-stats-grid--compact">
             <StatCard label="Total Transmissions" value={filteredTransmissions.length} icon={<ArrowRightLeft size={20} />} color="#0f4c75" />
             <StatCard label="Pending Receipt" value={filteredTransmissions.filter(t => !t.receivedBy).length} icon={<Clock size={20} />} color="#f59e0b" />
             <StatCard label="Completed" value={filteredTransmissions.filter(t => t.receivedBy).length} icon={<CheckCircle2 size={20} />} color="#10b981" />

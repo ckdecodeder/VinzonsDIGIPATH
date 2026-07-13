@@ -126,6 +126,15 @@ apt-get install -y rpicam-apps || apt-get install -y libcamera-apps || true
 echo "Installing bridge files..."
 mkdir -p "$TARGET_DIR"
 cp "$BRIDGE_SOURCE" "$TARGET_DIR/pi_scanner_bridge.py"
+if [[ -f "$REPO_ROOT/pi_wifi_provision.py" ]]; then
+  cp "$REPO_ROOT/pi_wifi_provision.py" "$TARGET_DIR/pi_wifi_provision.py"
+fi
+if [[ -d "$REPO_ROOT/scripts" ]]; then
+  mkdir -p "$TARGET_DIR/scripts"
+  cp "$REPO_ROOT/scripts/pi-wifi-provision.sh" "$TARGET_DIR/scripts/pi-wifi-provision.sh" 2>/dev/null || true
+  cp "$REPO_ROOT/scripts/pi-load-env.sh" "$TARGET_DIR/scripts/pi-load-env.sh" 2>/dev/null || true
+  chmod +x "$TARGET_DIR/scripts/"*.sh 2>/dev/null || true
+fi
 if [[ -f "$REPO_ROOT/motor_controller.py" ]]; then
   cp "$REPO_ROOT/motor_controller.py" "$TARGET_DIR/motor_controller.py"
 fi
@@ -189,6 +198,9 @@ DIGIPATH_ENABLE_OPENCV_CAMERA="auto"
 DIGIPATH_OPENCV_CAMERA_INDEX="0"
 DIGIPATH_DEVICE_NAME="Physical Document Scanner"
 DIGIPATH_DEVICE_LOCATION="Reception Area"
+DIGIPATH_WIFI_PROVISION=1
+DIGIPATH_WIFI_HOTSPOT_SSID=DigiPath-Setup
+DIGIPATH_WIFI_HOTSPOT_PASSWORD=
 ENV
 chmod 600 "$ENV_FILE"
 
@@ -196,8 +208,8 @@ echo "Writing $SERVICE_FILE..."
 cat > "$SERVICE_FILE" <<SERVICE
 [Unit]
 Description=VinzonsDIGIPATH Raspberry Pi Scanner Bridge
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target digipath-wifi-provision.service
+After=network-online.target digipath-wifi-provision.service
 
 [Service]
 Type=simple
@@ -221,6 +233,12 @@ HOOK_SCRIPT="$REPO_ROOT/scripts/pi-install-network-hook.sh"
 if [[ -f "$HOOK_SCRIPT" ]]; then
   echo "Installing WiFi/IP auto-restart hook..."
   bash "$HOOK_SCRIPT"
+fi
+
+WIFI_PROVISION_SCRIPT="$REPO_ROOT/scripts/pi-install-wifi-provision.sh"
+if [[ -f "$WIFI_PROVISION_SCRIPT" ]]; then
+  echo "Installing phone WiFi setup hotspot..."
+  DIGIPATH_WS_DIR="$TARGET_DIR" bash "$WIFI_PROVISION_SCRIPT"
 fi
 
 systemctl restart digipath-scanner.service

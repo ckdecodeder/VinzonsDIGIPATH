@@ -4,6 +4,7 @@ const { Device, DeviceEvent, Command, Document } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { deviceLimiter } = require('../utils/rateLimit');
 const { requireDeviceApiKey, getBridgeBaseUrl, fetchBridgeEndpoint, cleanBridgeErrorText, normalizeBridgeBaseUrl, isPrivateBridgeHost } = require('../utils/bridge');
+const { toUserFacingError } = require('../utils/userFacingError');
 const {
   asyncHandler,
   requireFields,
@@ -101,7 +102,7 @@ router.put('/devices/commands/:id', deviceLimiter, requireDeviceApiKey, asyncHan
     {
       status,
       resultDocumentId: req.body.resultDocumentId?.trim(),
-      errorMessage: req.body.errorMessage?.trim(),
+      errorMessage: toUserFacingError(req.body.errorMessage?.trim(), 'Scan could not be completed. Please try again.'),
       executedAt: status === 'Executed' || status === 'Failed' || status === 'Cancelled'
         ? new Date().toISOString()
         : undefined,
@@ -666,7 +667,13 @@ router.get('/commands/:id/status', allRoles, asyncHandler(async (req, res) => {
     }).lean();
   }
 
-  res.json({ ...command, resultDocument });
+  res.json({
+    ...command,
+    errorMessage: command.errorMessage
+      ? toUserFacingError(command.errorMessage, 'Scan could not be completed. Please try again.')
+      : command.errorMessage,
+    resultDocument,
+  });
 }));
 
 router.post('/commands/cancel', scannerCommandRoles, asyncHandler(async (req, res) => {

@@ -28,6 +28,8 @@ import {
 import { resolveUploadUrl, isPdfMedia } from "../utils/mediaUrl";
 import { getReportedBridgeUrl, probeLanBridge, fetchLanSnapshotAny } from "../utils/bridgePreview";
 import { commandService, bridgeService } from "../api/documentService";
+import { toUserFacingError } from "../utils/userFacingError";
+import { validateRequiredFields, clearFieldError } from "../utils/formValidation";
 import { useOptionalRealtime } from "../context/RealtimeContext";
 import { useLiveDevice } from "../hooks/useLiveDevice";
 import {
@@ -294,6 +296,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     senderNotificationChannels: ['sms', 'email'],
     remarks: '',
   });
+  const [formErrors, setFormErrors] = useState({});
+  const [formErrorSummary, setFormErrorSummary] = useState('');
 
   useEffect(() => {
     return () => {
@@ -304,7 +308,26 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
   const handleFormChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    setFormErrors(prev => clearFieldError(prev, field));
+    if (formErrorSummary) setFormErrorSummary('');
   };
+
+  const validateScannerDetails = () => validateRequiredFields([
+    { key: 'subject', label: 'Document subject', value: formData.subject },
+    { key: 'senderName', label: 'Sender name', value: formData.senderName },
+    {
+      key: 'documentTypeOther',
+      label: 'Document type',
+      value: formData.documentTypeOther,
+      when: isOtherDocumentType(formData.documentTypeId),
+    },
+    {
+      key: 'originOfficeOther',
+      label: 'External office name',
+      value: formData.originOfficeOther,
+      when: formData.fromOfficeId === OTHER_OFFICE_VALUE,
+    },
+  ]);
 
   const applyExtractedDocFields = (doc, auto = {}) => {
     const newSubject = resolveAutoSubject(doc);
@@ -873,12 +896,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         setIsSubjectExtracting(false);
         setEnrichmentHint(
           isPlaceholderSubject(autoFilledRef.current?.subject)
-            ? 'AI extraction did not finish. Enter the subject manually, or set DIGIPATH_GROQ_API_KEY in network.env and run npm run network:sync.'
+            ? 'Auto-fill did not finish. Enter the subject and other fields manually.'
             : '',
         );
         return;
       }
-      setEnrichmentHint('Extracting document fields from HQ scan...');
+      setEnrichmentHint('Reading document fields from scan...');
       try {
         const result = await commandService.checkStatus(commandId);
         const doc = result?.resultDocument;
@@ -957,7 +980,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
     if (result.status === 'Failed' || result.status === 'Cancelled') {
       setIsDeviceScanning(false);
-      setDeviceScanStatus(result.errorMessage || `Physical scanner command ${result.status.toLowerCase()}.`);
+      setDeviceScanStatus(toUserFacingError(
+        result.errorMessage,
+        `Physical scanner command ${result.status.toLowerCase()}.`,
+      ));
       return true;
     }
 
@@ -1032,8 +1058,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       const isPendingConflict = /pending command/i.test(err.message || '');
       setDeviceScanStatus(
         isPendingConflict
-          ? 'The Pi still has a pending scan. Click Cancel Scan or wait about 1 minute.'
-          : (err.message || 'Unable to send scan command.'),
+          ? 'The scanner is still busy with a previous scan. Cancel it or wait a moment, then try again.'
+          : toUserFacingError(err.message, 'Unable to send scan command.'),
       );
     }
   };
@@ -1056,13 +1082,21 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       );
     } catch (err) {
       setIsDeviceScanning(false);
-      setDeviceScanStatus(err.message || 'Unable to cancel scan command.');
+      setDeviceScanStatus(toUserFacingError(err.message, 'Unable to cancel scan command.'));
     }
   };
 
   // STEP 2 → STEP 3: Proceed to review
   const handleProceedToReview = (e) => {
     e.preventDefault();
+    const validation = validateScannerDetails();
+    if (!validation.isValid) {
+      setFormErrors(validation.errors);
+      setFormErrorSummary(validation.summary);
+      return;
+    }
+    setFormErrors({});
+    setFormErrorSummary('');
     setStep(3);
   };
 
@@ -1136,6 +1170,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setIsSubjectExtracting(false);
     setEnrichmentHint('');
     setDeviceScanStatus('');
+    setFormErrors({});
+    setFormErrorSummary('');
     setStep(1);
   };
 
@@ -1173,6 +1209,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       senderNotificationChannels: ['sms', 'email'],
       remarks: '',
     });
+    setFormErrors({});
+    setFormErrorSummary('');
     setProgress(0);
   };
 
@@ -1402,8 +1440,15 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
               <div className="scanner-scan-actions">
                 <button
-                  onClick={handleCapture}
-                  disabled={isExtracting || isDeviceScanning || (isPhysicalSource && !device?.connected)}
+                  onClick={() => {
+                    if (isExtracting || isDeviceScanning) return;
+                    if (isPhysicalSource && !device?.connected) {
+                      setDeviceScanStatus('Scanner is offline. Check Pi power and network, then wait for heartbeat.');
+                      return;
+                    }
+                    handleCapture();
+                  }}
+                  disabled={isExtracting || isDeviceScanning}
                   className="btn btn-primary scanner-capture-btn scanner-capture-btn--block"
                 >
                   {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
@@ -1478,11 +1523,15 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </h3>
               </div>
 
-              <form onSubmit={handleProceedToReview}>
+              <form onSubmit={handleProceedToReview} noValidate>
+                {formErrorSummary && (
+                  <div className="form-error-summary" role="alert">{formErrorSummary}</div>
+                )}
                 <div className="form-group">
                   <label className="form-label">Document Subject *</label>
                   <input
-                    className="form-input" type="text"
+                    className={`form-input${formErrors.subject ? ' is-invalid' : ''}`}
+                    type="text"
                     value={formData.subject}
                     onChange={e => handleFormChange('subject', e.target.value)}
                     placeholder={
@@ -1492,8 +1541,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                           ? 'Extracting subject from scanned document...'
                           : 'Enter document subject')
                     }
-                    required autoFocus
+                    autoFocus
                   />
+                  {formErrors.subject && (
+                    <p className="form-field-error">{formErrors.subject}</p>
+                  )}
                   {enrichmentHint && (
                     <p className="form-hint" style={{ marginTop: '0.35rem', color: 'var(--warning)' }}>
                       {enrichmentHint}
@@ -1515,14 +1567,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     )}
                     {isOtherDocumentType(formData.documentTypeId) && (
                       <input
-                        className="form-input"
+                        className={`form-input${formErrors.documentTypeOther ? ' is-invalid' : ''}`}
                         type="text"
                         value={formData.documentTypeOther}
                         onChange={e => handleFormChange('documentTypeOther', e.target.value)}
                         placeholder="Specify document type"
-                        required
                         style={{ marginTop: '0.5rem' }}
                       />
+                      {formErrors.documentTypeOther && (
+                        <p className="form-field-error">{formErrors.documentTypeOther}</p>
+                      )}
                     )}
                   </div>
                   <div className="form-group">
@@ -1586,9 +1640,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   </p>
                   <div className="form-group">
                     <label className="form-label">Sender Name *</label>
-                    <input className="form-input" type="text" value={formData.senderName}
+                    <input
+                      className={`form-input${formErrors.senderName ? ' is-invalid' : ''}`}
+                      type="text"
+                      value={formData.senderName}
                       onChange={e => handleFormChange('senderName', e.target.value)}
-                      placeholder="Full name of the sender" required />
+                      placeholder="Full name of the sender"
+                    />
+                    {formErrors.senderName && (
+                      <p className="form-field-error">{formErrors.senderName}</p>
+                    )}
                   </div>
                   <div className="form-grid">
                     <div className="form-group">
@@ -1663,14 +1724,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     </select>
                     {formData.fromOfficeId === OTHER_OFFICE_VALUE && (
                       <input
-                        className="form-input"
+                        className={`form-input${formErrors.originOfficeOther ? ' is-invalid' : ''}`}
                         type="text"
                         value={formData.originOfficeOther}
                         onChange={e => handleFormChange('originOfficeOther', e.target.value)}
                         placeholder="Name of school, agency, municipality, or external office"
-                        required
                         style={{ marginTop: '0.5rem' }}
                       />
+                      {formErrors.originOfficeOther && (
+                        <p className="form-field-error">{formErrors.originOfficeOther}</p>
+                      )}
                     )}
                   </div>
                   <div className="form-group">
@@ -1705,12 +1768,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   <button
                     type="submit"
                     className="btn btn-primary"
-                    disabled={
-                      !formData.subject.trim() ||
-                      !formData.senderName.trim() ||
-                      (isOtherDocumentType(formData.documentTypeId) && !formData.documentTypeOther.trim()) ||
-                      (formData.fromOfficeId === OTHER_OFFICE_VALUE && !formData.originOfficeOther.trim())
-                    }
                   >
                     Review & Submit <ArrowRight size={16} />
                   </button>

@@ -31,6 +31,8 @@ ACTION=="remove", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{DEVTYPE}=="partiti
   RUN+="/bin/systemd-run --collect --setenv=DIGIPATH_USER=${RUN_USER} ${ENSURE_BIN}"
 EOF
 
+apt-get install -y rsync psmisc udisks2 || true
+
 udevadm control --reload-rules
 udevadm trigger
 

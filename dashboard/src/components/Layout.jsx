@@ -28,6 +28,44 @@ import {
   XCircle,
 } from 'lucide-react';
 
+const NOTIFICATION_DOCK_SIZE = 46;
+const NOTIFICATION_DOCK_MARGIN = 12;
+const NOTIFICATION_POS_KEY = 'dp_notification_dock_pos';
+
+const clampNotificationDockPosition = (x, y) => {
+  if (typeof window === 'undefined') return { x, y };
+  const maxX = window.innerWidth - NOTIFICATION_DOCK_SIZE - NOTIFICATION_DOCK_MARGIN;
+  const maxY = window.innerHeight - NOTIFICATION_DOCK_SIZE - NOTIFICATION_DOCK_MARGIN;
+  return {
+    x: Math.min(Math.max(NOTIFICATION_DOCK_MARGIN, x), maxX),
+    y: Math.min(Math.max(NOTIFICATION_DOCK_MARGIN, y), maxY),
+  };
+};
+
+const getDefaultNotificationDockPosition = () => {
+  if (typeof window === 'undefined') return { x: 0, y: 0 };
+  const rootStyle = getComputedStyle(document.documentElement);
+  const topbarHeight = parseFloat(rootStyle.getPropertyValue('--app-topbar-height')) || 120;
+  const top = topbarHeight - 20 - NOTIFICATION_DOCK_SIZE;
+  const right = 27.2;
+  const x = window.innerWidth - right - NOTIFICATION_DOCK_SIZE;
+  return clampNotificationDockPosition(x, top);
+};
+
+const loadNotificationDockPosition = () => {
+  try {
+    const raw = localStorage.getItem(NOTIFICATION_POS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+      return clampNotificationDockPosition(parsed.x, parsed.y);
+    }
+  } catch {
+    // ignore invalid saved position
+  }
+  return null;
+};
+
 const Layout = ({
   children,
   currentPage,
@@ -47,6 +85,100 @@ const Layout = ({
 }) => {
   const [isNotificationDockOpen, setIsNotificationDockOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [notificationDockPosition, setNotificationDockPosition] = useState(
+    () => loadNotificationDockPosition() || getDefaultNotificationDockPosition(),
+  );
+  const [isNotificationDockDragging, setIsNotificationDockDragging] = useState(false);
+  const notificationDockDragRef = useRef({
+    active: false,
+    moved: false,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+  });
+  const notificationDockPositionRef = useRef(notificationDockPosition);
+
+  useEffect(() => {
+    notificationDockPositionRef.current = notificationDockPosition;
+  }, [notificationDockPosition]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setNotificationDockPosition((prev) => clampNotificationDockPosition(prev.x, prev.y));
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleNotificationDockPointerDown = (event) => {
+    if (event.button !== 0) return;
+    notificationDockDragRef.current = {
+      active: true,
+      moved: false,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: notificationDockPositionRef.current.x,
+      originY: notificationDockPositionRef.current.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleNotificationDockPointerMove = (event) => {
+    const drag = notificationDockDragRef.current;
+    if (!drag.active) return;
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (!drag.moved && (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4)) {
+      drag.moved = true;
+      setIsNotificationDockDragging(true);
+    }
+    if (!drag.moved) return;
+
+    setNotificationDockPosition((prev) => {
+      const next = clampNotificationDockPosition(drag.originX + deltaX, drag.originY + deltaY);
+      notificationDockPositionRef.current = next;
+      return next;
+    });
+  };
+
+  const finishNotificationDockPointer = (event) => {
+    const drag = notificationDockDragRef.current;
+    if (!drag.active) return;
+
+    drag.active = false;
+    setIsNotificationDockDragging(false);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    if (drag.moved) {
+      try {
+        localStorage.setItem(
+          NOTIFICATION_POS_KEY,
+          JSON.stringify(notificationDockPositionRef.current),
+        );
+      } catch {
+        // ignore storage failures
+      }
+      return;
+    }
+
+    setIsNotificationDockOpen((prev) => !prev);
+  };
+
+  const handleNotificationDockDoubleClick = () => {
+    const resetPosition = getDefaultNotificationDockPosition();
+    setNotificationDockPosition(resetPosition);
+    try {
+      localStorage.removeItem(NOTIFICATION_POS_KEY);
+    } catch {
+      // ignore storage failures
+    }
+  };
+
+  const notificationPanelOnRight = notificationDockPosition.x < 380;
 
   const handleNavigate = (id) => {
     onNavigate(id);
@@ -292,32 +424,54 @@ const Layout = ({
         </div>
       </main>
 
-      {notifications.length > 0 && (
-        <aside className={`notification-dock ${isNotificationDockOpen ? 'open' : 'collapsed'}`}>
-          <button
-            type="button"
-            className="notification-dock-toggle"
-            onClick={() => setIsNotificationDockOpen(prev => !prev)}
-            title={isNotificationDockOpen ? 'Hide notifications' : 'Show notifications'}
-          >
-            <Bell size={16} />
+      <aside
+        className={[
+          'notification-dock',
+          isNotificationDockOpen ? 'open' : 'collapsed',
+          isNotificationDockDragging ? 'is-dragging' : '',
+          notificationPanelOnRight ? 'panel-right' : '',
+        ].filter(Boolean).join(' ')}
+        style={{
+          top: `${notificationDockPosition.y}px`,
+          left: `${notificationDockPosition.x}px`,
+        }}
+      >
+        <button
+          type="button"
+          className="notification-dock-toggle"
+          onPointerDown={handleNotificationDockPointerDown}
+          onPointerMove={handleNotificationDockPointerMove}
+          onPointerUp={finishNotificationDockPointer}
+          onPointerCancel={finishNotificationDockPointer}
+          onDoubleClick={handleNotificationDockDoubleClick}
+          title="Drag to move. Click to open. Double-click to reset position."
+          aria-label="Notifications. Drag to move, click to open."
+        >
+          <Bell size={16} />
+          {notifications.length > 0 && (
             <span className="notification-dock-badge">{formatBadgeCount(notifications.length)}</span>
-          </button>
+          )}
+        </button>
 
-          {isNotificationDockOpen && (
-            <div className="notification-dock-panel">
-              <div className="notification-dock-header">
-                <div>
-                  <strong>Needs Attention</strong>
-                  <span>{notifications.length} active item{notifications.length === 1 ? '' : 's'}</span>
-                </div>
-                <button className="btn-icon" onClick={() => setIsNotificationDockOpen(false)} title="Collapse notifications">
-                  <X size={15} />
-                </button>
+        {isNotificationDockOpen && (
+          <div className="notification-dock-panel">
+            <div className="notification-dock-header">
+              <div>
+                <strong>Needs Attention</strong>
+                <span>
+                  {notifications.length} active item{notifications.length === 1 ? '' : 's'}
+                </span>
               </div>
+              <button className="btn-icon" onClick={() => setIsNotificationDockOpen(false)} title="Collapse notifications">
+                <X size={15} />
+              </button>
+            </div>
 
-              <div className="notification-dock-list">
-                {notifications.map((item) => (
+            <div className="notification-dock-list">
+              {notifications.length === 0 ? (
+                <p className="notification-dock-empty">No new alerts right now.</p>
+              ) : (
+                notifications.map((item) => (
                   <div key={item.id} className="notification-row">
                     <button className={`notification-item ${item.type}`} onClick={() => onNotificationSelect ? onNotificationSelect(item) : onNavigate(item.page)}>
                       <span className="notification-status-symbol">{getNotificationIcon(item)}</span>
@@ -331,12 +485,12 @@ const Layout = ({
                       <X size={12} />
                     </button>
                   </div>
-                ))}
-              </div>
+                ))
+              )}
             </div>
-          )}
-        </aside>
-      )}
+          </div>
+        )}
+      </aside>
     </div>
   );
 };
