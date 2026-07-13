@@ -48,18 +48,20 @@ const paperGuides = [
   { id: 'legal-landscape', label: 'Legal', width: 14, height: 8.5, orientation: 'landscape' },
   { id: 'a4-landscape', label: 'A4', width: 297, height: 210, orientation: 'landscape' },
   { id: 'id-card', label: 'ID / Card', width: 85.6, height: 53.98, orientation: 'landscape' },
+  { id: 'letter-portrait', label: 'Portrait', width: 8.5, height: 11, orientation: 'portrait' },
 ];
 
 const getPaperGuideLayout = (guide) => {
   const width = Number(guide?.width) || 11;
   const height = Number(guide?.height) || 8.5;
   const ratio = width / height;
+  const orientation = guide?.orientation === 'portrait' ? 'portrait' : 'landscape';
   return {
     ratio,
-    orientation: 'landscape',
-    overlayClass: 'scanner-paper-overlay--landscape',
-    frameClass: 'scanner-paper-frame--landscape',
-    shellClass: 'scanner-preview-shell--landscape',
+    orientation,
+    overlayClass: `scanner-paper-overlay--${orientation}`,
+    frameClass: `scanner-paper-frame--${orientation}`,
+    shellClass: `scanner-preview-shell--${orientation}`,
   };
 };
 
@@ -1028,7 +1030,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         priorityLevel: formData.priorityLevel,
         documentTypeId: formData.documentTypeId,
         sortLayer: resolveSortLayer(formData.documentTypeId),
-        scanOrientation: 'landscape',
+        scanOrientation: selectedPaperGuide.orientation || 'landscape',
         paperGuideId: selectedPaperGuide.id,
         scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
         scanHeight: streamDims.height > 0 ? streamDims.height : (deviceStreamResolution?.height || 1080),
@@ -1566,17 +1568,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                       <p className="field-hint">{getSortLayerHint(formData.documentTypeId)}</p>
                     )}
                     {isOtherDocumentType(formData.documentTypeId) && (
-                      <input
-                        className={`form-input${formErrors.documentTypeOther ? ' is-invalid' : ''}`}
-                        type="text"
-                        value={formData.documentTypeOther}
-                        onChange={e => handleFormChange('documentTypeOther', e.target.value)}
-                        placeholder="Specify document type"
-                        style={{ marginTop: '0.5rem' }}
-                      />
-                      {formErrors.documentTypeOther && (
-                        <p className="form-field-error">{formErrors.documentTypeOther}</p>
-                      )}
+                      <>
+                        <input
+                          className={`form-input${formErrors.documentTypeOther ? ' is-invalid' : ''}`}
+                          type="text"
+                          value={formData.documentTypeOther}
+                          onChange={e => handleFormChange('documentTypeOther', e.target.value)}
+                          placeholder="Specify document type"
+                          style={{ marginTop: '0.5rem' }}
+                        />
+                        {formErrors.documentTypeOther && (
+                          <p className="form-field-error">{formErrors.documentTypeOther}</p>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="form-group">
@@ -1723,17 +1727,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                         .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
                     {formData.fromOfficeId === OTHER_OFFICE_VALUE && (
-                      <input
-                        className={`form-input${formErrors.originOfficeOther ? ' is-invalid' : ''}`}
-                        type="text"
-                        value={formData.originOfficeOther}
-                        onChange={e => handleFormChange('originOfficeOther', e.target.value)}
-                        placeholder="Name of school, agency, municipality, or external office"
-                        style={{ marginTop: '0.5rem' }}
-                      />
-                      {formErrors.originOfficeOther && (
-                        <p className="form-field-error">{formErrors.originOfficeOther}</p>
-                      )}
+                      <>
+                        <input
+                          className={`form-input${formErrors.originOfficeOther ? ' is-invalid' : ''}`}
+                          type="text"
+                          value={formData.originOfficeOther}
+                          onChange={e => handleFormChange('originOfficeOther', e.target.value)}
+                          placeholder="Name of school, agency, municipality, or external office"
+                          style={{ marginTop: '0.5rem' }}
+                        />
+                        {formErrors.originOfficeOther && (
+                          <p className="form-field-error">{formErrors.originOfficeOther}</p>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="form-group">

@@ -139,6 +139,20 @@ const DocumentList = ({
 
   const getStatusClass = (status) => getWorkflowStatus(status).toLowerCase().replace(/\s+/g, '-');
 
+  const getTableStatusDisplay = (doc) => {
+    const intake = doc.intakeStatus || 'Approved';
+    if (intake === 'Pending Review') {
+      return { label: 'Pending Review', className: 'status-pending' };
+    }
+    if (intake === 'Rejected') {
+      return { label: 'Rejected', className: 'status-archived' };
+    }
+    return {
+      label: getWorkflowStatus(doc),
+      className: `status-${getStatusClass(doc)}`,
+    };
+  };
+
   const isOtherDocumentType = (typeId) => {
     const docType = documentTypes.find(d => d.id === typeId);
     return docType?.category?.toLowerCase().includes('other');
@@ -801,6 +815,7 @@ const DocumentList = ({
   return (
     <>
       <PageShell
+        className="documents-page"
         header={
           <div className="page-header page-header--align-bottom">
             <div className="page-header-left">
@@ -879,20 +894,20 @@ const DocumentList = ({
         }
       >
       <section className="document-panel">
-        <div className="table-container">
-          <table>
+        <div className="table-container documents-table-container">
+          <table className="documents-table">
           <thead>
             <tr>
               <th className="documents-col-tracking">Tracking #</th>
               <th className="documents-col-subject">Subject</th>
-              <th style={{ cursor: 'pointer' }} onClick={() => handleSort('priority')}>
+              <th className="documents-col-priority" style={{ cursor: 'pointer' }} onClick={() => handleSort('priority')}>
                 Priority <SortIcon field="priority" />
               </th>
               <th className="documents-col-type">Type</th>
-              <th>Current Location</th>
+              <th className="documents-col-location">Location</th>
               <th className="documents-col-direction">Direction</th>
               <th className="documents-col-status-header">Status</th>
-              <th>Files</th>
+              <th className="documents-col-files">Files</th>
               <th className="documents-col-date" style={{ cursor: 'pointer' }} onClick={() => handleSort('dateReceived')}>
                 Date <SortIcon field="dateReceived" />
               </th>
@@ -907,63 +922,56 @@ const DocumentList = ({
               const files = getDocumentFiles(doc);
               const timeline = getTimeline(doc);
               const workflowExplanation = getWorkflowExplanation(doc);
+              const tableStatus = getTableStatusDisplay(doc);
 
               return (
                 <React.Fragment key={doc.id}>
                   <tr
                     className="clickable-row"
-                    title="Open document details"
+                    aria-label="Open document details"
                     onClick={() => setDetailDoc(doc)}
                   >
-                    <td className="documents-col-tracking"><span className="td-mono">{doc.trackingNumber}</span></td>
-                    <td className="td-primary documents-col-subject">{doc.subject}</td>
-                    <td>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                        padding: '0.15rem 0.5rem', borderRadius: '9999px',
-                        fontSize: '0.7rem', fontWeight: 600,
-                        background: pInfo.bg, color: pInfo.color,
-                        border: `1px solid ${pInfo.color}22`,
-                      }}>
-                        <Flag size={10} />
+                    <td className="documents-col-tracking" title={doc.trackingNumber}>
+                      <span className="td-mono documents-tracking-code">{doc.trackingNumber}</span>
+                    </td>
+                    <td className="td-primary documents-col-subject" title={doc.subject}>{doc.subject}</td>
+                    <td className="documents-col-priority">
+                      <span
+                        className="documents-priority-badge"
+                        style={{
+                          background: pInfo.bg,
+                          color: pInfo.color,
+                          border: `1px solid ${pInfo.color}22`,
+                        }}
+                      >
+                        <Flag size={9} />
                         {pInfo.label}
                       </span>
                     </td>
-                    <td className="documents-col-type">{getDocumentTypeLabel(doc)}</td>
-                    <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                        <MapPin size={13} style={{ flexShrink: 0 }} />
-                        {getCurrentLocation(doc)}
+                    <td className="documents-col-type" title={getDocumentTypeLabel(doc)}>{getDocumentTypeLabel(doc)}</td>
+                    <td className="documents-col-location" title={getCurrentLocation(doc)}>
+                      <span className="documents-location-label">
+                        <MapPin size={11} />
+                        <span className="documents-location-text">{getCurrentLocation(doc)}</span>
                       </span>
                     </td>
                     <td className="documents-col-direction">
                       <span className={`direction-badge direction-${doc.documentDirection.toLowerCase()}`}>
-                        {doc.documentDirection === 'Incoming' ? <Inbox size={12} /> : <Send size={12} />}
-                        {' '}{doc.documentDirection}
+                        {doc.documentDirection === 'Incoming' ? <Inbox size={11} /> : <Send size={11} />}
+                        {doc.documentDirection}
                       </span>
                     </td>
                     <td className="documents-col-status-cell">
-                      <span className={`status-badge status-${getStatusClass(doc)}`}>
-                        {getWorkflowStatus(doc)}
-                      </span>
-                      {(doc.intakeStatus || 'Approved') !== 'Approved' && (
-                        <span
-                          className={`status-badge ${doc.intakeStatus === 'Rejected' ? 'status-archived' : 'status-in-transit'}`}
-                          style={{ display: 'inline-flex', marginTop: '0.35rem' }}
-                        >
-                          {doc.intakeStatus}
-                        </span>
-                      )}
-                      {workflowExplanation && (
-                        <small className="workflow-explanation">{workflowExplanation}</small>
-                      )}
-                    </td>
-                    <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', color: files.length ? 'var(--accent)' : 'var(--text-muted)', fontSize: '0.78rem', fontWeight: 600 }}>
-                        <Paperclip size={13} /> {files.length}
+                      <span className={`status-badge ${tableStatus.className}`}>
+                        {tableStatus.label}
                       </span>
                     </td>
-                    <td className="documents-col-date" style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
+                    <td className="documents-col-files">
+                      <span className={`documents-files-count ${files.length ? 'has-files' : ''}`}>
+                        <Paperclip size={12} /> {files.length}
+                      </span>
+                    </td>
+                    <td className="documents-col-date">{doc.dateReceived}</td>
                     <td className="documents-col-actions">
                       <div className="documents-actions-wrap">
                         <button className="btn-icon" title="Open details" onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
