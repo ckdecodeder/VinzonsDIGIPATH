@@ -7,7 +7,6 @@ import {
   Search,
   Plus,
   X,
-  Calendar,
   User,
   Eye,
   Download,
@@ -38,6 +37,7 @@ const ArchiveList = ({
   onNotify,
 }) => {
   const [search, setSearch] = useState("");
+  const [filterDate, setFilterDate] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [detailArchive, setDetailArchive] = useState(null);
   const [pageSize, setPageSize] = useState(20);
@@ -75,11 +75,29 @@ const ArchiveList = ({
     return date.toLocaleString();
   };
 
-  const formatArchiveDate = (value) => {
-    if (!value) return "Not recorded";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toISOString().slice(0, 10);
+  const getArchiveDateKey = (archive) => {
+    const raw = archive?.date;
+    if (!raw) return "";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) return String(raw);
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return String(raw).slice(0, 10);
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
+  const formatArchiveDateParts = (value) => {
+    if (!value) return { date: "Not recorded", time: "" };
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      const [rawDate = value, rawTime = ""] = String(value).split("T");
+      return { date: rawDate, time: rawTime.replace("Z", "") };
+    }
+    return {
+      date: parsed.toLocaleDateString(),
+      time: parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
   };
 
   const getDocumentFiles = (doc) => {
@@ -189,24 +207,26 @@ const ArchiveList = ({
 
   const filtered = enrichedArchives.filter((a) => {
     const term = search.toLowerCase();
-    if (!term) return true;
     const currentLocation = a.doc
       ? getOfficeName(a.doc.currentOfficeId || a.doc.originOfficeId)
       : "";
-    return (
+    const matchSearch =
+      !term ||
       (a.doc?.subject || "").toLowerCase().includes(term) ||
       (a.doc?.trackingNumber || "").toLowerCase().includes(term) ||
+      a.id.toLowerCase().includes(term) ||
       getUserFullName(a.userId).toLowerCase().includes(term) ||
       (a.doc ? getDocTypeName(a.doc.documentTypeId) : "")
         .toLowerCase()
         .includes(term) ||
-      currentLocation.toLowerCase().includes(term)
-    );
+      currentLocation.toLowerCase().includes(term);
+    const matchDate = !filterDate || getArchiveDateKey(a) === filterDate;
+    return matchSearch && matchDate;
   });
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, filterDate]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginatedArchives = filtered.slice(
@@ -242,13 +262,14 @@ const ArchiveList = ({
   return (
     <>
       <PageShell
+        className="documents-page archives-page"
         header={
-          <div className="page-header">
+          <div className="page-header page-header--align-bottom">
             <div className="page-header-left">
               <h1>Archives</h1>
               <p>Documents that are filed, archived, and stored for records</p>
             </div>
-            <div className="page-header-actions page-header-actions--inline page-header-actions--mobile-only">
+            <div className="page-header-actions page-header-actions--inline">
               <button className="btn btn-primary" onClick={() => setShowForm(true)}>
                 <Plus size={16} /> Archive Document
               </button>
@@ -256,7 +277,7 @@ const ArchiveList = ({
           </div>
         }
         toolbar={
-          <div className="page-toolbar-row">
+          <div className="document-toolbar document-toolbar--archives">
             <div className="filter-dropdown filter-dropdown-search">
               <label>Search</label>
               <div className="search-bar document-search-bar">
@@ -269,65 +290,70 @@ const ArchiveList = ({
                 />
               </div>
             </div>
-            <div className="page-toolbar-actions page-toolbar-actions--desktop-only">
-              <button className="btn btn-primary" onClick={() => setShowForm(true)}>
-                <Plus size={16} /> Archive Document
-              </button>
+
+            <div className="filter-dropdown filter-dropdown-date">
+              <label htmlFor="archive-date-filter">Date</label>
+              <input
+                id="archive-date-filter"
+                className="form-input"
+                type="date"
+                value={filterDate}
+                onChange={(e) => setFilterDate(e.target.value)}
+              />
             </div>
           </div>
         }
       >
-      <div className="table-container">
-        <table>
+      <section className="document-panel">
+        <div className="table-container documents-table-container">
+        <table className="archives-table documents-table">
           <thead>
             <tr>
-              <th>Archive ID</th>
-              <th>Tracking #</th>
-              <th>Document Subject</th>
-              <th>Type</th>
-              <th>Archived By</th>
+              <th className="archives-col-id">Archive ID</th>
+              <th className="archives-col-tracking">Tracking #</th>
+              <th className="archives-col-subject">Document Subject</th>
+              <th className="archives-col-type">Type</th>
+              <th className="archives-col-archived-by">Archived By</th>
               <th className="archives-col-date">Archive Date</th>
             </tr>
           </thead>
           <tbody>
             {paginatedArchives.length > 0 ? (
-              paginatedArchives.map((a) => (
+              paginatedArchives.map((a) => {
+                const dateParts = formatArchiveDateParts(a.date);
+                return (
                 <tr
                   key={a.id}
                   className="clickable-row"
+                  aria-label="View archive details"
                   onClick={() => setDetailArchive(a)}
-                  title="View archive details"
                 >
-                  <td>
-                    <span className="td-mono">{a.id}</span>
+                  <td className="archives-col-id" title={a.id}>
+                    <span className="td-mono documents-tracking-code">{a.id}</span>
                   </td>
-                  <td>
-                    <span className="td-mono">
+                  <td className="archives-col-tracking" title={a.doc?.trackingNumber || "-"}>
+                    <span className="td-mono documents-tracking-code">
                       {a.doc?.trackingNumber || "-"}
                     </span>
                   </td>
-                  <td className="td-primary">{a.doc?.subject || "Unknown"}</td>
-                  <td>{a.doc ? getDocTypeName(a.doc.documentTypeId) : "-"}</td>
-                  <td>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "0.5rem",
-                      }}
-                    >
-                      <User size={14} style={{ color: "var(--text-muted)" }} />
-                      {getUserFullName(a.userId)}
-                    </div>
+                  <td className="td-primary archives-col-subject" title={a.doc?.subject || "Unknown"}>
+                    {a.doc?.subject || "Unknown"}
+                  </td>
+                  <td className="archives-col-type" title={a.doc ? getDocTypeName(a.doc.documentTypeId) : "-"}>
+                    {a.doc ? getDocTypeName(a.doc.documentTypeId) : "-"}
+                  </td>
+                  <td className="archives-col-archived-by" title={getUserFullName(a.userId)}>
+                    {getUserFullName(a.userId)}
                   </td>
                   <td className="archives-col-date">
-                    <div className="archives-date-wrap">
-                      <Calendar size={14} className="archives-date-icon" />
-                      <span>{formatArchiveDate(a.date)}</span>
+                    <div className="archives-date-stack">
+                      <span>{dateParts.date}</span>
+                      {dateParts.time && <span>{dateParts.time}</span>}
                     </div>
                   </td>
                 </tr>
-              ))
+                );
+              })
             ) : (
               <tr>
                 <td colSpan="6">
@@ -387,6 +413,7 @@ const ArchiveList = ({
           </button>
         </div>
       </div>
+      </section>
       </PageShell>
 
       {detailArchive && !previewFile &&

@@ -2261,10 +2261,12 @@ tbody tr:hover {
   vertical-align: middle;
 }
 
+.transmissions-page .transmissions-table {
+  table-layout: fixed;
+}
+
 .transmissions-col-id {
-  width: 150px;
-  min-width: 150px;
-  max-width: 150px;
+  width: 10%;
 }
 
 .transmissions-table tbody td {
@@ -2272,71 +2274,89 @@ tbody tr:hover {
 }
 
 .transmissions-col-document {
-  width: 280px;
-  min-width: 220px;
-  max-width: 280px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  line-height: 1.35;
+  width: 16%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .transmissions-col-route {
-  min-width: 300px;
-  max-width: 360px;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  width: 18%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.transmissions-route-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.transmissions-route-office {
+  display: inline-block;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.transmissions-route-label .transfer-arrow {
+  flex-shrink: 0;
+  color: var(--primary);
 }
 
 .transmissions-col-sent-by {
-  min-width: 160px;
-  max-width: 200px;
+  width: 11%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .transmissions-col-received-by {
-  min-width: 220px;
-  max-width: 320px;
-  white-space: normal;
-  overflow: visible;
-  text-overflow: unset;
-  line-height: 1.35;
+  width: 12%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.transmissions-pending-text {
+  color: var(--warning);
+  font-size: 0.72rem;
+  font-weight: 500;
 }
 
 .transmissions-col-date {
+  width: 9%;
   color: var(--text-muted);
-  min-width: 145px;
-  width: 145px;
-  max-width: 145px;
-  padding-right: 0.75rem;
 }
 
 .transmissions-date-stack {
   display: inline-flex;
   flex-direction: column;
-  gap: 0.2rem;
-  line-height: 1.2;
+  gap: 0.15rem;
+  line-height: 1.15;
 }
 
 .transmissions-date-stack span:first-child {
   font-weight: 500;
   color: var(--text-secondary);
+  font-size: 0.68rem;
 }
 
 .transmissions-date-stack span:last-child {
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.62rem;
 }
 
 .transmissions-col-type {
+  width: 7%;
   text-align: left;
   white-space: nowrap;
-  width: 118px;
-  min-width: 118px;
-  max-width: 118px;
-  padding-left: 1rem;
-  padding-right: 2.5rem;
 }
 
 .transmissions-table th.transmissions-col-type,
@@ -2348,74 +2368,82 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 4.85rem;
-  padding: 0.35rem 0.75rem;
+  padding: 0.12rem 0.4rem;
   border-radius: 9999px;
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   font-weight: 600;
   border: 1px solid transparent;
   background: var(--primary);
   color: white;
   cursor: default;
-}
-
-.transmissions-col-actions {
-  text-align: center;
-  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .transmissions-col-status {
-  min-width: 270px;
-  padding-left: 2rem;
-  padding-right: 1.25rem;
+  width: 12%;
+  text-align: left;
 }
 
-.transmissions-table th.transmissions-col-status,
-.transmissions-table td.transmissions-col-status {
-  padding-left: 2rem;
+.document-toolbar--archives {
+  grid-template-columns: minmax(0, 2.4fr) minmax(0, 1fr);
 }
 
-.transmissions-col-status .status-badge,
-.transmissions-col-status .workflow-explanation {
-  vertical-align: middle;
+.archives-page .archives-table {
+  table-layout: fixed;
 }
 
-.transmissions-col-status .workflow-explanation {
-  margin-top: 0.35rem;
+.archives-col-id {
+  width: 14%;
 }
 
-.transmissions-col-actions .btn {
-  margin-left: auto;
-  margin-right: auto;
+.archives-col-tracking {
+  width: 12%;
 }
 
-.transmissions-col-actions {
-  min-width: 140px;
+.archives-col-subject {
+  width: 28%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.transmissions-actions-wrap {
-  min-height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
+.archives-col-type {
+  width: 14%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archives-col-archived-by {
+  width: 18%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .archives-col-date {
-  min-width: 150px;
-  white-space: nowrap;
-}
-
-.archives-date-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
+  width: 14%;
   color: var(--text-muted);
 }
 
-.archives-date-icon {
-  flex-shrink: 0;
+.archives-date-stack {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  line-height: 1.15;
+}
+
+.archives-date-stack span:first-child {
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+}
+
+.archives-date-stack span:last-child {
+  color: var(--text-muted);
+  font-size: 0.62rem;
 }
 
 .reports-date-col {

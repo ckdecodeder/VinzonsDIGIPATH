@@ -2415,6 +2415,17 @@ def run():
         mechanism_start_door_monitor()
     except Exception as err:
         print(f"[PiWS] Door monitor not started: {err}")
+    mech = get_mechanism()
+    if mech.enabled:
+        print(
+            f"[PiWS] Mechanism: ON "
+            f"({'open-loop' if mech.open_loop else 'hall-guided'})"
+        )
+    else:
+        print(
+            "[PiWS] Mechanism: OFF — scan will not move NEMA motors. "
+            "Set DIGIPATH_MECH_ENABLED=1 in .env (test-motors.sh is separate)."
+        )
     realtime_worker()
 
 
