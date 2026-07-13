@@ -1,4 +1,4 @@
-import { getAttachmentUrl, isPdfMedia } from './mediaUrl';
+import { isPdfMedia, getAttachmentUrl } from './mediaUrl';
 
 const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const MIME_BY_EXT = {

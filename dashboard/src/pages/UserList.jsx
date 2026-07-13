@@ -1,19 +1,24 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import {
-  Users,
   Search,
   Shield,
   ShieldCheck,
   Building2,
-  Mail,
   ScanLine,
   Plus,
   X,
   Edit2,
   Trash2,
+  Briefcase,
 } from "lucide-react";
+import {
+  defaultRoleForOffice,
+  getAvailableRoles,
+  ROLE_HINTS,
+  validateRoleAssignment,
+} from "../utils/userRoles";
 
 const UserList = ({
   users,
@@ -40,6 +45,17 @@ const UserList = ({
     officeId: offices.length > 0 ? offices[0].id : "",
   });
 
+  const availableRoles = useMemo(
+    () =>
+      getAvailableRoles({
+        offices,
+        officeId: formData.officeId,
+        users,
+        excludeUserId: editUser?.id || null,
+      }),
+    [offices, formData.officeId, users, editUser?.id],
+  );
+
   const roleColors = {
     Admin: {
       bg: "rgba(239, 68, 68, 0.1)",
@@ -55,6 +71,11 @@ const UserList = ({
       bg: "var(--success-bg)",
       color: "var(--success)",
       icon: <ScanLine size={10} />,
+    },
+    Office: {
+      bg: "rgba(245, 158, 11, 0.12)",
+      color: "#d97706",
+      icon: <Briefcase size={10} />,
     },
   };
 
@@ -112,6 +133,10 @@ const UserList = ({
       return "First name, last name, and username are required.";
     }
 
+    if (!payload.role) {
+      return "No role is available for the selected office. Choose a different office or free up an Admin/Mayor slot.";
+    }
+
     if (!editUser && !payload.password) {
       return "Password is required for a new user.";
     }
@@ -130,8 +155,51 @@ const UserList = ({
       return "That username is already used by another account.";
     }
 
+    const roleError = validateRoleAssignment({
+      role: payload.role,
+      officeId: payload.officeId,
+      offices,
+      users,
+      excludeUserId: editUser?.id || null,
+    });
+    if (roleError) {
+      return roleError;
+    }
+
     return "";
   };
+
+  const handleOfficeChange = (officeId) => {
+    setFormData((prev) => {
+      const roles = getAvailableRoles({
+        offices,
+        officeId,
+        users,
+        excludeUserId: editUser?.id || null,
+      });
+      const nextRole = roles.includes(prev.role)
+        ? prev.role
+        : defaultRoleForOffice(officeId, offices, users, editUser?.id || null);
+      return { ...prev, officeId, role: nextRole };
+    });
+  };
+
+  useEffect(() => {
+    if (!showForm) return;
+    if (!availableRoles.includes(formData.role)) {
+      setFormData((prev) => ({
+        ...prev,
+        role:
+          availableRoles[0] ||
+          defaultRoleForOffice(
+            prev.officeId,
+            offices,
+            users,
+            editUser?.id || null,
+          ),
+      }));
+    }
+  }, [availableRoles, formData.role, offices, showForm, users, editUser?.id]);
 
   const closeForm = () => {
     if (isSaving) return;
@@ -178,6 +246,8 @@ const UserList = ({
 
   const openForm = (user = null) => {
     setFormError("");
+    const defaultOfficeId = offices[0]?.id || "";
+    const excludeUserId = user?.id || null;
     if (user) {
       setEditUser(user);
       setFormData({
@@ -186,8 +256,15 @@ const UserList = ({
         fname: user.fname || "",
         lname: user.lname || "",
         mname: user.mname || "",
-        role: user.role || "Receptionist",
-        officeId: user.officeId || offices[0]?.id || "",
+        role:
+          user.role ||
+          defaultRoleForOffice(
+            user.officeId || defaultOfficeId,
+            offices,
+            users,
+            excludeUserId,
+          ),
+        officeId: user.officeId || defaultOfficeId,
       });
     } else {
       setEditUser(null);
@@ -197,8 +274,8 @@ const UserList = ({
         fname: "",
         lname: "",
         mname: "",
-        role: "Receptionist",
-        officeId: offices.length > 0 ? offices[0].id : "",
+        role: defaultRoleForOffice(defaultOfficeId, offices, users),
+        officeId: defaultOfficeId,
       });
     }
     setShowForm(true);
@@ -477,31 +554,11 @@ const UserList = ({
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Role</label>
-                    <select
-                      className="form-select"
-                      value={formData.role}
-                      onChange={(e) =>
-                        setFormData({ ...formData, role: e.target.value })
-                      }
-                    >
-                      <option>Receptionist</option>
-                      <option>Mayor</option>
-                      <option>Admin</option>
-                    </select>
-                    <p className="field-hint">
-                      Controls the dashboards, actions, and reports this user
-                      can access.
-                    </p>
-                  </div>
-                  <div className="form-group">
                     <label className="form-label">Assigned Office</label>
                     <select
                       className="form-select"
                       value={formData.officeId}
-                      onChange={(e) =>
-                        setFormData({ ...formData, officeId: e.target.value })
-                      }
+                      onChange={(e) => handleOfficeChange(e.target.value)}
                     >
                       {offices.map((o) => (
                         <option key={o.id} value={o.id}>
@@ -510,8 +567,33 @@ const UserList = ({
                       ))}
                     </select>
                     <p className="field-hint">
-                      Limits office-level work such as receiving, routing, and
-                      visibility.
+                      Choose the office first. Available roles depend on this
+                      selection.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Role</label>
+                    <select
+                      className="form-select"
+                      value={formData.role}
+                      onChange={(e) =>
+                        setFormData({ ...formData, role: e.target.value })
+                      }
+                      disabled={availableRoles.length === 0}
+                    >
+                      {availableRoles.length === 0 ? (
+                        <option value="">No roles available</option>
+                      ) : (
+                        availableRoles.map((role) => (
+                          <option key={role} value={role}>
+                            {role}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <p className="field-hint">
+                      {ROLE_HINTS[formData.role] ||
+                        "Controls the dashboards, actions, and reports this user can access."}
                     </p>
                   </div>
                 </div>
@@ -567,7 +649,7 @@ const UserList = ({
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={isSaving}
+                  disabled={isSaving || availableRoles.length === 0}
                 >
                   {isSaving
                     ? "Saving..."

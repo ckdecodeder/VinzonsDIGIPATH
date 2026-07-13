@@ -56,3 +56,8 @@ export function isPdfMedia(url, mimeType = '') {
   if (!url) return false;
   return /\.pdf($|[?#])/i.test(url);
 }
+
+/** Resolve display URL from an attachment file object. */
+export function getAttachmentUrl(file) {
+  return resolveUploadUrl(file?.url || file?.dataUrl || '') || '';
+}

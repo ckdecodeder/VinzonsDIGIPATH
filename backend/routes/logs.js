@@ -5,7 +5,7 @@ const { protect, allowRoles } = require('../middleware/auth');
 const { asyncHandler, requireFields, generateId } = require('../utils/helpers');
 
 const adminOnly = allowRoles('Admin');
-const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
+const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 
 router.use(protect);
 

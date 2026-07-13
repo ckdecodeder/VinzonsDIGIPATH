@@ -16,17 +16,16 @@ const {
   normalizeText,
   isApprovalRole,
   getUserOfficeId,
-  isGlobalRole,
 } = require('../utils/helpers');
-const { persistAttachments } = require('../utils/attachments');
 const { normalizeSenderNotificationChannels, queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
+const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
 
 const adminOnly = allowRoles('Admin');
-const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
+const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 const approvalRoles = allowRoles('Admin', 'Mayor');
 const scannerRoles = allowRoles('Admin', 'Receptionist');
-const documentCreateRoles = allowRoles('Admin', 'Receptionist');
+const documentCreateRoles = allowRoles('Admin', 'Receptionist', 'Office');
 
 const updateOptions = { new: true, runValidators: true };
 const intakeStatuses = ['Pending Review', 'Approved', 'Rejected'];
@@ -35,68 +34,6 @@ const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
 const transmittableStatuses = ['Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged'];
 
 const storedWorkflowStatuses = ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
-
-const getScopedDocumentQuery = (req) => {
-  if (isGlobalRole(req)) return {};
-
-  const officeId = getUserOfficeId(req);
-  if (req.user?.role === 'Receptionist') {
-    return {
-      $or: [
-        { 'timeline.userId': req.user.id },
-        { verifiedBy: req.user.id },
-      ],
-    };
-  }
-
-  return {
-    $or: [
-      { originOfficeId: officeId },
-      { currentOfficeId: officeId },
-      { destinationOfficeId: officeId },
-      { 'timeline.userId': req.user.id },
-    ],
-  };
-};
-
-const getScopedTransmissionQuery = (req) => {
-  if (isGlobalRole(req)) return {};
-
-  const officeId = getUserOfficeId(req);
-  if (req.user?.role === 'Receptionist') {
-    return {
-      $or: [
-        { toOfficeId: officeId, receivedBy: { $in: [null, ''] } },
-        { sentBy: req.user.id },
-        { receivedBy: req.user.id },
-      ],
-    };
-  }
-
-  return {
-    $or: [
-      { fromOfficeId: officeId },
-      { toOfficeId: officeId },
-      { sentBy: req.user.id },
-      { receivedBy: req.user.id },
-    ],
-  };
-};
-
-const getScopedDocumentQueryWithTransmissions = async (req) => {
-  const baseQuery = getScopedDocumentQuery(req);
-  if (isGlobalRole(req)) return baseQuery;
-
-  const transmissions = await Transmission.find(getScopedTransmissionQuery(req)).select('documentId').lean();
-  const documentIds = transmissions.map((transmission) => transmission.documentId);
-
-  return {
-    $or: [
-      ...(baseQuery.$or || []),
-      { id: { $in: documentIds } },
-    ],
-  };
-};
 
 const assertCanAccessDocument = async (req, documentId) => {
   const doc = await Document.findOne({ id: documentId, ...(await getScopedDocumentQueryWithTransmissions(req)) });

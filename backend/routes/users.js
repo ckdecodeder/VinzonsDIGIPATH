@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { User, Transmission, Archive, Document, Command } = require('../models');
+const { User, Office, Transmission, Archive, Document, Command } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { stripPassword } = require('../utils/sanitize');
 const { asyncHandler, requireFields, createLogEntry, generateId, normalizeText } = require('../utils/helpers');
 const { broadcastDataInvalidate } = require('../utils/realtime');
+const { validateRoleAssignment } = require('../utils/userRoles');
 
 const adminOnly = allowRoles('Admin');
 const approvalRoles = allowRoles('Admin', 'Mayor');
@@ -80,6 +81,20 @@ router.post('/', adminOnly, asyncHandler(async (req, res) => {
     return res.status(409).json({ message: 'Username is already taken' });
   }
 
+  const [offices, existingUsers] = await Promise.all([
+    Office.find().lean(),
+    User.find().lean(),
+  ]);
+  const roleError = validateRoleAssignment({
+    role: payload.role,
+    officeId: payload.officeId,
+    offices,
+    users: existingUsers,
+  });
+  if (roleError) {
+    return res.status(400).json({ message: roleError });
+  }
+
   const user = new User({ ...payload, id: payload.id || generateId('USR') });
   await user.save();
   await createLogEntry(req, 'user_created', `Created user account: ${user.username}`, user.id);
@@ -98,6 +113,28 @@ router.put('/:id', adminOnly, asyncHandler(async (req, res) => {
     const existingUser = await User.findOne({ username: payload.username, id: { $ne: req.params.id } }).lean();
     if (existingUser) {
       return res.status(409).json({ message: 'Username is already taken' });
+    }
+  }
+
+  if (payload.role || payload.officeId) {
+    const currentUser = await User.findOne({ id: req.params.id }).lean();
+    if (!currentUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const [offices, existingUsers] = await Promise.all([
+      Office.find().lean(),
+      User.find().lean(),
+    ]);
+    const roleError = validateRoleAssignment({
+      role: payload.role || currentUser.role,
+      officeId: payload.officeId || currentUser.officeId,
+      offices,
+      users: existingUsers,
+      excludeUserId: req.params.id,
+    });
+    if (roleError) {
+      return res.status(400).json({ message: roleError });
     }
   }
 

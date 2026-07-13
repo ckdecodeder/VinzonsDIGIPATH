@@ -238,10 +238,26 @@ const Layout = ({
     ]},
   ];
 
+  // ==================== OFFICE STAFF NAV ====================
+  const officeNav = [
+    { group: 'Overview', items: [
+      { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+    ]},
+    { group: 'Document Tracking', items: [
+      { id: 'documents', label: 'Documents', icon: <FileText size={18} /> },
+      { id: 'transmissions', label: 'Transmissions', icon: <ArrowRightLeft size={18} />, badge: pendingTransmissions },
+    ]},
+    { group: 'Monitoring', items: [
+      { id: 'reports', label: 'Reports', icon: <BarChart3 size={18} /> },
+      { id: 'logs', label: 'Activity Logs', icon: <History size={18} /> },
+    ]},
+  ];
+
   const getNavGroups = () => {
     switch (currentRole) {
       case 'admin': return adminNav;
       case 'mayor': return mayorNav;
+      case 'office': return officeNav;
       case 'receptionist': return receptionistNav;
       default: return receptionistNav;
     }

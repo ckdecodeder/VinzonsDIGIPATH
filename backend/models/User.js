@@ -8,7 +8,7 @@ const userSchema = new mongoose.Schema({
   fname: { type: String, required: true },
   lname: { type: String, required: true },
   mname: { type: String },
-  role: { type: String, enum: ['Admin', 'Mayor', 'Receptionist'], default: 'Receptionist' },
+  role: { type: String, enum: ['Admin', 'Mayor', 'Receptionist', 'Office'], default: 'Receptionist' },
   officeId: { type: String }, // References office.id manually
 });
 

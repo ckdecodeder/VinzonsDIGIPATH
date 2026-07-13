@@ -9,6 +9,10 @@ import {
   getTransmissionUpdateToastMessage,
   getVerificationToastMessage,
 } from './utils/actionToastMessages';
+import {
+  isDocumentVisibleToUser,
+  isTransmissionVisibleToUser,
+} from './utils/documentScope';
 import LoginPage from './pages/LoginPage';
 import AdminDashboard from './pages/DashboardHome';
 import DocumentList from './pages/DocumentList';
@@ -22,6 +26,7 @@ import ActivityLogs from './pages/ActivityLogs';
 import Scanner from './components/Scanner';
 import ReportsPage from './pages/ReportsPage';
 import ProfileSettings from './pages/ProfileSettings';
+import DocumentPreviewModal from './components/DocumentPreviewModal';
 import {
   appDataService,
   archiveService,
@@ -44,6 +49,7 @@ const PAGE_STORAGE_KEY = 'dp_currentPage';
 const ROLE_PAGES = {
   admin: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents', 'profile-settings'],
   mayor: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'reports', 'logs', 'profile-settings'],
+  office: ['dashboard', 'documents', 'transmissions', 'reports', 'logs', 'profile-settings'],
   receptionist: ['dashboard', 'scan-documents', 'documents', 'reports', 'logs', 'profile-settings'],
 };
 
@@ -52,6 +58,7 @@ const getRoleKey = (user) => {
   switch (user.role) {
     case 'Admin': return 'admin';
     case 'Mayor': return 'mayor';
+    case 'Office': return 'office';
     case 'Receptionist': return 'receptionist';
     default: return 'receptionist';
   }
@@ -126,7 +133,9 @@ function App() {
   const [hasLoadedData, setHasLoadedData] = useState(false);
   const [actionToast, setActionToast] = useState(null);
   const [documentFocusId, setDocumentFocusId] = useState('');
+  const [documentFocusKey, setDocumentFocusKey] = useState(0);
   const [documentStatusFocus, setDocumentStatusFocus] = useState('All');
+  const [previewDocument, setPreviewDocument] = useState(null);
   const [dismissedNotifications, setDismissedNotifications] = useState(() => {
     const saved = localStorage.getItem('dp_dismissedNotifications');
     return saved ? JSON.parse(saved) : [];
@@ -386,27 +395,42 @@ function App() {
 
   const handleNavigate = (page) => {
     const nextPage = resolvePageForRole(page, currentRole);
+    setPreviewDocument(null);
     if (nextPage !== 'documents') {
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
     } else {
+      // Sidebar / plain navigate to documents shows the full list, not a focused record
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
     }
     setCurrentPage(nextPage);
   };
 
+  const handleFocusDocumentConsumed = useCallback(() => {
+    setDocumentFocusId('');
+  }, []);
+
+  const handlePreviewDocument = useCallback((doc) => {
+    if (!doc) return;
+    setPreviewDocument(doc);
+  }, []);
+
   const handleOpenDocument = (documentId) => {
     if (!documentId) {
+      setDocumentFocusId('');
+      setDocumentStatusFocus('All');
       setCurrentPage('documents');
       return;
     }
-    setDocumentFocusId(documentId);
     setDocumentStatusFocus('All');
+    setDocumentFocusId(documentId);
+    setDocumentFocusKey((key) => key + 1);
     setCurrentPage('documents');
   };
 
   const handleOpenDocumentsByStatus = (status = 'All') => {
+    setPreviewDocument(null);
     setDocumentFocusId('');
     setDocumentStatusFocus(status || 'All');
     setCurrentPage('documents');
@@ -669,49 +693,9 @@ function App() {
     refreshAfterMutation();
   };
 
-  const isGlobalViewer = currentRole === 'admin' || currentRole === 'mayor';
-  const userOfficeId = currentUser?.officeId;
+  const canSeeDocument = (doc) => isDocumentVisibleToUser(doc, currentUser, { role: currentRole });
 
-  const canSeeDocument = (doc) => {
-    if (!currentUser || isGlobalViewer) return true;
-    const touchedByUser = (doc.timeline || []).some((event) => event.userId === currentUser.id) ||
-      doc.verifiedBy === currentUser.id;
-    const visibleViaTransmission = transmissions.some((transmission) => {
-      if (transmission.documentId !== doc.id) return false;
-      if (currentRole === 'receptionist') {
-        return transmission.sentBy === currentUser.id ||
-          transmission.receivedBy === currentUser.id ||
-          (transmission.toOfficeId === userOfficeId && !transmission.receivedBy);
-      }
-      return transmission.fromOfficeId === userOfficeId ||
-        transmission.toOfficeId === userOfficeId ||
-        transmission.sentBy === currentUser.id ||
-        transmission.receivedBy === currentUser.id;
-    });
-
-    if (currentRole === 'receptionist') {
-      return touchedByUser || visibleViaTransmission;
-    }
-
-    return [
-      doc.originOfficeId,
-      doc.currentOfficeId,
-      doc.destinationOfficeId,
-    ].includes(userOfficeId) || touchedByUser || visibleViaTransmission;
-  };
-
-  const canSeeTransmission = (transmission) => {
-    if (!currentUser || isGlobalViewer) return true;
-    if (currentRole === 'receptionist') {
-      return transmission.sentBy === currentUser.id ||
-        transmission.receivedBy === currentUser.id ||
-        (transmission.toOfficeId === userOfficeId && !transmission.receivedBy);
-    }
-    return transmission.fromOfficeId === userOfficeId ||
-      transmission.toOfficeId === userOfficeId ||
-      transmission.sentBy === currentUser.id ||
-      transmission.receivedBy === currentUser.id;
-  };
+  const canSeeTransmission = (transmission) => isTransmissionVisibleToUser(transmission, currentUser, { role: currentRole });
 
   const visibleDocuments = sortNewest(documents.filter(canSeeDocument), ['createdAt', 'updatedAt', 'dateReceived']);
   const visibleTransmissions = sortNewest(transmissions.filter(canSeeTransmission), ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']);
@@ -721,7 +705,7 @@ function App() {
     : logs.filter((log) => log.userId === currentUser?.id || visibleDocuments.some((doc) => doc.id === log.referenceId));
 
   const getOfficeName = (officeId) => offices.find((office) => office.id === officeId)?.name || 'Unknown Office';
-  const getDocument = (documentId) => visibleDocuments.find((doc) => doc.id === documentId) || documents.find((doc) => doc.id === documentId);
+  const getDocument = (documentId) => visibleDocuments.find((doc) => doc.id === documentId);
 
   const overdueTransmissions = visibleTransmissions.filter((item) => {
     if (item.receivedBy || !item.transmissionDate) return false;
@@ -917,7 +901,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onOpenDocument={handleOpenDocument}
+                onPreviewDocument={handlePreviewDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -926,6 +910,7 @@ function App() {
           case 'add-document':
             return (
               <DocumentList
+                key={`documents-${documentFocusKey}`}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 offices={offices}
@@ -946,6 +931,7 @@ function App() {
                 onArchiveDocument={handleArchiveDocument}
                 onResendSenderNotification={handleResendSenderNotification}
                 focusDocumentId={documentFocusId}
+                onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
                 autoOpenCreate={currentPage === 'add-document'}
                 onNotify={notifyUser}
@@ -1011,7 +997,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onOpenDocument={handleOpenDocument}
+                onPreviewDocument={handlePreviewDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1030,7 +1016,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onOpenDocument={handleOpenDocument}
+                onPreviewDocument={handlePreviewDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1039,6 +1025,7 @@ function App() {
           case 'add-document':
             return (
               <DocumentList
+                key={`documents-${documentFocusKey}`}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 offices={offices}
@@ -1059,6 +1046,7 @@ function App() {
                 onArchiveDocument={handleArchiveDocument}
                 onResendSenderNotification={handleResendSenderNotification}
                 focusDocumentId={documentFocusId}
+                onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
                 autoOpenCreate={currentPage === 'add-document'}
                 onNotify={notifyUser}
@@ -1102,7 +1090,83 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onOpenDocument={handleOpenDocument}
+                onPreviewDocument={handlePreviewDocument}
+                onStatusSelect={handleOpenDocumentsByStatus}
+                currentUser={currentUser}
+              />
+            );
+        }
+
+      case 'office':
+        switch (currentPage) {
+          case 'dashboard':
+            return (
+              <AdminDashboard
+                documents={visibleDocuments}
+                transmissions={visibleTransmissions}
+                archives={visibleArchives}
+                offices={offices}
+                users={users}
+                documentTypes={documentTypes}
+                onNavigate={handleNavigate}
+                onPreviewDocument={handlePreviewDocument}
+                onStatusSelect={handleOpenDocumentsByStatus}
+                currentUser={currentUser}
+              />
+            );
+          case 'documents':
+            return (
+              <DocumentList
+                key={`documents-${documentFocusKey}`}
+                documents={visibleDocuments}
+                transmissions={visibleTransmissions}
+                offices={offices}
+                users={users}
+                documentTypes={documentTypes}
+                senderNotifications={senderNotifications}
+                currentUser={currentUser}
+                currentRole={currentRole}
+                onAdd={handleAddDocument}
+                onEdit={handleEditDocument}
+                onDelete={handleDeleteDocument}
+                onRouteDocument={handleRouteDocument}
+                onReceiveTransmission={handleUpdateTransmission}
+                onSetDocumentStatus={handleSetDocumentStatus}
+                onVerifyDocument={handleVerifyDocument}
+                onResubmitDocument={handleResubmitDocument}
+                onProcessDocument={handleProcessDocument}
+                onArchiveDocument={handleArchiveDocument}
+                onResendSenderNotification={handleResendSenderNotification}
+                focusDocumentId={documentFocusId}
+                onFocusDocumentConsumed={handleFocusDocumentConsumed}
+                initialStatusFilter={documentStatusFocus}
+                onNotify={notifyUser}
+              />
+            );
+          case 'transmissions':
+            return (
+              <TransmissionList
+                transmissions={visibleTransmissions}
+                documents={visibleDocuments}
+                offices={offices}
+                users={users}
+                currentUser={currentUser}
+                onAdd={handleAddTransmission}
+                onUpdate={handleUpdateTransmission}
+                onNotify={notifyUser}
+              />
+            );
+          default:
+            return (
+              <AdminDashboard
+                documents={visibleDocuments}
+                transmissions={visibleTransmissions}
+                archives={visibleArchives}
+                offices={offices}
+                users={users}
+                documentTypes={documentTypes}
+                onNavigate={handleNavigate}
+                onPreviewDocument={handlePreviewDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1132,6 +1196,7 @@ function App() {
           case 'documents':
             return (
               <DocumentList
+                key={`documents-${documentFocusKey}`}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 offices={offices}
@@ -1152,6 +1217,7 @@ function App() {
                 onArchiveDocument={handleArchiveDocument}
                 onResendSenderNotification={handleResendSenderNotification}
                 focusDocumentId={documentFocusId}
+                onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
                 onNotify={notifyUser}
               />
@@ -1215,6 +1281,16 @@ function App() {
           {renderPage()}
         </ErrorBoundary>
       </Layout>
+      {previewDocument && (
+        <DocumentPreviewModal
+          doc={visibleDocuments.find((item) => item.id === previewDocument.id) || previewDocument}
+          offices={offices}
+          users={users}
+          documentTypes={documentTypes}
+          transmissions={visibleTransmissions}
+          onClose={() => setPreviewDocument(null)}
+        />
+      )}
       <AppModal
         open={appDialog.open}
         type={appDialog.type}

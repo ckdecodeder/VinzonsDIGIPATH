@@ -21,15 +21,20 @@ import {
   PieChart,
   CheckCircle2,
   Loader2,
+  ChevronDown,
 } from 'lucide-react';
 import {
   getPriorityInfo,
   offices as defaultOffices,
   documentTypes as defaultDocumentTypes,
 } from '../data/mockData';
-import { reportService } from '../api/documentService';
 import { sortNewest } from '../utils/sorting';
 import usePhilippinesClock from '../hooks/usePhilippinesClock';
+import {
+  buildReportFilename,
+  exportReportPagesAsJpeg,
+  exportReportPagesAsPdf,
+} from '../utils/reportExport';
 
 const ReportsPage = ({
   documents,
@@ -49,6 +54,9 @@ const ReportsPage = ({
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const reportPrintRootRef = useRef(null);
+  const downloadMenuRef = useRef(null);
   const [reportTablePage, setReportTablePage] = useState(1);
   const [transmissionReportTablePage, setTransmissionReportTablePage] = useState(1);
   const generatedAt = usePhilippinesClock();
@@ -120,6 +128,21 @@ const ReportsPage = ({
   useEffect(() => {
     setTransmissionReportTablePage((current) => Math.min(current, transmissionReportTotalPages));
   }, [transmissionReportTotalPages]);
+
+  useEffect(() => {
+    if (!downloadMenuOpen) return undefined;
+    const handlePointerDown = (event) => {
+      if (!downloadMenuRef.current?.contains(event.target)) {
+        setDownloadMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [downloadMenuOpen]);
+
+  useEffect(() => {
+    if (!showPreview) setDownloadMenuOpen(false);
+  }, [showPreview]);
 
   const getOfficeName = (officeId) => {
     const office = offices.find((item) => item.id === officeId);
@@ -216,40 +239,66 @@ const ReportsPage = ({
   const maxCount = Math.max(...docTypeCounts.map(d => d.count), 1);
   const maxOffice = Math.max(...officeStats.map(o => o.total), 1);
 
-  const downloadBlob = (filename, content, type) => {
-    const blob = content instanceof Blob ? content : new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleExport = async () => {
+  const handleExport = async (format) => {
     const label = categories.find(item => item.id === activeCategory)?.label || 'Summary';
-    const filename = `DigiPath-${label.replace(/\s+/g, '-')}-${new Date().toISOString().split('T')[0]}.docx`;
+    const filename = buildReportFilename(label, format);
     setExportError('');
     setIsExporting(true);
+    setDownloadMenuOpen(false);
+
+    const wasPreviewOpen = showPreview;
+
     try {
-      const blob = await reportService.exportOfficialReport({
-        category: activeCategory,
-        dateFrom,
-        dateTo,
-      });
-      downloadBlob(
-        filename,
-        blob,
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      );
+      if (!showPreview) {
+        setShowPreview(true);
+      }
+
+      if (format === 'pdf') {
+        await exportReportPagesAsPdf(reportPrintRootRef.current, filename);
+      } else {
+        await exportReportPagesAsJpeg(reportPrintRootRef.current, filename);
+      }
     } catch (err) {
       const message = err.message || 'Unable to generate the official report.';
       setExportError(message);
       onNotify?.({ type: 'danger', title: 'Report export failed', message });
     } finally {
+      if (!wasPreviewOpen) {
+        setShowPreview(false);
+      }
       setIsExporting(false);
     }
   };
+
+  const renderDownloadMenu = (compact = false) => (
+    <div
+      className={`report-download-menu${compact ? ' report-download-menu--compact' : ''}`}
+      ref={downloadMenuRef}
+    >
+      <button
+        type="button"
+        className="btn-report-action btn-report-action--download"
+        onClick={() => setDownloadMenuOpen((open) => !open)}
+        disabled={isExporting}
+        aria-haspopup="menu"
+        aria-expanded={downloadMenuOpen}
+      >
+        {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+        {isExporting ? 'Generating...' : 'Download'}
+        {!isExporting && <ChevronDown size={14} className={`report-download-chevron${downloadMenuOpen ? ' is-open' : ''}`} />}
+      </button>
+      {downloadMenuOpen && (
+        <div className="report-download-menu-panel" role="menu" aria-label="Download format">
+          <button type="button" role="menuitem" onClick={() => handleExport('pdf')}>
+            Download as PDF
+          </button>
+          <button type="button" role="menuitem" onClick={() => handleExport('jpeg')}>
+            Download as JPEG
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   const categoryLabel = categories.find(item => item.id === activeCategory)?.label || 'Summary';
   const preparedBy = currentUser ? `${currentUser.fname} ${currentUser.lname}` : 'DigiPath User';
@@ -550,10 +599,7 @@ const ReportsPage = ({
                 <Printer size={16} />
                 Print
               </button>
-              <button type="button" className="btn-report-action btn-report-action--download" onClick={handleExport} disabled={isExporting}>
-                {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                {isExporting ? 'Generating...' : 'Download DOCX'}
-              </button>
+              {!showPreview && renderDownloadMenu()}
             </div>
           </div>
         }
@@ -1083,12 +1129,13 @@ const ReportsPage = ({
                 <button type="button" className="btn-report-action btn-report-action--print" onClick={handlePrintFromPreview}>
                   <Printer size={16} /> Print
                 </button>
+                {renderDownloadMenu(true)}
                 <button className="btn-icon" onClick={() => setShowPreview(false)} aria-label="Close preview">
                   <X size={18} />
                 </button>
               </div>
             </div>
-            <div className="report-print-root">
+            <div className="report-print-root" ref={reportPrintRootRef}>
               {detailPageDefs.map((pageDef, pageIndex) => {
                 const isFirstSheet = pageIndex === 0;
                 const isLastSheet = pageIndex === previewTotalPages - 1;

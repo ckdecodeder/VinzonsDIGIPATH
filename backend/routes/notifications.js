@@ -1,77 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { Notification, SenderNotification } = require('../models');
+const { Notification, SenderNotification, Document } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { asyncHandler, generateId, createLogEntry } = require('../utils/helpers');
 const { deliverSenderNotification } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
+const {
+  getScopedDocumentQueryWithTransmissions,
+  isGlobalDocumentViewer,
+} = require('../utils/documentScope');
 
 const adminOnly = allowRoles('Admin');
-const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
+const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 const updateOptions = { new: true, runValidators: true };
 
-// Document scoping helper (used for sender notifications)
-const getScopedDocumentQueryWithTransmissions = async (req) => {
-  const { Transmission } = require('../models');
-  const { isGlobalRole, getUserOfficeId } = require('../utils/helpers');
-  
-  if (isGlobalRole(req)) return {};
-  const officeId = getUserOfficeId(req);
-  
-  let baseQuery;
-  if (req.user?.role === 'Receptionist') {
-    baseQuery = {
-      $or: [
-        { 'timeline.userId': req.user.id },
-        { verifiedBy: req.user.id },
-      ],
-    };
-  } else {
-    baseQuery = {
-      $or: [
-        { originOfficeId: officeId },
-        { currentOfficeId: officeId },
-        { destinationOfficeId: officeId },
-        { 'timeline.userId': req.user.id },
-      ],
-    };
-  }
-  
-  let transmissionQuery;
-  if (req.user?.role === 'Receptionist') {
-    transmissionQuery = {
-      $or: [
-        { toOfficeId: officeId, receivedBy: { $in: [null, ''] } },
-        { sentBy: req.user.id },
-        { receivedBy: req.user.id },
-      ],
-    };
-  } else {
-    transmissionQuery = {
-      $or: [
-        { fromOfficeId: officeId },
-        { toOfficeId: officeId },
-        { sentBy: req.user.id },
-        { receivedBy: req.user.id },
-      ],
-    };
-  }
-
-  const transmissions = await Transmission.find(transmissionQuery).select('documentId').lean();
-  const documentIds = transmissions.map((t) => t.documentId);
-
-  return {
-    $or: [
-      ...(baseQuery.$or || []),
-      { id: { $in: documentIds } },
-    ],
-  };
-};
-
 const getSenderNotificationVisibilityQuery = async (req, documentId = null) => {
-  const { Document } = require('../models');
-  const { isGlobalRole } = require('../utils/helpers');
-  if (isGlobalRole(req)) return documentId ? { documentId } : {};
+  if (isGlobalDocumentViewer(req)) return documentId ? { documentId } : {};
 
   const visibleDocs = await Document.find(await getScopedDocumentQueryWithTransmissions(req)).select('id').lean();
   const visibleIds = visibleDocs.map((doc) => doc.id);
@@ -83,7 +27,7 @@ const getSenderNotificationVisibilityQuery = async (req, documentId = null) => {
 
 const getNotificationVisibilityQuery = (req) => {
   const { getUserOfficeId } = require('../utils/helpers');
-  if (req.user.role === 'Admin') return {};
+  if (isGlobalDocumentViewer(req)) return {};
 
   const officeId = getUserOfficeId(req);
   return {

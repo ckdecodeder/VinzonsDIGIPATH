@@ -13,65 +13,11 @@ const {
 } = require('../utils/helpers');
 const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
+const { getScopedDocumentQueryWithTransmissions, isGlobalDocumentViewer } = require('../utils/documentScope');
 
-const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist');
+const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 const approvalRoles = allowRoles('Admin', 'Mayor');
 const updateOptions = { new: true, runValidators: true };
-
-const getScopedDocumentQueryWithTransmissions = async (req) => {
-  const { Transmission } = require('../models');
-  const { isGlobalRole, getUserOfficeId } = require('../utils/helpers');
-  if (isGlobalRole(req)) return {};
-  const officeId = getUserOfficeId(req);
-  
-  let baseQuery;
-  if (req.user?.role === 'Receptionist') {
-    baseQuery = {
-      $or: [
-        { 'timeline.userId': req.user.id },
-        { verifiedBy: req.user.id },
-      ],
-    };
-  } else {
-    baseQuery = {
-      $or: [
-        { originOfficeId: officeId },
-        { currentOfficeId: officeId },
-        { destinationOfficeId: officeId },
-        { 'timeline.userId': req.user.id },
-      ],
-    };
-  }
-
-  let transmissionQuery;
-  if (req.user?.role === 'Receptionist') {
-    transmissionQuery = {
-      $or: [
-        { toOfficeId: officeId, receivedBy: { $in: [null, ''] } },
-        { sentBy: req.user.id },
-        { receivedBy: req.user.id },
-      ],
-    };
-  } else {
-    transmissionQuery = {
-      $or: [
-        { fromOfficeId: officeId },
-        { toOfficeId: officeId },
-        { sentBy: req.user.id },
-        { receivedBy: req.user.id },
-      ],
-    };
-  }
-
-  const transmissions = await Transmission.find(transmissionQuery).select('documentId').lean();
-  const documentIds = transmissions.map((t) => t.documentId);
-  return {
-    $or: [
-      ...(baseQuery.$or || []),
-      { id: { $in: documentIds } },
-    ],
-  };
-};
 
 const assertCanAccessDocument = async (req, documentId) => {
   const doc = await Document.findOne({ id: documentId, ...(await getScopedDocumentQueryWithTransmissions(req)) });
@@ -100,8 +46,7 @@ const normalizeWorkflowStatusValue = (status, fallback = 'Received') => {
 router.use(protect);
 
 router.get('/', allRoles, asyncHandler(async (req, res) => {
-  const { isGlobalRole } = require('../utils/helpers');
-  if (isGlobalRole(req)) {
+  if (isGlobalDocumentViewer(req)) {
     const archives = await Archive.find().sort({ createdAt: -1, date: -1, _id: -1 }).lean();
     return res.json(archives);
   }

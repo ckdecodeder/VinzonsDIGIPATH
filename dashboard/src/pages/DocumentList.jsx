@@ -43,6 +43,7 @@ const DocumentList = ({
   focusDocumentId = '',
   initialStatusFilter = 'All',
   autoOpenCreate = false,
+  onFocusDocumentConsumed,
   onNotify,
 }) => {
   const getInitialForm = () => ({
@@ -113,11 +114,17 @@ const DocumentList = ({
 
   useEffect(() => {
     if (!focusDocumentId) return;
-    const focusedDoc = documents.find(doc => doc.id === focusDocumentId);
+    const focusedDoc = documents.find((doc) => doc.id === focusDocumentId);
     if (!focusedDoc) return;
+
     setFilterStatus('All');
+    setFilterDirection('All');
+    setFilterPriority('All');
+    setSearch('');
+    setPage(1);
     setDetailDoc(focusedDoc);
-  }, [focusDocumentId]);
+    onFocusDocumentConsumed?.();
+  }, [focusDocumentId, documents, onFocusDocumentConsumed]);
 
   useEffect(() => {
     setPage(1);
@@ -442,6 +449,7 @@ const DocumentList = ({
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    const hasExistingAttachment = Boolean(editDoc?.scannedFiles?.length || editDoc?.scannedImageUrl);
     const validation = validateRequiredFields([
       { key: 'subject', label: 'Document subject', value: formData.subject },
       {
@@ -449,6 +457,12 @@ const DocumentList = ({
         label: 'Document type',
         value: formData.documentTypeOther,
         when: isOtherDocumentType(formData.documentTypeId),
+      },
+      { key: 'senderName', label: 'Sender name', value: formData.senderName },
+      {
+        key: 'attachmentFile',
+        label: 'Scanned file attachment',
+        value: attachmentFile?.name || (hasExistingAttachment ? 'existing' : ''),
       },
     ]);
 
@@ -1437,10 +1451,21 @@ const DocumentList = ({
                     Sender Information
                   </p>
                   <div className="form-group">
-                    <label className="form-label">Sender Name</label>
-                    <input className="form-input" type="text" value={formData.senderName}
-                      onChange={e => setFormData({ ...formData, senderName: e.target.value })}
-                      placeholder="Full name of the sender" />
+                    <label className="form-label">Sender Name *</label>
+                    <input
+                      className={`form-input${documentFormErrors.senderName ? ' is-invalid' : ''}`}
+                      type="text"
+                      value={formData.senderName}
+                      onChange={e => {
+                        setFormData({ ...formData, senderName: e.target.value });
+                        setDocumentFormErrors(prev => clearFieldError(prev, 'senderName'));
+                        if (documentFormErrorSummary) setDocumentFormErrorSummary('');
+                      }}
+                      placeholder="Full name of the sender"
+                    />
+                    {documentFormErrors.senderName && (
+                      <p className="form-field-error">{documentFormErrors.senderName}</p>
+                    )}
                     <p className="field-hint">Appears in tracking and helps staff identify who submitted the document.</p>
                   </div>
                   <div className="form-grid">
@@ -1506,14 +1531,26 @@ const DocumentList = ({
                 <div className="form-group" style={{ marginTop: '1rem' }}>
                   <label className="form-label">
                     <Upload size={12} style={{ marginRight: '0.25rem' }} />
-                    Scanned File Attachment
+                    Scanned File Attachment *
                   </label>
                   <input
-                    className="form-input"
+                    className={`form-input${documentFormErrors.attachmentFile ? ' is-invalid' : ''}`}
                     type="file"
                     accept="image/*,.pdf"
-                    onChange={e => setAttachmentFile(e.target.files?.[0] || null)}
+                    onChange={e => {
+                      setAttachmentFile(e.target.files?.[0] || null);
+                      setDocumentFormErrors(prev => clearFieldError(prev, 'attachmentFile'));
+                      if (documentFormErrorSummary) setDocumentFormErrorSummary('');
+                    }}
                   />
+                  {documentFormErrors.attachmentFile && (
+                    <p className="form-field-error">{documentFormErrors.attachmentFile}</p>
+                  )}
+                  {attachmentFile && (
+                    <p className="field-hint" style={{ marginTop: '0.35rem' }}>
+                      Selected: {attachmentFile.name}
+                    </p>
+                  )}
                   <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
                     Attach a scanned image or PDF. Camera scans are added automatically from the Scan Documents screen.
                   </p>

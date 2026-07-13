@@ -13,6 +13,11 @@ const {
   workflowStatuses,
   normalizeWorkflowStatus,
 } = require('../utils/helpers');
+const {
+  getScopedDocumentQueryWithTransmissions,
+  getScopedTransmissionQuery,
+  isGlobalDocumentViewer,
+} = require('../utils/documentScope');
 
 const reportTemplatePath = process.env.REPORT_TEMPLATE_PATH || path.join(__dirname, '..', 'templates', 'Vinzons_Report_Template.docx');
 
@@ -103,63 +108,6 @@ const percentText = (value, total) => {
 
 // Shared helpers from document scoping (copied for report scoping)
 const getUserOfficeId = (req) => req.user?.officeId;
-const isGlobalRole = (req) => req.user?.role === 'Admin' || req.user?.role === 'Mayor';
-
-const getScopedDocumentQuery = (req) => {
-  if (isGlobalRole(req)) return {};
-  const officeId = getUserOfficeId(req);
-  if (req.user?.role === 'Receptionist') {
-    return {
-      $or: [
-        { 'timeline.userId': req.user.id },
-        { verifiedBy: req.user.id },
-      ],
-    };
-  }
-  return {
-    $or: [
-      { originOfficeId: officeId },
-      { currentOfficeId: officeId },
-      { destinationOfficeId: officeId },
-      { 'timeline.userId': req.user.id },
-    ],
-  };
-};
-
-const getScopedTransmissionQuery = (req) => {
-  if (isGlobalRole(req)) return {};
-  const officeId = getUserOfficeId(req);
-  if (req.user?.role === 'Receptionist') {
-    return {
-      $or: [
-        { toOfficeId: officeId, receivedBy: { $in: [null, ''] } },
-        { sentBy: req.user.id },
-        { receivedBy: req.user.id },
-      ],
-    };
-  }
-  return {
-    $or: [
-      { fromOfficeId: officeId },
-      { toOfficeId: officeId },
-      { sentBy: req.user.id },
-      { receivedBy: req.user.id },
-    ],
-  };
-};
-
-const getScopedDocumentQueryWithTransmissions = async (req) => {
-  const baseQuery = getScopedDocumentQuery(req);
-  if (isGlobalRole(req)) return baseQuery;
-  const transmissions = await Transmission.find(getScopedTransmissionQuery(req)).select('documentId').lean();
-  const documentIds = transmissions.map((transmission) => transmission.documentId);
-  return {
-    $or: [
-      ...(baseQuery.$or || []),
-      { id: { $in: documentIds } },
-    ],
-  };
-};
 
 const buildReportData = async (req, category, dateFrom, dateTo) => {
   if (!reportCategories[category]) {

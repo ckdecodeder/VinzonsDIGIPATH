@@ -3,15 +3,13 @@ import {
   FileText,
   ArrowRightLeft,
   Archive,
-  Building2,
-  Users,
   TrendingUp,
-  ArrowUpRight,
   ArrowRight,
   Inbox,
   Send,
-  Clock,
   Flag,
+  CheckCircle2,
+  Clock,
 } from "lucide-react";
 import {
   documentTypes as defaultDocumentTypes,
@@ -20,15 +18,29 @@ import {
 import { compareNewest } from "../utils/sorting";
 import PageShell from "../components/PageShell";
 
+const ACTION_STATUSES = new Set([
+  "Received",
+  "In Transit",
+  "For Signing",
+  "For Filing",
+]);
+
+const STATUS_ACTION_HINT = {
+  Received: "Process or route",
+  "In Transit": "Acknowledge receipt",
+  "For Signing": "Ready for signature",
+  "For Filing": "Ready for filing",
+};
+
 const AdminDashboard = ({
   documents,
   transmissions,
   archives,
   offices,
-  users: userList,
+  users: userList = [],
   documentTypes = defaultDocumentTypes,
   onNavigate,
-  onOpenDocument,
+  onPreviewDocument,
   onStatusSelect,
   currentUser,
 }) => {
@@ -142,7 +154,7 @@ const AdminDashboard = ({
     return () => cancelAnimationFrame(rafId);
   }, [chartReady, statusTotal]);
 
-  const circ = 2 * Math.PI * 72;
+  const circ = 2 * Math.PI * 56;
   let segmentOffset = 0;
   const donutSegments = statusCounts.map((seg) => {
     const pct = (seg.count / total) * 100;
@@ -161,6 +173,40 @@ const AdminDashboard = ({
     });
   };
 
+  const priorityRank = { urgent: 0, high: 1, normal: 2, low: 3 };
+  const actionStatusRank = {
+    Received: 0,
+    "In Transit": 1,
+    "For Signing": 2,
+    "For Filing": 3,
+  };
+
+  const attentionDocuments = [...documents]
+    .filter((doc) => {
+      const status = getWorkflowStatus(doc);
+      if (status === "Archived") return false;
+      if (doc.intakeStatus === "Pending Review") return true;
+      if (ACTION_STATUSES.has(status)) return true;
+      return doc.priorityLevel === "urgent";
+    })
+    .sort((a, b) => {
+      // Newest scans / pending review rise to the top
+      const pendingDiff =
+        Number(b.intakeStatus === "Pending Review") -
+        Number(a.intakeStatus === "Pending Review");
+      if (pendingDiff !== 0) return pendingDiff;
+      const urgentDiff =
+        Number(b.priorityLevel === "urgent") - Number(a.priorityLevel === "urgent");
+      if (urgentDiff !== 0) return urgentDiff;
+      const statusA = getWorkflowStatus(a);
+      const statusB = getWorkflowStatus(b);
+      const statusDiff =
+        (actionStatusRank[statusA] ?? 9) - (actionStatusRank[statusB] ?? 9);
+      if (statusDiff !== 0) return statusDiff;
+      return compareNewest(a, b, ["createdAt", "updatedAt", "dateReceived"]);
+    })
+    .slice(0, 10);
+
   const recentTransmissions = [...transmissions]
     .sort((a, b) =>
       compareNewest(a, b, [
@@ -170,14 +216,13 @@ const AdminDashboard = ({
         "transmissionDate",
       ]),
     )
-    .slice(0, 5);
+    .slice(0, 4);
 
   const recentDocs = [...documents]
     .sort((a, b) => {
-      const priorityOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
       const pDiff =
-        (priorityOrder[a.priorityLevel] || 2) -
-        (priorityOrder[b.priorityLevel] || 2);
+        (priorityRank[a.priorityLevel] || 2) -
+        (priorityRank[b.priorityLevel] || 2);
       if (pDiff !== 0) return pDiff;
       return compareNewest(a, b, ["createdAt", "updatedAt", "dateReceived"]);
     })
@@ -208,14 +253,16 @@ const AdminDashboard = ({
   };
 
   const openDocumentInterface = (doc) => {
-    if (onOpenDocument) {
-      onOpenDocument(doc.id);
+    if (!doc) return;
+    // Preview popup on the dashboard — do NOT navigate to All Documents
+    if (onPreviewDocument) {
+      onPreviewDocument(doc);
       return;
     }
-    onNavigate("documents");
   };
 
   const openStatusInterface = (status) => {
+    // View all / status cards → All Documents page
     if (onStatusSelect) {
       onStatusSelect(status);
       return;
@@ -294,138 +341,207 @@ const AdminDashboard = ({
         })}
       </div>
 
-      {/* Charts + Recent Activity */}
-      <div className="grid-2-1">
-        {/* Document Status Distribution */}
-        <div className="card">
-          <div className="card-header">
+      {/* Needs attention + status / activity */}
+      <div className="dashboard-priority-grid">
+        <div className="card dashboard-attention-card">
+          <div className="card-header dashboard-attention-header">
             <div>
-              <h3 className="card-title">Document Status</h3>
-              <p className="card-subtitle">Distribution across all statuses</p>
+              <h3 className="card-title">Needs Attention</h3>
+              <p className="attention-header-meta">
+                Highlights newly received documents requiring immediate attention.
+                Prioritizes documents that need action so you can identify and process them quickly.
+              </p>
             </div>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => openStatusInterface("All")}
+            >
+              View all <ArrowRight size={14} />
+            </button>
           </div>
-          <div className="chart-donut">
-            <div className={`donut-ring ${chartReady ? "donut-ring--ready" : ""}`}>
-              <svg width="230" height="230" viewBox="0 0 190 190" aria-hidden="true">
-                {donutSegments.map((seg, i) => (
-                  <circle
-                    key={seg.label}
-                    className={[
-                      "donut-segment",
-                      hoveredStatus && hoveredStatus.label !== seg.label ? "donut-segment--dimmed" : "",
-                      hoveredStatus?.label === seg.label ? "donut-segment--active" : "",
-                    ].filter(Boolean).join(" ")}
-                    cx="95"
-                    cy="95"
-                    r="72"
-                    fill="none"
-                    stroke={seg.color}
-                    strokeWidth="16"
-                    strokeDasharray={
-                      chartReady ? `${seg.dashLen} ${circ - seg.dashLen}` : `0 ${circ}`
-                    }
-                    strokeDashoffset={chartReady ? seg.dashOff : 0}
-                    strokeLinecap="round"
-                    onClick={() => openStatusInterface(seg.label)}
-                    onMouseEnter={() => showStatus(seg)}
-                    onMouseLeave={() => setHoveredStatus(null)}
-                    style={{
-                      transition: chartReady
-                        ? `stroke-dasharray 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.1}s, stroke-dashoffset 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.1}s, opacity 0.2s ease, stroke-width 0.2s ease`
-                        : "none",
-                    }}
-                  />
-                ))}
-              </svg>
-              <div className={`donut-center ${hoveredStatus ? "donut-center--hover" : ""}`}>
-                {hoveredStatus ? (
-                  <>
-                    <span
-                      className="donut-total donut-total--hover"
-                      style={{ color: hoveredStatus.color }}
-                    >
-                      {hoveredStatus.count}
-                    </span>
-                    <span className="donut-label donut-label--hover">{hoveredStatus.label}</span>
-                    <span className="donut-pct">{hoveredStatus.pct.toFixed(0)}%</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="donut-total">{displayTotal}</span>
-                    <span className="donut-label">Total</span>
-                  </>
-                )}
+
+          <div className="attention-list">
+            {attentionDocuments.length === 0 ? (
+              <div className="attention-empty">
+                <CheckCircle2 size={20} strokeWidth={1.75} />
+                <p>You're all caught up</p>
+                <span>Documents needing action will appear here.</span>
               </div>
-            </div>
-            <div className="donut-legend">
-              {donutSegments.map((seg, i) => (
-                <button
-                  key={seg.label}
-                  type="button"
-                  className={[
-                    "legend-item",
-                    "status-legend-button",
-                    chartReady ? "legend-item--visible" : "",
-                    hoveredStatus?.label === seg.label ? "status-legend-button--active" : "",
-                  ].filter(Boolean).join(" ")}
-                  onClick={() => openStatusInterface(seg.label)}
-                  onMouseEnter={() => showStatus(seg)}
-                  onMouseLeave={() => setHoveredStatus(null)}
-                  title={`Show ${seg.label} documents`}
-                  style={{ animationDelay: `${0.25 + i * 0.07}s` }}
-                >
-                  <span
-                    className="legend-dot"
-                    style={{ background: seg.color }}
-                  ></span>
-                  {seg.label}
-                  <span className="legend-value">{seg.count}</span>
-                </button>
-              ))}
-            </div>
+            ) : (
+              attentionDocuments.map((doc) => {
+                const status = getWorkflowStatus(doc);
+                const hint =
+                  doc.intakeStatus === "Pending Review"
+                    ? "Pending review"
+                    : STATUS_ACTION_HINT[status] || "Needs follow-up";
+
+                return (
+                  <button
+                    key={doc.id}
+                    type="button"
+                    className={`attention-item ${doc.priorityLevel === "urgent" ? "attention-item--urgent" : ""}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openDocumentInterface(doc);
+                    }}
+                    title={`Preview ${doc.trackingNumber}`}
+                  >
+                    <div className="attention-item-main">
+                      <p className="attention-item-subject">{doc.subject}</p>
+                      <p className="attention-item-sub">
+                        {doc.trackingNumber}
+                        <span aria-hidden="true">·</span>
+                        {hint}
+                      </p>
+                    </div>
+                    <div className="attention-item-side">
+                      <span
+                        className={`status-badge status-${status.toLowerCase().replace(/\s+/g, "-")}`}
+                      >
+                        {status}
+                      </span>
+                      <span className="attention-item-date">
+                        {doc.dateReceived || doc.updatedAt?.slice?.(0, 10) || "—"}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })
+            )}
           </div>
         </div>
 
-        {/* Recent Activity */}
-        <div className="card dashboard-activity-card">
-          <div className="card-header">
-            <h3 className="card-title">Recent Activity</h3>
-            <button
-              className="btn btn-ghost btn-sm"
-              onClick={() => onNavigate("transmissions")}
-            >
-              View All <ArrowRight size={14} />
-            </button>
-          </div>
-          <div className="activity-list">
-            {recentTransmissions.map((t, i) => (
-              <div
-                key={t.id}
-                className="activity-item clickable-row"
-                role="button"
-                tabIndex={0}
-                onClick={() => onNavigate("transmissions")}
-                onKeyDown={(event) =>
-                  handleKeyboardOpen(event, () => onNavigate("transmissions"))
-                }
-                title="Open transmissions"
-              >
-                <div
-                  className={`activity-dot ${["blue", "green", "purple", "amber"][i % 4]}`}
-                ></div>
-                <div className="activity-item-body">
-                  <p className="activity-text">
-                    <strong>{getUserFullName(t.sentBy)}</strong> sent a document
-                    from <strong>{getOfficeName(t.fromOfficeId)}</strong> to{" "}
-                    <strong>{getOfficeName(t.toOfficeId)}</strong>
-                  </p>
-                  <p className="activity-time">
-                    <Clock size={10} />
-                    {t.transmissionDate}
-                  </p>
+        <div className="dashboard-side-stack">
+          <div className="card dashboard-status-card">
+            <div className="card-header">
+              <h3 className="card-title">Status</h3>
+            </div>
+            <div className="chart-donut chart-donut--compact">
+              <div className={`donut-ring donut-ring--compact ${chartReady ? "donut-ring--ready" : ""}`}>
+                <svg width="156" height="156" viewBox="0 0 156 156" aria-hidden="true">
+                  {donutSegments.map((seg, i) => (
+                    <circle
+                      key={seg.label}
+                      className={[
+                        "donut-segment",
+                        hoveredStatus && hoveredStatus.label !== seg.label ? "donut-segment--dimmed" : "",
+                        hoveredStatus?.label === seg.label ? "donut-segment--active" : "",
+                      ].filter(Boolean).join(" ")}
+                      cx="78"
+                      cy="78"
+                      r="56"
+                      fill="none"
+                      stroke={seg.color}
+                      strokeWidth="12"
+                      strokeDasharray={
+                        chartReady ? `${seg.dashLen} ${circ - seg.dashLen}` : `0 ${circ}`
+                      }
+                      strokeDashoffset={chartReady ? seg.dashOff : 0}
+                      strokeLinecap="butt"
+                      onClick={() => openStatusInterface(seg.label)}
+                      onMouseEnter={() => showStatus(seg)}
+                      onMouseLeave={() => setHoveredStatus(null)}
+                      style={{
+                        transition: chartReady
+                          ? `stroke-dasharray 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.08}s, stroke-dashoffset 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.08}s, opacity 0.2s ease`
+                          : "none",
+                      }}
+                    />
+                  ))}
+                </svg>
+                <div className={`donut-center ${hoveredStatus ? "donut-center--hover" : ""}`}>
+                  {hoveredStatus ? (
+                    <>
+                      <span
+                        className="donut-total donut-total--hover"
+                        style={{ color: hoveredStatus.color }}
+                      >
+                        {hoveredStatus.count}
+                      </span>
+                      <span className="donut-label donut-label--hover">{hoveredStatus.label}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="donut-total">{displayTotal}</span>
+                      <span className="donut-label">Total</span>
+                    </>
+                  )}
                 </div>
               </div>
-            ))}
+              <div className="donut-legend donut-legend--compact">
+                {donutSegments.filter((seg) => seg.count > 0).map((seg, i) => (
+                  <button
+                    key={seg.label}
+                    type="button"
+                    className={[
+                      "legend-item",
+                      "status-legend-button",
+                      chartReady ? "legend-item--visible" : "",
+                      hoveredStatus?.label === seg.label ? "status-legend-button--active" : "",
+                    ].filter(Boolean).join(" ")}
+                    onClick={() => openStatusInterface(seg.label)}
+                    onMouseEnter={() => showStatus(seg)}
+                    onMouseLeave={() => setHoveredStatus(null)}
+                    title={`Show ${seg.label} documents`}
+                    style={{ animationDelay: `${0.2 + i * 0.05}s` }}
+                  >
+                    <span
+                      className="legend-dot"
+                      style={{ background: seg.color }}
+                    ></span>
+                    {seg.label}
+                    <span className="legend-value">{seg.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="card dashboard-activity-card">
+            <div className="card-header">
+              <h3 className="card-title">Recent Activity</h3>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => onNavigate("logs")}
+              >
+                View all <ArrowRight size={14} />
+              </button>
+            </div>
+            <div className="activity-list">
+              {recentTransmissions.length === 0 ? (
+                <p className="attention-empty-inline">No recent activity.</p>
+              ) : (
+                recentTransmissions.map((t, i) => (
+                  <div
+                    key={t.id}
+                    className="activity-item clickable-row"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onNavigate("logs")}
+                    onKeyDown={(event) =>
+                      handleKeyboardOpen(event, () => onNavigate("logs"))
+                    }
+                    title="Open activity logs"
+                  >
+                    <div
+                      className={`activity-dot ${["blue", "green", "purple", "amber"][i % 4]}`}
+                    ></div>
+                    <div className="activity-item-body">
+                      <p className="activity-text">
+                        <strong>{getUserFullName(t.sentBy)}</strong> sent a document
+                        from <strong>{getOfficeName(t.fromOfficeId)}</strong> to{" "}
+                        <strong>{getOfficeName(t.toOfficeId)}</strong>
+                      </p>
+                      <p className="activity-time">
+                        <Clock size={10} />
+                        {t.transmissionDate}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       </div>

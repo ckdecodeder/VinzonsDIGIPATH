@@ -39,6 +39,7 @@ import {
   getPriorityInfo,
 } from "../data/mockData";
 import { getSortLayerHint, resolveSortLayer } from "../utils/sortLayer";
+import { MAYORS_OFFICE_ID } from "../utils/userRoles";
 
 const OTHER_OFFICE_VALUE = '__external_source__';
 const PHYSICAL_CAMERA_VALUE = 'physical-scanner';
@@ -244,7 +245,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const canChooseSourceOffice = currentUser?.role === 'Admin';
   const canChooseDirection = currentUser?.role === 'Admin';
   const canSetInitialStatus = currentUser?.role === 'Receptionist' || currentUser?.role === 'Admin';
-  const defaultSourceOfficeId = currentUser?.officeId || offices[0]?.id || 'OFF-001';
+  const defaultSourceOfficeId = currentUser?.officeId || offices[0]?.id || MAYORS_OFFICE_ID;
+  const receptionOfficeId = currentUser?.role === 'Receptionist'
+    ? (currentUser?.officeId || MAYORS_OFFICE_ID)
+    : MAYORS_OFFICE_ID;
   const getNextOfficeId = (fromOfficeId) => offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId;
   const isOtherDocumentType = (typeId) => {
     const docType = documentTypes.find(item => item.id === typeId);
@@ -288,7 +292,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     priorityLevel: 'normal',
     fromOfficeId: defaultSourceOfficeId,
     originOfficeOther: '',
-    toOfficeId: getNextOfficeId(defaultSourceOfficeId),
+    toOfficeId: receptionOfficeId,
     dateReceived: new Date().toISOString().split('T')[0],
     senderName: '',
     senderContact: '',
@@ -1104,6 +1108,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
   // STEP 3 → STEP 4: Confirm and submit
   const handleConfirmSubmit = async () => {
+    const validation = validateScannerDetails();
+    if (!validation.isValid) {
+      setFormErrors(validation.errors);
+      setFormErrorSummary(validation.summary);
+      setStep(2);
+      return;
+    }
+    setFormErrors({});
+    setFormErrorSummary('');
+
     if (hardwareScannedDoc?.id) {
       await onEditDocument?.({
         ...hardwareScannedDoc,
@@ -1127,7 +1141,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       return;
     }
 
-    const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? defaultSourceOfficeId : formData.fromOfficeId;
+    const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? null : formData.fromOfficeId;
     const newDoc = {
       subject: formData.subject,
       documentDirection: canChooseDirection ? formData.documentDirection : 'Incoming',
@@ -1136,9 +1150,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       priorityLevel: formData.priorityLevel,
       status: canSetInitialStatus ? formData.status : 'Received',
       dateReceived: formData.dateReceived,
-      originOfficeId: sourceOfficeId,
+      originOfficeId: sourceOfficeId || receptionOfficeId,
       originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
-      currentOfficeId: sourceOfficeId,
+      currentOfficeId: receptionOfficeId,
       destinationOfficeId: formData.toOfficeId,
       senderName: formData.senderName,
       senderContact: formData.senderContact,
@@ -1201,7 +1215,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       priorityLevel: 'normal',
       fromOfficeId: defaultSourceOfficeId,
       originOfficeOther: '',
-      toOfficeId: getNextOfficeId(defaultSourceOfficeId),
+      toOfficeId: receptionOfficeId,
       dateReceived: new Date().toISOString().split('T')[0],
       senderName: '',
       senderContact: '',
@@ -1526,11 +1540,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               </div>
 
               <form onSubmit={handleProceedToReview} noValidate>
+                <p className="form-required-note">Fields marked with <span className="required-mark">*</span> are required.</p>
                 {formErrorSummary && (
                   <div className="form-error-summary" role="alert">{formErrorSummary}</div>
                 )}
                 <div className="form-group">
-                  <label className="form-label">Document Subject *</label>
+                  <label className="form-label">Document Subject <span className="required-mark">*</span></label>
                   <input
                     className={`form-input${formErrors.subject ? ' is-invalid' : ''}`}
                     type="text"
@@ -1543,6 +1558,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                           ? 'Extracting subject from scanned document...'
                           : 'Enter document subject')
                     }
+                    aria-required="true"
                     autoFocus
                   />
                   {formErrors.subject && (
@@ -1559,7 +1575,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   <div className="form-group">
                     <label className="form-label">Document Type</label>
                     <select className="form-select" value={formData.documentTypeId}
-                      onChange={e => handleFormChange('documentTypeId', e.target.value)}>
+                      onChange={e => {
+                        const nextTypeId = e.target.value;
+                        handleFormChange('documentTypeId', nextTypeId);
+                        if (!isOtherDocumentType(nextTypeId)) {
+                          setFormErrors(prev => clearFieldError(prev, 'documentTypeOther'));
+                        }
+                      }}>
                       {documentTypes.map(dt => (
                         <option key={dt.id} value={dt.id}>{dt.category}</option>
                       ))}
@@ -1568,19 +1590,20 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                       <p className="field-hint">{getSortLayerHint(formData.documentTypeId)}</p>
                     )}
                     {isOtherDocumentType(formData.documentTypeId) && (
-                      <>
+                      <div className="form-group" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
+                        <label className="form-label">Specify Document Type <span className="required-mark">*</span></label>
                         <input
                           className={`form-input${formErrors.documentTypeOther ? ' is-invalid' : ''}`}
                           type="text"
                           value={formData.documentTypeOther}
                           onChange={e => handleFormChange('documentTypeOther', e.target.value)}
                           placeholder="Specify document type"
-                          style={{ marginTop: '0.5rem' }}
+                          aria-required="true"
                         />
                         {formErrors.documentTypeOther && (
                           <p className="form-field-error">{formErrors.documentTypeOther}</p>
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
                   <div className="form-group">
@@ -1643,13 +1666,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     Sender Information
                   </p>
                   <div className="form-group">
-                    <label className="form-label">Sender Name *</label>
+                    <label className="form-label">Sender Name <span className="required-mark">*</span></label>
                     <input
                       className={`form-input${formErrors.senderName ? ' is-invalid' : ''}`}
                       type="text"
                       value={formData.senderName}
                       onChange={e => handleFormChange('senderName', e.target.value)}
                       placeholder="Full name of the sender"
+                      aria-required="true"
                     />
                     {formErrors.senderName && (
                       <p className="form-field-error">{formErrors.senderName}</p>
@@ -1716,9 +1740,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                       className="form-select"
                       value={formData.fromOfficeId}
                       onChange={e => {
-                        handleFormChange('fromOfficeId', e.target.value);
-                        if (formData.toOfficeId === e.target.value) {
-                          handleFormChange('toOfficeId', getNextOfficeId(e.target.value));
+                        const nextOfficeId = e.target.value;
+                        handleFormChange('fromOfficeId', nextOfficeId);
+                        if (nextOfficeId !== OTHER_OFFICE_VALUE) {
+                          setFormErrors(prev => clearFieldError(prev, 'originOfficeOther'));
+                        }
+                        if (formData.toOfficeId === nextOfficeId) {
+                          handleFormChange('toOfficeId', getNextOfficeId(nextOfficeId));
                         }
                       }}
                     >
@@ -1727,19 +1755,20 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                         .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
                     {formData.fromOfficeId === OTHER_OFFICE_VALUE && (
-                      <>
+                      <div className="form-group" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
+                        <label className="form-label">External Office Name <span className="required-mark">*</span></label>
                         <input
                           className={`form-input${formErrors.originOfficeOther ? ' is-invalid' : ''}`}
                           type="text"
                           value={formData.originOfficeOther}
                           onChange={e => handleFormChange('originOfficeOther', e.target.value)}
                           placeholder="Name of school, agency, municipality, or external office"
-                          style={{ marginTop: '0.5rem' }}
+                          aria-required="true"
                         />
                         {formErrors.originOfficeOther && (
                           <p className="form-field-error">{formErrors.originOfficeOther}</p>
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
                   <div className="form-group">
