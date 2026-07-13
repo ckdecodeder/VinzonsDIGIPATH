@@ -973,7 +973,10 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 currentUser={currentUser}
+                currentRole={currentRole}
                 onAdd={handleAddArchive}
+                onEditDocument={handleEditDocument}
+                onNotify={notifyUser}
               />
             );
           case 'offices':
@@ -1083,7 +1086,10 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 currentUser={currentUser}
+                currentRole={currentRole}
                 onAdd={handleAddArchive}
+                onEditDocument={handleEditDocument}
+                onNotify={notifyUser}
               />
             );
           default:

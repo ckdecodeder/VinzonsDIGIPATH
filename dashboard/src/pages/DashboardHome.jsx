@@ -387,7 +387,7 @@ const AdminDashboard = ({
         </div>
 
         {/* Recent Activity */}
-        <div className="card">
+        <div className="card dashboard-activity-card">
           <div className="card-header">
             <h3 className="card-title">Recent Activity</h3>
             <button
@@ -413,17 +413,14 @@ const AdminDashboard = ({
                 <div
                   className={`activity-dot ${["blue", "green", "purple", "amber"][i % 4]}`}
                 ></div>
-                <div>
+                <div className="activity-item-body">
                   <p className="activity-text">
                     <strong>{getUserFullName(t.sentBy)}</strong> sent a document
                     from <strong>{getOfficeName(t.fromOfficeId)}</strong> to{" "}
                     <strong>{getOfficeName(t.toOfficeId)}</strong>
                   </p>
                   <p className="activity-time">
-                    <Clock
-                      size={10}
-                      style={{ display: "inline", marginRight: "0.25rem" }}
-                    />
+                    <Clock size={10} />
                     {t.transmissionDate}
                   </p>
                 </div>

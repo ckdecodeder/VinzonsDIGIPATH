@@ -106,7 +106,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                   <FileText size={30} color="white" />
                 </div>
                 <h1 className="login-brand-title">DigiPath</h1>
-                <p className="login-brand-subtitle">Vinzon's Document Tracking System</p>
+                <p className="login-brand-subtitle">Vinzons Document Tracking System</p>
                 <div className="login-brand-divider"></div>
                 <p className="login-brand-desc">
                   Secure access to the municipal document management system. Scan, route, and track documents efficiently.

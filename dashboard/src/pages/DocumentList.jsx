@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
+import ScannedPreviewModal from '../components/ScannedPreviewModal';
 import {
   Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
   Flag, User, Phone, Mail, MessageSquare, ChevronDown, ChevronUp,
   Paperclip, Upload, Download, MapPin, History, ArrowRightLeft,
-  CheckCircle2, Archive, Clock, CalendarDays, AlertTriangle, Maximize2, Minimize2,
+  CheckCircle2, Archive, Clock, CalendarDays, AlertTriangle,
 } from 'lucide-react';
 import {
   documentTypes as defaultDocumentTypes,
@@ -17,9 +18,6 @@ import {
 import { compareNewest } from '../utils/sorting';
 import {
   downloadAttachment,
-  getAttachmentSource,
-  isImageAttachment,
-  isPdfAttachment,
 } from '../utils/attachmentDownload';
 
 const OTHER_OFFICE_VALUE = '__external_source__';
@@ -93,7 +91,7 @@ const DocumentList = ({
   const [routeDoc, setRouteDoc] = useState(null);
   const [detailDoc, setDetailDoc] = useState(null);
   const [previewFile, setPreviewFile] = useState(null);
-  const [isPreviewMaximized, setIsPreviewMaximized] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState(null);
   const [rejectDoc, setRejectDoc] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [processingAction, setProcessingAction] = useState(null);
@@ -167,13 +165,15 @@ const DocumentList = ({
   };
 
   const getDocumentFiles = (doc) => {
+    if (!doc) return [];
     if (doc.scannedFiles?.length) return doc.scannedFiles;
     if (doc.scannedImageUrl) {
       return [{
         id: `${doc.id}-scan`,
         name: `${doc.trackingNumber || doc.id}-scan.jpg`,
         type: 'image/jpeg',
-        dataUrl: doc.scannedImageUrl,
+        url: doc.scannedImageUrl.startsWith('data:') ? undefined : doc.scannedImageUrl,
+        dataUrl: doc.scannedImageUrl.startsWith('data:') ? doc.scannedImageUrl : undefined,
         uploadedAt: doc.dateReceived,
         uploadedBy: null,
         source: 'camera',
@@ -649,6 +649,40 @@ const DocumentList = ({
     }
   };
 
+  const openPreview = (file, doc) => {
+    setPreviewDoc(doc);
+    setPreviewFile(file);
+  };
+
+  const closePreview = () => {
+    setPreviewFile(null);
+    setPreviewDoc(null);
+  };
+
+  const handleSaveRotatedAttachment = async (rotatedFile) => {
+    if (!previewDoc || !onEdit) {
+      throw new Error('This scan cannot be saved right now.');
+    }
+
+    const existingFiles = getDocumentFiles(previewDoc);
+    const updatedFiles = existingFiles.map((file) => (
+      file.id === rotatedFile.id ? rotatedFile : file
+    ));
+
+    const savedDoc = await onEdit({
+      ...previewDoc,
+      scannedFiles: updatedFiles,
+      scannedImageUrl: updatedFiles[0]?.url || updatedFiles[0]?.dataUrl || previewDoc.scannedImageUrl,
+    });
+
+    const savedFile = getDocumentFiles(savedDoc).find((file) => file.id === rotatedFile.id) || rotatedFile;
+    setPreviewDoc(savedDoc);
+    setPreviewFile(savedFile);
+    if (detailDoc?.id === savedDoc.id) {
+      setDetailDoc(savedDoc);
+    }
+  };
+
   const isApprovalUser = currentRole === 'admin' || currentRole === 'mayor';
   const canDelete = currentRole === 'admin';
   const canCreate = currentRole === 'admin' || currentRole === 'receptionist';
@@ -941,7 +975,7 @@ const DocumentList = ({
                               <div className="attachment-list">
                                 {files.map(file => (
                                   <div key={file.id} className="attachment-item">
-                                    <button type="button" className="attachment-link" onClick={() => setPreviewFile(file)}>
+                                    <button type="button" className="attachment-link" onClick={() => openPreview(file, doc)}>
                                       <Eye size={14} />
                                       <span>{file.name}</span>
                                     </button>
@@ -1098,7 +1132,7 @@ const DocumentList = ({
                       <div className="attachment-list">
                         {files.map(file => (
                           <div key={file.id} className="attachment-item">
-                            <button type="button" className="attachment-link" onClick={() => setPreviewFile(file)}>
+                            <button type="button" className="attachment-link" onClick={() => openPreview(file, doc)}>
                               <Eye size={14} />
                               <span>{file.name}</span>
                             </button>
@@ -1525,66 +1559,13 @@ const DocumentList = ({
       })()}
 
       {previewFile && (
-        <ModalOverlay
-          overlayClassName="scanned-preview-overlay"
-          onClose={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}
-        >
-          <div className={`modal scanned-preview-modal ${isPreviewMaximized ? 'maximized' : ''}`} onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2>Scanned Paper Preview</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
-                  {previewFile.name}
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <button
-                  className="btn-icon"
-                  onClick={() => setIsPreviewMaximized(prev => !prev)}
-                  title={isPreviewMaximized ? 'Restore preview' : 'Maximize preview'}
-                >
-                  {isPreviewMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
-                </button>
-                <button className="btn-icon" onClick={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}><X size={18} /></button>
-              </div>
-            </div>
-            <div className="modal-body">
-              <div className="scanned-preview-surface">
-                {isImageAttachment(previewFile) ? (
-                  <img src={getAttachmentSource(previewFile)} alt={previewFile.name} className="scanned-preview-image" />
-                ) : isPdfAttachment(previewFile) ? (
-                  <iframe src={getAttachmentSource(previewFile)} title={previewFile.name} className="scanned-preview-frame" />
-                ) : (
-                  <div className="empty-state" style={{ padding: '2rem' }}>
-                    <FileText size={28} />
-                    <h3>Preview unavailable</h3>
-                    <p>This file type can be downloaded but cannot be previewed in the browser.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="modal-footer">
-              <select
-                className="form-select preview-format-select"
-                value={downloadFormats[previewFile.id] || 'original'}
-                onChange={e => setDownloadFormats(prev => ({ ...prev, [previewFile.id]: e.target.value }))}
-              >
-                <option value="original">Original</option>
-                <option value="pdf">PDF</option>
-                <option value="png">PNG</option>
-                <option value="jpeg">JPG</option>
-              </select>
-              <button type="button" onClick={() => handleAttachmentDownload(previewFile)} className="btn btn-secondary">
-                <Download size={16} /> Download
-              </button>
-              <button className="btn btn-secondary" onClick={() => setIsPreviewMaximized(prev => !prev)}>
-                {isPreviewMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                {isPreviewMaximized ? 'Restore' : 'Maximize'}
-              </button>
-              <button className="btn btn-primary" onClick={() => { setPreviewFile(null); setIsPreviewMaximized(false); }}>Done</button>
-            </div>
-          </div>
-        </ModalOverlay>
+        <ScannedPreviewModal
+          file={previewFile}
+          canEdit={canEdit}
+          onClose={closePreview}
+          onSaveRotated={handleSaveRotatedAttachment}
+          onNotify={onNotify}
+        />
       )}
 
       {routeDoc && (

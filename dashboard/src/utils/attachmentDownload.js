@@ -60,6 +60,52 @@ const imageToCanvas = (image) => {
   return canvas;
 };
 
+const canvasToDataUrl = (canvas, mime = 'image/jpeg', quality = 0.92) => canvas.toDataURL(mime, quality);
+
+const rotateCanvas = (canvas, degrees) => {
+  const normalized = ((degrees % 360) + 360) % 360;
+  if (!normalized) return canvas;
+
+  const radians = (normalized * Math.PI) / 180;
+  const sideways = normalized === 90 || normalized === 270;
+  const rotated = document.createElement('canvas');
+  rotated.width = sideways ? canvas.height : canvas.width;
+  rotated.height = sideways ? canvas.width : canvas.height;
+  const ctx = rotated.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, rotated.width, rotated.height);
+  ctx.translate(rotated.width / 2, rotated.height / 2);
+  ctx.rotate(radians);
+  ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+  return rotated;
+};
+
+/** Rotate a scanned image attachment by the given degrees and return a new attachment payload. */
+export const rotateImageAttachment = async (file, degrees = 90) => {
+  const normalized = ((degrees % 360) + 360) % 360;
+  if (!normalized) return file;
+  if (!isImageAttachment(file)) {
+    throw new Error('Only image scans can be rotated.');
+  }
+
+  const source = getAttachmentSource(file);
+  if (!source) throw new Error('No scanned file is available to rotate.');
+
+  const image = await loadImageElement(source);
+  const canvas = rotateCanvas(imageToCanvas(image), normalized);
+  const mime = file?.type === 'image/png' ? 'image/png' : 'image/jpeg';
+  const dataUrl = canvasToDataUrl(canvas, mime, 0.92);
+
+  return {
+    ...file,
+    type: mime,
+    dataUrl,
+    url: undefined,
+    storagePath: undefined,
+    size: undefined,
+  };
+};
+
 const pdfFirstPageToCanvas = async (source) => {
   const doc = await pdfjs.getDocument(source).promise;
   const page = await doc.getPage(1);

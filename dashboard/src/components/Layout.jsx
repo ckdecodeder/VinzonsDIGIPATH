@@ -163,7 +163,7 @@ const Layout = ({
             </div>
             <div className="logo-text">
               <span className="logo-title">DigiPath</span>
-              <span className="logo-subtitle">Vinzon's Document System</span>
+              <span className="logo-subtitle">Vinzons Document System</span>
             </div>
           </div>
           <div className="sidebar-header-actions">

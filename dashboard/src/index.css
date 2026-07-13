@@ -1247,6 +1247,7 @@ body {
   grid-template-columns: 2fr 1fr;
   gap: 1.25rem;
   margin-bottom: 1.25rem;
+  align-items: start;
 }
 
 /* Dashboard overview cards grow with content so the page scrolls as one. */
@@ -1266,6 +1267,63 @@ body {
   flex: 0 0 auto;
   min-height: auto;
   overflow: visible;
+}
+
+/* Dashboard home — recent activity */
+.grid-2-1 .dashboard-activity-card > .activity-list {
+  gap: 0;
+  padding-right: 0;
+}
+
+.grid-2-1 .dashboard-activity-card .activity-item {
+  padding: 0.5rem 0.4rem;
+  gap: 0.45rem;
+  border-bottom: 1px solid rgba(15, 76, 117, 0.1);
+  border-radius: 0;
+}
+
+.grid-2-1 .dashboard-activity-card .activity-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0.15rem;
+}
+
+.grid-2-1 .dashboard-activity-card .activity-item:hover {
+  background: rgba(8, 145, 178, 0.06);
+  border-radius: var(--radius-sm);
+}
+
+.grid-2-1 .dashboard-activity-card .activity-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 0.35rem;
+}
+
+.grid-2-1 .dashboard-activity-card .activity-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.grid-2-1 .dashboard-activity-card .activity-text {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.grid-2-1 .dashboard-activity-card .activity-time {
+  font-size: 0.65rem;
+  margin: 0.15rem 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.grid-2-1 .dashboard-activity-card .activity-time svg {
+  flex-shrink: 0;
 }
 
 @media (max-width: 1024px) {
@@ -4747,12 +4805,6 @@ body.modal-open .notification-dock {
   flex-direction: column;
 }
 
-.scanned-preview-modal .modal-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
 .scanned-preview-modal.maximized {
   width: 100vw;
   height: 100vh;
@@ -4782,40 +4834,66 @@ body.modal-open .notification-dock {
   display: none;
 }
 
+.scanned-preview-modal .modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 .scanned-preview-modal.maximized .modal-body {
   padding: 0;
   flex: 1;
 }
 
 .scanned-preview-modal.maximized .scanned-preview-surface {
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   border-radius: 0;
   border: none;
   padding: 0;
 }
 
 .scanned-preview-surface {
+  position: relative;
+  flex: 1;
   min-height: 0;
-  height: calc(100vh - 12rem);
-  max-height: none;
-  overflow: auto;
+  width: 100%;
+  overflow: hidden;
   background: #0f172a;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
+  padding: 0.75rem;
+}
+
+.scanned-preview-stage {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .scanned-preview-image {
+  display: block;
   max-width: 100%;
   max-height: 100%;
-  width: 100%;
-  height: 100%;
   object-fit: contain;
   background: var(--bg-surface);
   border-radius: var(--radius-sm);
+  transform-origin: center center;
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s ease;
+  opacity: 0;
+}
+
+.scanned-preview-image.is-ready {
+  opacity: 1;
 }
 
 .scanned-preview-modal.maximized .scanned-preview-image {
@@ -4828,6 +4906,46 @@ body.modal-open .notification-dock {
   border: none;
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
+}
+
+.scanned-preview-filename {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 0.2rem;
+}
+
+.scanned-preview-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.scanned-preview-footer {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.scanned-preview-save-rotation-btn {
+  animation: scanned-preview-save-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.scanned-preview-rotate-btn.is-active {
+  color: var(--primary-light);
+  border-color: rgba(8, 145, 178, 0.32);
+  background: rgba(8, 145, 178, 0.08);
+}
+
+@keyframes scanned-preview-save-in {
+  from {
+    opacity: 0;
+    transform: translateX(-0.35rem) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
 }
 
 .document-timeline-section {

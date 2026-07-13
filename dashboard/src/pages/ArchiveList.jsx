@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
+import ScannedPreviewModal from "../components/ScannedPreviewModal";
 import {
   Archive,
   Search,
@@ -22,8 +23,6 @@ import {
 } from "../data/mockData";
 import {
   getAttachmentSource,
-  isImageAttachment,
-  isPdfAttachment,
 } from "../utils/attachmentDownload";
 
 const ArchiveList = ({
@@ -33,7 +32,10 @@ const ArchiveList = ({
   users = defaultUsers,
   documentTypes = defaultDocumentTypes,
   currentUser,
+  currentRole,
   onAdd,
+  onEditDocument,
+  onNotify,
 }) => {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
@@ -41,6 +43,7 @@ const ArchiveList = ({
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [previewFile, setPreviewFile] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
   const [formData, setFormData] = useState({
     documentId: "",
     date: new Date().toISOString().split("T")[0],
@@ -88,7 +91,8 @@ const ArchiveList = ({
           id: `${doc.id}-scan`,
           name: `${doc.trackingNumber || doc.id}-scan.jpg`,
           type: "image/jpeg",
-          dataUrl: doc.scannedImageUrl,
+          url: doc.scannedImageUrl.startsWith("data:") ? undefined : doc.scannedImageUrl,
+          dataUrl: doc.scannedImageUrl.startsWith("data:") ? doc.scannedImageUrl : undefined,
           uploadedAt: doc.dateReceived,
           uploadedBy: null,
           source: "camera",
@@ -96,6 +100,44 @@ const ArchiveList = ({
       ];
     }
     return [];
+  };
+
+  const openPreview = (file, doc) => {
+    setPreviewDoc(doc);
+    setPreviewFile(file);
+  };
+
+  const closePreview = () => {
+    setPreviewFile(null);
+    setPreviewDoc(null);
+  };
+
+  const canEditRotation = currentRole === "admin" || currentRole === "mayor";
+
+  const handleSaveRotatedAttachment = async (rotatedFile) => {
+    if (!previewDoc || !onEditDocument) {
+      throw new Error("This scan cannot be saved right now.");
+    }
+
+    const existingFiles = getDocumentFiles(previewDoc);
+    const updatedFiles = existingFiles.map((file) => (
+      file.id === rotatedFile.id ? rotatedFile : file
+    ));
+
+    const savedDoc = await onEditDocument({
+      ...previewDoc,
+      scannedFiles: updatedFiles,
+      scannedImageUrl:
+        updatedFiles[0]?.url ||
+        updatedFiles[0]?.dataUrl ||
+        previewDoc.scannedImageUrl,
+    });
+
+    const savedFile =
+      getDocumentFiles(savedDoc).find((file) => file.id === rotatedFile.id) ||
+      rotatedFile;
+    setPreviewDoc(savedDoc);
+    setPreviewFile(savedFile);
   };
 
   const getArchiveTimeline = (archive, doc) => {
@@ -487,7 +529,7 @@ const ArchiveList = ({
                               <button
                                 type="button"
                                 className="attachment-link"
-                                onClick={() => setPreviewFile(file)}
+                                onClick={() => openPreview(file, doc)}
                               >
                                 <Eye size={14} />
                                 <span>{file.name}</span>
@@ -632,74 +674,13 @@ const ArchiveList = ({
       )}
 
       {previewFile && (
-        <ModalOverlay
-          overlayClassName="scanned-preview-overlay"
-          onClose={() => setPreviewFile(null)}
-        >
-          <div
-            className="modal scanned-preview-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <div>
-                <h2>Scanned Paper Preview</h2>
-                <p
-                  style={{
-                    color: "var(--text-muted)",
-                    fontSize: "0.8rem",
-                    marginTop: "0.2rem",
-                  }}
-                >
-                  {previewFile.name}
-                </p>
-              </div>
-              <button className="btn-icon" onClick={() => setPreviewFile(null)}>
-                <X size={18} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="scanned-preview-surface">
-                {isImageAttachment(previewFile) ? (
-                  <img
-                    src={getAttachmentSource(previewFile)}
-                    alt={previewFile.name}
-                    className="scanned-preview-image"
-                  />
-                ) : isPdfAttachment(previewFile) ? (
-                  <iframe
-                    src={getAttachmentSource(previewFile)}
-                    title={previewFile.name}
-                    className="scanned-preview-frame"
-                  />
-                ) : (
-                  <div className="empty-state" style={{ padding: "2rem" }}>
-                    <FileText size={28} />
-                    <h3>Preview unavailable</h3>
-                    <p>
-                      This file type can be downloaded but cannot be previewed
-                      in the browser.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="modal-footer">
-              <a
-                href={getAttachmentSource(previewFile)}
-                download={previewFile.name}
-                className="btn btn-secondary"
-              >
-                <Download size={16} /> Download
-              </a>
-              <button
-                className="btn btn-primary"
-                onClick={() => setPreviewFile(null)}
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </ModalOverlay>
+        <ScannedPreviewModal
+          file={previewFile}
+          canEdit={canEditRotation}
+          onClose={closePreview}
+          onSaveRotated={handleSaveRotatedAttachment}
+          onNotify={onNotify}
+        />
       )}
     </>
   );
