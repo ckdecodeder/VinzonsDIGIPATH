@@ -1566,17 +1566,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                       <p className="field-hint">{getSortLayerHint(formData.documentTypeId)}</p>
                     )}
                     {isOtherDocumentType(formData.documentTypeId) && (
-                      <input
-                        className={`form-input${formErrors.documentTypeOther ? ' is-invalid' : ''}`}
-                        type="text"
-                        value={formData.documentTypeOther}
-                        onChange={e => handleFormChange('documentTypeOther', e.target.value)}
-                        placeholder="Specify document type"
-                        style={{ marginTop: '0.5rem' }}
-                      />
-                      {formErrors.documentTypeOther && (
-                        <p className="form-field-error">{formErrors.documentTypeOther}</p>
-                      )}
+                      <>
+                        <input
+                          className={`form-input${formErrors.documentTypeOther ? ' is-invalid' : ''}`}
+                          type="text"
+                          value={formData.documentTypeOther}
+                          onChange={e => handleFormChange('documentTypeOther', e.target.value)}
+                          placeholder="Specify document type"
+                          style={{ marginTop: '0.5rem' }}
+                        />
+                        {formErrors.documentTypeOther && (
+                          <p className="form-field-error">{formErrors.documentTypeOther}</p>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="form-group">
@@ -1723,17 +1725,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                         .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
                     {formData.fromOfficeId === OTHER_OFFICE_VALUE && (
-                      <input
-                        className={`form-input${formErrors.originOfficeOther ? ' is-invalid' : ''}`}
-                        type="text"
-                        value={formData.originOfficeOther}
-                        onChange={e => handleFormChange('originOfficeOther', e.target.value)}
-                        placeholder="Name of school, agency, municipality, or external office"
-                        style={{ marginTop: '0.5rem' }}
-                      />
-                      {formErrors.originOfficeOther && (
-                        <p className="form-field-error">{formErrors.originOfficeOther}</p>
-                      )}
+                      <>
+                        <input
+                          className={`form-input${formErrors.originOfficeOther ? ' is-invalid' : ''}`}
+                          type="text"
+                          value={formData.originOfficeOther}
+                          onChange={e => handleFormChange('originOfficeOther', e.target.value)}
+                          placeholder="Name of school, agency, municipality, or external office"
+                          style={{ marginTop: '0.5rem' }}
+                        />
+                        {formErrors.originOfficeOther && (
+                          <p className="form-field-error">{formErrors.originOfficeOther}</p>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="form-group">
