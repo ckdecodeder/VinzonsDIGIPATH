@@ -8267,14 +8267,35 @@ body.modal-open .notification-dock {
 /* ==================== para sa LOGIN PAGE ito ==================== */
 .login-page {
   width: 100%;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 100%;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   background: var(--login-bg);
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   padding: clamp(1rem, 3vw, 3rem);
+  scroll-padding-bottom: 2rem;
+  /* Override global scrollbar hide so users can see they can scroll. */
+  scrollbar-width: thin;
+}
+
+.login-page::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.login-page::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.45);
+  border-radius: 999px;
+}
+
+.login-page::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .login-bg-pattern {
@@ -8387,6 +8408,8 @@ body.modal-open .notification-dock {
 .login-layout {
   width: 100%;
   max-width: 1420px;
+  margin-top: auto;
+  margin-bottom: auto;
   display: grid;
   grid-template-columns: minmax(500px, 1.4fr) minmax(280px, 1fr);
   align-items: center;
@@ -8476,19 +8499,12 @@ body.modal-open .notification-dock {
 }
 
 @media (max-width: 950px) {
-  /* Let the login screen scroll and top-align so nothing (seal, form)
-     gets clipped when the stacked content is taller than the viewport. */
+  /* Stacked login: keep top-aligned scroll with room above the keyboard. */
   .login-page {
-    align-items: flex-start;
-    justify-content: flex-start;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
     height: 100vh;
     height: 100dvh;
     padding-top: clamp(1.25rem, 5vw, 2.5rem);
     padding-bottom: clamp(1.25rem, 5vw, 2.5rem);
-    /* Keep a focused input above the on-screen keyboard: when the browser
-       scrolls a focused field into view it respects this bottom padding. */
     scroll-padding-bottom: 50vh;
   }
 
@@ -8500,6 +8516,8 @@ body.modal-open .notification-dock {
   .login-layout {
     grid-template-columns: 1fr;
     gap: 2rem;
+    margin-top: 0;
+    margin-bottom: 0;
   }
 
   .login-layout-right {
