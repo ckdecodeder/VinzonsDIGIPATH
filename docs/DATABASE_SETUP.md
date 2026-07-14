@@ -126,7 +126,12 @@ The smoke test now checks public tracking, persistent notifications, signing/fil
 admin / admin123
 mayor / mayor123
 receptionist / recep123
+simon / simon123          (Office)
+janeromarco / office123   (Office)
 ```
+
+On the current Postgres DB, passwords were reset with `node scripts/set-demo-passwords.js`.
+Pattern: `{username}123` (e.g. Simon Unc → `unc` / `unc123`).
 
 ## Security Notes
 

@@ -93,10 +93,34 @@ http://localhost:5173/
 
 ## Default Accounts
 
+**Simon Unc (Office):** `unc` / `unc123`  
+**(also added)** `simon` / `simon123`
+
+Live DB rule after reset: most users use `{username}123`. Refresh anytime:
+
 ```text
-admin / admin123
-mayor / mayor123
-receptionist / recep123
+cd backend && node scripts/set-demo-passwords.js
+```
+
+```text
+unc / unc123          (Office — Simon Unc)
+simon / simon123      (Office)
+sean / sean123        (Mayor)
+santos / santos123    (Admin)
+adi / adi123          (Office)
+kyle / kyle123        (Office)
+janero / janero123    (Receptionist)
+iann / iann123        (Receptionist)
+anna / anna123 | carlos / carlos123 | cereno / cereno123
+doe / doe123 | marco / marco123 | ops / ops123 | reyes / reyes123 | tov / tov123
+bautista / bautista123 | cruz / cruz123 | elsa / elsa123 | garcia / garcia123
+jane / jane123 | ramos / ramos123 | torres / torres123 | wick / wick123
+```
+
+Seed defaults (fresh install / `seedData.js`):
+
+```text
+admin / admin123 | mayor / mayor123 | receptionist / recep123
 ```
 
 ## Role Model

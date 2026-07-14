@@ -32,6 +32,8 @@ const users = [
   { id: 'USR-006', lname: 'Mendoza', fname: 'Carlos', mname: 'L.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist2', password: 'recep456' },
   { id: 'USR-007', lname: 'Ramos', fname: 'Lucia', mname: 'A.', role: 'Admin', officeId: 'OFF-006', username: 'admin5', password: 'admin202' },
   { id: 'USR-008', lname: 'Bautista', fname: 'Marco', mname: 'S.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist3', password: 'recep789' },
+  { id: 'USR-SIMON-001', lname: 'Unc', fname: 'Simon', mname: '', role: 'Office', officeId: 'OFF-001', username: 'simon', password: 'simon123' },
+  { id: 'USR-OFFICE-001', lname: 'Quierra', fname: 'Janero', mname: '', role: 'Office', officeId: 'OFF-006', username: 'janeromarco', password: 'office123' },
 ];
 
 const documents = [

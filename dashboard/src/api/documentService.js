@@ -414,6 +414,8 @@ export const appDataService = {
     const usersRequest = currentUser?.role === 'Admin' || currentUser?.role === 'Mayor'
       ? userService.getAll()
       : Promise.resolve(currentUser ? [currentUser] : []);
+    // Device APIs are Admin/Mayor/Receptionist only — Office staff must not hit them on bootstrap.
+    const canAccessDevice = ['Admin', 'Mayor', 'Receptionist'].includes(currentUser?.role);
 
     const [
       documentsData,
@@ -431,12 +433,12 @@ export const appDataService = {
       documentService.getAll(),
       transmissionService.getAll(),
       archiveService.getAll(),
-      deviceService.get(),
+      canAccessDevice ? deviceService.get() : Promise.resolve(null),
       logService.getAll(),
       usersRequest,
       officeService.getAll(),
       documentTypeService.getAll(),
-      deviceEventService.getAll(),
+      canAccessDevice ? deviceEventService.getAll() : Promise.resolve([]),
       notificationService.getAll(),
       senderNotificationService.getAll(),
     ]);
