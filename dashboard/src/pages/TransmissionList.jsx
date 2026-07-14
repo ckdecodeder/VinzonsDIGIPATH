@@ -302,8 +302,7 @@ const TransmissionList = ({
   const canReceiveTransmission = (transmission) =>
     Boolean(transmission) &&
     !transmission.receivedBy &&
-    (currentUser?.role === "Admin" ||
-      transmission.toOfficeId === currentUser?.officeId);
+    transmission.toOfficeId === currentUser?.officeId;
 
   const handleReceive = async (id) => {
     await onUpdate(id, {
@@ -682,7 +681,7 @@ const TransmissionList = ({
                           <p className="detail-empty">
                             {transmission.receivedBy
                               ? "This transmission has already been received."
-                              : "Only the destination office or an approval user can receive this transmission."}
+                              : `Only ${getOfficeName(transmission.toOfficeId)} can receive this transmission.`}
                           </p>
                         )}
                       </div>

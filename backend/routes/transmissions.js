@@ -174,8 +174,8 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'This transmission has already been received' });
   }
 
-  if (isReceiveAction && req.user?.role !== 'Admin' && existingTrans.toOfficeId !== getUserOfficeId(req)) {
-    return res.status(403).json({ message: 'Only the destination office or an Admin can receive this transmission' });
+  if (isReceiveAction && existingTrans.toOfficeId !== getUserOfficeId(req)) {
+    return res.status(403).json({ message: 'Only the destination office can receive this transmission' });
   }
   if (!isReceiveAction && !isApprovalRole(req)) {
     return res.status(403).json({ message: 'Only approval users can edit transmission records directly' });
