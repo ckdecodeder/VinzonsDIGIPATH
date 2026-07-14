@@ -387,7 +387,7 @@ const TransmissionList = ({
         <table className="transmissions-table documents-table">
           <thead>
             <tr>
-              <th className="transmissions-col-id">ID</th>
+              <th className="transmissions-col-id">Tracking #</th>
               <th className="transmissions-col-document">Document</th>
               <th className="transmissions-col-route">Route</th>
               <th className="transmissions-col-sent-by">Sent By</th>
@@ -401,6 +401,7 @@ const TransmissionList = ({
             {paginatedTransmissions.length > 0 ? (
               paginatedTransmissions.map((t) => {
                 const doc = documents.find((d) => d.id === t.documentId);
+                const trackingCode = doc?.trackingNumber || doc?.id || t.documentId || '-';
                 const displayTimestamp = t.receivedAt || t.transmissionDate;
                 const timestampParts = formatTransmissionDateParts(displayTimestamp);
                 return (
@@ -410,8 +411,8 @@ const TransmissionList = ({
                     aria-label="View transmission details"
                     onClick={() => setDetailTransmission(t)}
                   >
-                    <td className="transmissions-col-id" title={t.id}>
-                      <span className="td-mono documents-tracking-code">{t.id}</span>
+                    <td className="transmissions-col-id" title={trackingCode}>
+                      <span className="td-mono documents-tracking-code">{trackingCode}</span>
                     </td>
                     <td
                       className="td-primary transmissions-col-document"
@@ -546,7 +547,7 @@ const TransmissionList = ({
                         marginTop: "0.2rem",
                       }}
                     >
-                      {transmission.id}
+                      {doc?.trackingNumber || doc?.id || transmission.documentId || "-"}
                     </p>
                   </div>
                   <button
@@ -565,6 +566,10 @@ const TransmissionList = ({
                       <div className="detail-pair">
                         <span>Tracking #</span>
                         <strong>{doc?.trackingNumber || "-"}</strong>
+                      </div>
+                      <div className="detail-pair">
+                        <span>Route hop</span>
+                        <strong className="td-mono">{transmission.id}</strong>
                       </div>
                       <div className="detail-pair">
                         <span>Subject</span>
