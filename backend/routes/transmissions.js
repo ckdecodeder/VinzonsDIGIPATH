@@ -58,6 +58,15 @@ const normalizeWorkflowStatusValue = (status, fallback = 'Received') => {
 
 router.use(protect);
 
+const { generateId } = require('../utils/helpers');
+
+const replaceDocumentTransmission = async (documentId, payload) => {
+  await Transmission.deleteMany({ documentId });
+  const trans = new Transmission(payload);
+  await trans.save();
+  return trans;
+};
+
 router.get('/', allRoles, asyncHandler(async (req, res) => {
   const trans = await Transmission.find(getScopedTransmissionQuery(req)).sort({ createdAt: -1, transmissionDate: -1, _id: -1 }).lean();
   res.json(trans);
@@ -97,22 +106,26 @@ router.post('/', allRoles, asyncHandler(async (req, res) => {
     }
   }
 
-  const { generateId } = require('../utils/helpers');
   const now = new Date().toISOString();
-  const trans = new Transmission({
-    id: req.body.id || generateId('TRN'),
+  const existingRows = await Transmission.find({ documentId: doc.id })
+    .sort({ createdAt: 1, _id: 1 })
+    .lean();
+  const stableId = req.body.id || existingRows[0]?.id || generateId('TRN');
+  const createdAt = existingRows[0]?.createdAt || now;
+  const trans = await replaceDocumentTransmission(doc.id, {
+    id: stableId,
     documentId: req.body.documentId,
     fromOfficeId: req.body.fromOfficeId,
     toOfficeId: req.body.toOfficeId,
     sentBy: req.user.id,
     receivedBy: null,
+    receivedAt: null,
     transmissionDate: req.body.transmissionDate || now.split('T')[0],
     transmissionType: req.body.transmissionType || 'Internal',
-    acknowledgementRemarks: req.body.acknowledgementRemarks,
-    createdAt: now,
+    acknowledgementRemarks: req.body.acknowledgementRemarks || '',
+    createdAt,
     updatedAt: now,
   });
-  await trans.save();
 
   const fromOffice = await getOfficeLabel(trans.fromOfficeId);
   const toOffice = await getOfficeLabel(trans.toOfficeId);

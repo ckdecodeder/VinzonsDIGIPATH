@@ -80,15 +80,6 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
     throw err;
   }
 
-  const changedRoutingField = ['originOfficeId', 'currentOfficeId', 'destinationOfficeId'].some(field =>
-    updates[field] !== undefined && comparable(updates[field]) !== comparable(existingDoc[field])
-  );
-  if (changedRoutingField) {
-    const err = new Error('Document location can only change through routing, receiving, or RFID detection');
-    err.status = 400;
-    throw err;
-  }
-
   if (updates.intakeStatus && updates.intakeStatus !== existingDoc.intakeStatus) {
     const err = new Error('Use the approval/rejection action to change intake review status');
     err.status = isApprovalRole(req) ? 400 : 403;
@@ -356,6 +347,12 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   delete updates._id;
   delete updates.__v;
   delete updates.timeline;
+  // Location still mainly moves via route/receive/RFID; ignore accidental form diffs on save.
+  delete updates.originOfficeId;
+  delete updates.currentOfficeId;
+  delete updates.destinationOfficeId;
+  delete updates.originOfficeOther;
+  delete updates.destinationOfficeOther;
   updates.updatedAt = new Date().toISOString();
   if (Array.isArray(updates.scannedFiles)) {
     if (updates.scannedFiles.length === 0) {
