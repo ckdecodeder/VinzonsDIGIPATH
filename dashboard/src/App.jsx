@@ -579,7 +579,7 @@ function App() {
         ...newDoc,
         scannedText: text,
         originOfficeId: newDoc.originOfficeId || newTransmission.fromOfficeId || getUserOfficeId(),
-        currentOfficeId: newDoc.currentOfficeId || newTransmission.toOfficeId || getUserOfficeId(),
+        currentOfficeId: newDoc.currentOfficeId || getUserOfficeId(),
         destinationOfficeId: newDoc.destinationOfficeId || newTransmission.toOfficeId || newDoc.currentOfficeId || '',
         intakeStatus: 'Pending Review',
       },

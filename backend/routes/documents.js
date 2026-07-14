@@ -347,12 +347,17 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   delete updates._id;
   delete updates.__v;
   delete updates.timeline;
-  // Location still mainly moves via route/receive/RFID; ignore accidental form diffs on save.
-  delete updates.originOfficeId;
+  // Current office still moves via route/receive/RFID only.
   delete updates.currentOfficeId;
-  delete updates.destinationOfficeId;
-  delete updates.originOfficeOther;
-  delete updates.destinationOfficeOther;
+  // While still in intake, allow From/To from the scanner form so the destined
+  // office is stored (destination) without moving the physical current office.
+  const canSetIntakeOffices = (existingDoc.intakeStatus || 'Approved') === 'Pending Review';
+  if (!canSetIntakeOffices) {
+    delete updates.originOfficeId;
+    delete updates.destinationOfficeId;
+    delete updates.originOfficeOther;
+    delete updates.destinationOfficeOther;
+  }
   updates.updatedAt = new Date().toISOString();
   if (Array.isArray(updates.scannedFiles)) {
     if (updates.scannedFiles.length === 0) {

@@ -20,6 +20,47 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
   const [lastTrackingCheck, setLastTrackingCheck] = useState(null);
   const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false);
 
+  const getTrackingRoute = (result) => {
+    if (!result) return { from: 'Not recorded', to: 'Not recorded' };
+
+    // Prefer the actual send/route hop — never insert currentOffice in the middle
+    // (that caused "Mayor's → Mayor's → Dest" when origin and current matched).
+    const latestTransmission = Array.isArray(result.transmissions) && result.transmissions.length
+      ? result.transmissions[result.transmissions.length - 1]
+      : null;
+    if (latestTransmission?.fromOffice && latestTransmission?.toOffice) {
+      return { from: latestTransmission.fromOffice, to: latestTransmission.toOffice };
+    }
+
+    const origin = result.originOffice || 'Not recorded';
+    const destination = result.destinationOffice && result.destinationOffice !== 'Not recorded'
+      ? result.destinationOffice
+      : '';
+    if (destination) {
+      return { from: origin, to: destination };
+    }
+    return { from: origin, to: result.currentOffice || 'Not recorded' };
+  };
+
+  const renderTrackingRoute = (result) => {
+    const route = getTrackingRoute(result);
+    const sameOffice = String(route.from).trim().toLowerCase() === String(route.to).trim().toLowerCase();
+    if (sameOffice) {
+      return (
+        <div className="login-tracking-route">
+          <strong>{route.to}</strong>
+        </div>
+      );
+    }
+    return (
+      <div className="login-tracking-route">
+        <span>{route.from}</span>
+        <ArrowRight size={13} />
+        <strong>{route.to}</strong>
+      </div>
+    );
+  };
+
   const handleTrackingLookup = async (value = trackingNumber, { silent = false } = {}) => {
     const number = value.trim();
     if (!number) return;
@@ -265,17 +306,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                         <span><Clock size={12} />Received {trackingResult.dateReceived || 'not recorded'}</span>
                       </div>
 
-                      <div className="login-tracking-route">
-                        <span>{trackingResult.originOffice}</span>
-                        <ArrowRight size={13} />
-                        <strong>{trackingResult.currentOffice}</strong>
-                        {trackingResult.destinationOffice && trackingResult.destinationOffice !== 'Not recorded' && (
-                          <>
-                            <ArrowRight size={13} />
-                            <span>{trackingResult.destinationOffice}</span>
-                          </>
-                        )}
-                      </div>
+                      {renderTrackingRoute(trackingResult)}
 
                       {trackingResult.rejectionReason && (
                         <div className="login-tracking-message danger">
@@ -284,7 +315,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                         </div>
                       )}
 
-                      {!!trackingResult.transmissions?.length && (
+                      {trackingResult.transmissions?.length > 1 && (
                         <div className="login-tracking-updates">
                           {trackingResult.transmissions.slice(-3).map(item => (
                             <div key={item.id} className="login-tracking-update">
@@ -380,17 +411,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                     <span><Clock size={12} />Received {trackingResult.dateReceived || 'not recorded'}</span>
                   </div>
 
-                  <div className="login-tracking-route">
-                    <span>{trackingResult.originOffice}</span>
-                    <ArrowRight size={13} />
-                    <strong>{trackingResult.currentOffice}</strong>
-                    {trackingResult.destinationOffice && trackingResult.destinationOffice !== 'Not recorded' && (
-                      <>
-                        <ArrowRight size={13} />
-                        <span>{trackingResult.destinationOffice}</span>
-                      </>
-                    )}
-                  </div>
+                  {renderTrackingRoute(trackingResult)}
 
                   {trackingResult.rejectionReason && (
                     <div className="login-tracking-message danger">
@@ -399,7 +420,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                     </div>
                   )}
 
-                  {!!trackingResult.transmissions?.length && (
+                  {trackingResult.transmissions?.length > 1 && (
                     <div className="login-tracking-updates">
                       {trackingResult.transmissions.slice(-3).map(item => (
                         <div key={item.id} className="login-tracking-update">

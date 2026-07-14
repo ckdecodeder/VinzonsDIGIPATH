@@ -1120,7 +1120,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
     if (hardwareScannedDoc?.id) {
       const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? null : formData.fromOfficeId;
-      const receivingOfficeId = formData.toOfficeId || receptionOfficeId;
+      const destinationOfficeId = formData.toOfficeId || receptionOfficeId;
+      const scanOfficeId = hardwareScannedDoc.currentOfficeId
+        || hardwareScannedDoc.originOfficeId
+        || receptionOfficeId;
       await onEditDocument?.({
         ...hardwareScannedDoc,
         subject: formData.subject,
@@ -1130,10 +1133,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         priorityLevel: formData.priorityLevel,
         status: canSetInitialStatus ? formData.status : 'Received',
         dateReceived: formData.dateReceived,
-        originOfficeId: sourceOfficeId || receivingOfficeId,
+        originOfficeId: sourceOfficeId || scanOfficeId,
         originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
-        currentOfficeId: receivingOfficeId,
-        destinationOfficeId: receivingOfficeId,
+        // Keep physical location at the scanning office; To Office is the destined office.
+        currentOfficeId: scanOfficeId,
+        destinationOfficeId,
         senderName: formData.senderName,
         senderContact: formData.senderContact,
         senderEmail: formData.senderEmail,
@@ -1148,7 +1152,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
 
     const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? null : formData.fromOfficeId;
-    const receivingOfficeId = formData.toOfficeId || receptionOfficeId;
+    const destinationOfficeId = formData.toOfficeId || receptionOfficeId;
+    const intakeOfficeId = receptionOfficeId || destinationOfficeId;
     const newDoc = {
       subject: formData.subject,
       documentDirection: canChooseDirection ? formData.documentDirection : 'Incoming',
@@ -1157,10 +1162,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       priorityLevel: formData.priorityLevel,
       status: canSetInitialStatus ? formData.status : 'Received',
       dateReceived: formData.dateReceived,
-      originOfficeId: sourceOfficeId || receivingOfficeId,
+      originOfficeId: sourceOfficeId || intakeOfficeId,
       originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
-      currentOfficeId: receivingOfficeId,
-      destinationOfficeId: receivingOfficeId,
+      currentOfficeId: intakeOfficeId,
+      destinationOfficeId,
       senderName: formData.senderName,
       senderContact: formData.senderContact,
       senderEmail: formData.senderEmail,
@@ -1175,8 +1180,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     };
 
     const newTransmission = {
-      fromOfficeId: sourceOfficeId || receivingOfficeId,
-      toOfficeId: receivingOfficeId,
+      fromOfficeId: sourceOfficeId || intakeOfficeId,
+      toOfficeId: destinationOfficeId,
       transmissionDate: formData.dateReceived,
       transmissionType: formData.fromOfficeId === formData.toOfficeId ? 'Internal' : 'External',
     };
