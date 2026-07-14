@@ -303,7 +303,6 @@ const TransmissionList = ({
     Boolean(transmission) &&
     !transmission.receivedBy &&
     (currentUser?.role === "Admin" ||
-      currentUser?.role === "Mayor" ||
       transmission.toOfficeId === currentUser?.officeId);
 
   const handleReceive = async (id) => {

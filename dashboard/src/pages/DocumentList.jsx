@@ -857,7 +857,7 @@ const DocumentList = ({
     );
   };
   const canReceiveTransmission = (transmission) => Boolean(transmission) && !transmission.receivedBy && (
-    isApprovalUser ||
+    currentRole === 'admin' ||
     transmission.toOfficeId === currentUser?.officeId
   );
   const canTakeDocumentAction = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && ['Received', 'For Signing', 'For Filing', ...finalWorkflowStatuses].includes(getWorkflowStatus(doc));
