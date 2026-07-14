@@ -152,32 +152,39 @@ router.delete('/:id', adminOnly, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'You cannot delete the account you are currently using' });
   }
 
-  const [transmissionCount, archiveCount, documentCount, commandCount] = await Promise.all([
-    Transmission.countDocuments({
-      $or: [
-        { sentBy: req.params.id },
-        { receivedBy: req.params.id },
-      ],
-    }),
-    Archive.countDocuments({ userId: req.params.id }),
-    Document.countDocuments({
-      $or: [
-        { verifiedBy: req.params.id },
-        { 'timeline.userId': req.params.id },
-      ],
-    }),
-    Command.countDocuments({ requestedBy: req.params.id }),
-  ]);
+  // Detach workflow/audit references so Admin can delete accounts during setup.
+  // History text remains; linked user ids are cleared.
+  await Command.deleteMany({ requestedBy: req.params.id });
+  await Transmission.updateMany({ sentBy: req.params.id }, { sentBy: null });
+  await Transmission.updateMany({ receivedBy: req.params.id }, { receivedBy: null });
+  await Archive.updateMany({ userId: req.params.id }, { userId: null });
+  await Document.updateMany({ verifiedBy: req.params.id }, { verifiedBy: null });
 
-  if (transmissionCount || archiveCount || documentCount || commandCount) {
-    return res.status(409).json({
-      message: 'This user is part of document history. Keep the account for audit records instead of deleting it.',
-    });
+  const { sequelize } = require('../config/db');
+  if (sequelize) {
+    await sequelize.query(
+      `UPDATE documents
+       SET timeline = (
+         SELECT COALESCE(jsonb_agg(
+           CASE
+             WHEN elem->>'userId' = :userId THEN (elem - 'userId')
+             ELSE elem
+           END
+         ), '[]'::jsonb)
+         FROM jsonb_array_elements(COALESCE(timeline, '[]'::jsonb)) AS elem
+       )
+       WHERE EXISTS (
+         SELECT 1
+         FROM jsonb_array_elements(COALESCE(timeline, '[]'::jsonb)) AS e
+         WHERE e->>'userId' = :userId
+       )`,
+      { replacements: { userId: req.params.id } },
+    );
   }
 
   await User.findOneAndDelete({ id: req.params.id });
   await createLogEntry(req, 'user_deleted', `Deleted user account: ${user.username}`, req.params.id);
-  broadcastDataInvalidate(['users', 'logs']);
+  broadcastDataInvalidate(['users', 'logs', 'documents', 'transmissions', 'archives']);
   res.json({ success: true });
 }));
 
