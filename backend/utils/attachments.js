@@ -101,10 +101,51 @@ const persistAttachments = async (req, attachments = []) => {
   return Promise.all(attachments.map((attachment) => persistAttachment(req, attachment)));
 };
 
+const resolveStoredScanPath = (attachment) => {
+  if (!attachment) return null;
+  if (attachment.storagePath) {
+    const relative = attachment.storagePath.replace(/^[/\\]+/, '');
+    return path.isAbsolute(attachment.storagePath)
+      ? attachment.storagePath
+      : path.join(__dirname, '..', relative);
+  }
+
+  const url = attachment.url || '';
+  const match = url.match(/\/uploads\/scans\/([^/?#]+)$/);
+  if (!match) return null;
+  return path.join(uploadRoot, match[1]);
+};
+
+/** Delete scan files that were dropped from a document's scannedFiles list. */
+const removeOrphanedAttachments = async (previous = [], next = []) => {
+  const keptIds = new Set((next || []).map((file) => file?.id).filter(Boolean));
+  const keptPaths = new Set(
+    (next || [])
+      .map((file) => resolveStoredScanPath(file))
+      .filter(Boolean)
+      .map((p) => path.normalize(p)),
+  );
+
+  await Promise.all((previous || []).map(async (file) => {
+    if (file?.id && keptIds.has(file.id)) return;
+    const diskPath = resolveStoredScanPath(file);
+    if (!diskPath) return;
+    if (keptPaths.has(path.normalize(diskPath))) return;
+    try {
+      await fs.promises.unlink(diskPath);
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        console.warn(`Unable to remove orphaned attachment ${diskPath}:`, err.message);
+      }
+    }
+  }));
+};
+
 module.exports = {
   sanitizeFileName,
   extensionFromAttachment,
   getUploadUrl,
   persistAttachment,
   persistAttachments,
+  removeOrphanedAttachments,
 };

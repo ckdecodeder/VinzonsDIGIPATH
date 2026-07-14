@@ -870,6 +870,21 @@ const ReceptionistDashboard = ({
                   {receiveFormErrors.attachmentFile && (
                     <p className="form-field-error">{receiveFormErrors.attachmentFile}</p>
                   )}
+                  {attachmentFile && (
+                    <div className="attachment-item" style={{ marginTop: '0.45rem' }}>
+                      <p className="field-hint" style={{ margin: 0, flex: 1 }}>
+                        Selected: {attachmentFile.name}
+                      </p>
+                      <button
+                        type="button"
+                        className="attachment-remove"
+                        onClick={() => setAttachmentFile(null)}
+                        title="Clear selected file"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
                   <p className="field-hint">Attach a scanned image or PDF, matching the Document Tracker form.</p>
                 </div>
 

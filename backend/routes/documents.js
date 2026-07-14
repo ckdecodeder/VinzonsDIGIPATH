@@ -20,7 +20,7 @@ const {
 const { normalizeSenderNotificationChannels, queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
-const { persistAttachments } = require('../utils/attachments');
+const { persistAttachments, removeOrphanedAttachments } = require('../utils/attachments');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
@@ -358,8 +358,16 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   delete updates.timeline;
   updates.updatedAt = new Date().toISOString();
   if (Array.isArray(updates.scannedFiles)) {
+    if (updates.scannedFiles.length === 0) {
+      return res.status(400).json({ message: 'A document must keep at least one scanned file attachment' });
+    }
+    const previousFiles = existingDoc.scannedFiles || [];
     updates.scannedFiles = await persistAttachments(req, updates.scannedFiles);
-    updates.scannedImageUrl = updates.scannedImageUrl || updates.scannedFiles[0]?.url || updates.scannedFiles[0]?.dataUrl;
+    // Always derive cover URL from the remaining files (supports removals).
+    updates.scannedImageUrl = updates.scannedFiles[0]?.url
+      || updates.scannedFiles[0]?.dataUrl
+      || '';
+    await removeOrphanedAttachments(previousFiles, updates.scannedFiles);
   }
 
   const timelineEvents = [];
@@ -382,15 +390,28 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
       existingDoc.id,
     ));
   }
-  if ((updates.scannedFiles || []).length > (existingDoc.scannedFiles || []).length) {
-    timelineEvents.push(createTimelineEvent(
-      req,
-      'document_attachment_added',
-      'Scanned file attached',
-      `Added scanned file to ${existingDoc.subject}`,
-      updates.currentOfficeId || existingDoc.currentOfficeId,
-      existingDoc.id,
-    ));
+  if (Array.isArray(updates.scannedFiles)) {
+    const previousCount = (existingDoc.scannedFiles || []).length;
+    const nextCount = updates.scannedFiles.length;
+    if (nextCount > previousCount) {
+      timelineEvents.push(createTimelineEvent(
+        req,
+        'document_attachment_added',
+        'Scanned file attached',
+        `Added scanned file to ${existingDoc.subject}`,
+        updates.currentOfficeId || existingDoc.currentOfficeId,
+        existingDoc.id,
+      ));
+    } else if (nextCount < previousCount) {
+      timelineEvents.push(createTimelineEvent(
+        req,
+        'document_attachment_removed',
+        'Scanned file removed',
+        `Removed scanned file from ${existingDoc.subject}`,
+        updates.currentOfficeId || existingDoc.currentOfficeId,
+        existingDoc.id,
+      ));
+    }
   }
 
   const updateCommand = {

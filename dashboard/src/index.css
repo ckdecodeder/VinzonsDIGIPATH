@@ -5785,6 +5785,24 @@ body.modal-open .notification-dock {
   background: rgba(8, 145, 178, 0.06);
 }
 
+.attachment-remove {
+  width: 38px;
+  min-width: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--danger, #b42318);
+  background: var(--bg-surface);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.attachment-remove:hover {
+  border-color: rgba(180, 35, 24, 0.35);
+  background: rgba(180, 35, 24, 0.08);
+}
+
 .scanned-preview-overlay {
   z-index: 130;
 }

@@ -7,6 +7,7 @@ import {
   RotateCw,
   Check,
   FileText,
+  Trash2,
 } from 'lucide-react';
 import ModalOverlay from './ModalOverlay';
 import {
@@ -47,6 +48,7 @@ const ScannedPreviewModal = ({
   canEdit = false,
   onClose,
   onSaveRotated,
+  onRemove,
   onSaved,
   onNotify,
 }) => {
@@ -299,6 +301,16 @@ const ScannedPreviewModal = ({
               title="Rotate clockwise"
             >
               <RotateCw size={16} /> Rotate
+            </button>
+          )}
+          {canEdit && onRemove && (
+            <button
+              type="button"
+              className="btn btn-danger"
+              onClick={onRemove}
+              title="Remove scanned file"
+            >
+              <Trash2 size={16} /> Remove
             </button>
           )}
           <button

@@ -94,6 +94,7 @@ const DocumentList = ({
   const [sortAsc, setSortAsc] = useState(false);
   const [formData, setFormData] = useState(getInitialForm);
   const [attachmentFile, setAttachmentFile] = useState(null);
+  const [formScannedFiles, setFormScannedFiles] = useState([]);
   const [downloadFormats, setDownloadFormats] = useState({});
   const [routeDoc, setRouteDoc] = useState(null);
   const [detailDoc, setDetailDoc] = useState(null);
@@ -423,6 +424,7 @@ const DocumentList = ({
     setDocumentFormErrorSummary('');
     if (doc) {
       setEditDoc(doc);
+      setFormScannedFiles(getDocumentFiles(doc));
       setFormData({
         subject: doc.subject,
         documentDirection: doc.documentDirection,
@@ -447,6 +449,7 @@ const DocumentList = ({
       });
     } else {
       setEditDoc(null);
+      setFormScannedFiles([]);
       setFormData(getInitialForm());
     }
     setShowForm(true);
@@ -460,7 +463,7 @@ const DocumentList = ({
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const hasExistingAttachment = Boolean(editDoc?.scannedFiles?.length || editDoc?.scannedImageUrl);
+    const hasExistingAttachment = Boolean(formScannedFiles.length || editDoc?.scannedImageUrl);
     const isOfficeStaff = currentUser?.role === 'Office';
     const requiredFields = [
       { key: 'subject', label: 'Document subject', value: formData.subject },
@@ -474,7 +477,7 @@ const DocumentList = ({
       {
         key: 'attachmentFile',
         label: 'Scanned file attachment',
-        value: attachmentFile?.name || (hasExistingAttachment ? 'existing' : ''),
+        value: attachmentFile?.name || (formScannedFiles.length || hasExistingAttachment ? 'existing' : ''),
       },
       {
         key: 'destinationOfficeId',
@@ -495,6 +498,13 @@ const DocumentList = ({
     setDocumentFormErrorSummary('');
 
     const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
+    const nextScannedFiles = [...formScannedFiles, ...newFiles];
+    if (!nextScannedFiles.length) {
+      setDocumentFormErrors({ attachmentFile: 'Attach at least one scanned file.' });
+      setDocumentFormErrorSummary('A scanned file attachment is required.');
+      return;
+    }
+
     const isReceptionist = currentUser?.role === 'Receptionist';
     const myOfficeId = currentUser?.officeId || formData.currentOfficeId;
     const editingDoc = editDoc;
@@ -533,18 +543,19 @@ const DocumentList = ({
       ? {
           ...editingDoc,
           ...normalizedFormData,
-          scannedFiles: [...(editingDoc.scannedFiles || []), ...newFiles],
-          scannedImageUrl: newFiles[0]?.dataUrl || editingDoc.scannedImageUrl,
+          scannedFiles: nextScannedFiles,
+          scannedImageUrl: nextScannedFiles[0]?.url || nextScannedFiles[0]?.dataUrl || '',
         }
       : {
           ...normalizedFormData,
-          scannedFiles: newFiles,
-          scannedImageUrl: newFiles[0]?.dataUrl || '',
+          scannedFiles: nextScannedFiles,
+          scannedImageUrl: nextScannedFiles[0]?.dataUrl || nextScannedFiles[0]?.url || '',
         };
 
     setShowForm(false);
     setEditDoc(null);
     setAttachmentFile(null);
+    setFormScannedFiles([]);
 
     if (editingDoc) {
       await onEdit(payload);
@@ -785,7 +796,7 @@ const DocumentList = ({
     const savedDoc = await onEdit({
       ...previewDoc,
       scannedFiles: updatedFiles,
-      scannedImageUrl: updatedFiles[0]?.url || updatedFiles[0]?.dataUrl || previewDoc.scannedImageUrl,
+      scannedImageUrl: updatedFiles[0]?.url || updatedFiles[0]?.dataUrl || '',
     });
 
     const savedFile = getDocumentFiles(savedDoc).find((file) => file.id === rotatedFile.id) || rotatedFile;
@@ -796,11 +807,42 @@ const DocumentList = ({
     }
   };
 
+  const handleRemoveAttachment = async (doc, fileId) => {
+    if (!onEdit || !doc) return;
+    const existingFiles = getDocumentFiles(doc);
+    if (existingFiles.length <= 1) {
+      notify('A document needs at least one attachment. Open Edit to replace this file.', 'Cannot remove', 'warning');
+      return;
+    }
+
+    const confirmed = window.confirm('Remove this scanned file from the document?');
+    if (!confirmed) return;
+
+    const updatedFiles = existingFiles.filter((file) => file.id !== fileId);
+    const savedDoc = await onEdit({
+      ...doc,
+      scannedFiles: updatedFiles,
+      scannedImageUrl: updatedFiles[0]?.url || updatedFiles[0]?.dataUrl || '',
+    });
+
+    if (previewDoc?.id === savedDoc?.id) {
+      if (previewFile?.id === fileId) {
+        closePreview();
+      } else {
+        setPreviewDoc(savedDoc);
+      }
+    }
+    if (detailDoc?.id === savedDoc?.id) {
+      setDetailDoc(savedDoc);
+    }
+  };
+
   const isApprovalUser = currentRole === 'admin' || currentRole === 'mayor';
   const isOfficeUser = currentRole === 'office';
   const canDelete = currentRole === 'admin';
   const canCreate = currentRole === 'admin' || currentRole === 'receptionist' || isOfficeUser;
   const canEdit = currentRole === 'admin' || currentRole === 'receptionist';
+  const canManageAttachments = canEdit || isOfficeUser;
   const canRoute = isApprovalUser || currentRole === 'receptionist' || isOfficeUser;
   const canVerify = isApprovalUser;
   const isApprovedForWorkflow = (doc) => (doc.intakeStatus || 'Approved') === 'Approved';
@@ -1120,6 +1162,16 @@ const DocumentList = ({
                                             ? ' PNG'
                                             : ''}
                                     </button>
+                                    {canManageAttachments && (
+                                      <button
+                                        type="button"
+                                        className="attachment-remove"
+                                        onClick={() => handleRemoveAttachment(doc, file.id)}
+                                        title="Remove scanned file"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -1290,6 +1342,16 @@ const DocumentList = ({
                                     ? ' PNG'
                                     : ''}
                             </button>
+                            {canManageAttachments && (
+                              <button
+                                type="button"
+                                className="attachment-remove"
+                                onClick={() => handleRemoveAttachment(doc, file.id)}
+                                title="Remove scanned file"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1674,6 +1736,29 @@ const DocumentList = ({
                     <Upload size={12} style={{ marginRight: '0.25rem' }} />
                     Scanned File Attachment <span className="required-mark">*</span>
                   </label>
+                  {formScannedFiles.length > 0 && (
+                    <div className="attachment-list" style={{ marginBottom: '0.65rem' }}>
+                      {formScannedFiles.map((file) => (
+                        <div key={file.id} className="attachment-item">
+                          <div className="attachment-link" style={{ cursor: 'default' }}>
+                            <Paperclip size={14} />
+                            <span>{file.name}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="attachment-remove"
+                            onClick={() => {
+                              setFormScannedFiles((prev) => prev.filter((item) => item.id !== file.id));
+                              setDocumentFormErrors((prev) => clearFieldError(prev, 'attachmentFile'));
+                            }}
+                            title="Remove scanned file"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <input
                     className={`form-input${documentFormErrors.attachmentFile ? ' is-invalid' : ''}`}
                     type="file"
@@ -1688,12 +1773,22 @@ const DocumentList = ({
                     <p className="form-field-error">{documentFormErrors.attachmentFile}</p>
                   )}
                   {attachmentFile && (
-                    <p className="field-hint" style={{ marginTop: '0.35rem' }}>
-                      Selected: {attachmentFile.name}
-                    </p>
+                    <div className="attachment-item" style={{ marginTop: '0.45rem' }}>
+                      <p className="field-hint" style={{ margin: 0, flex: 1 }}>
+                        New file selected: {attachmentFile.name}
+                      </p>
+                      <button
+                        type="button"
+                        className="attachment-remove"
+                        onClick={() => setAttachmentFile(null)}
+                        title="Clear selected file"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
                   )}
                   <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                    Attach a scanned image or PDF. Camera scans are added automatically from the Scan Documents screen.
+                    Attach a scanned image or PDF. You can remove existing files above, then add a replacement if needed.
                   </p>
                 </div>
               </div>
@@ -1824,9 +1919,10 @@ const DocumentList = ({
       {previewFile && (
         <ScannedPreviewModal
           file={previewFile}
-          canEdit={canEdit}
+          canEdit={canManageAttachments}
           onClose={closePreview}
           onSaveRotated={handleSaveRotatedAttachment}
+          onRemove={canManageAttachments ? () => handleRemoveAttachment(previewDoc, previewFile.id) : undefined}
           onNotify={onNotify}
         />
       )}
