@@ -224,9 +224,25 @@ export async function bootstrapApiBase(options = {}) {
   if (bootstrapPromise) return bootstrapPromise;
 
   bootstrapPromise = (async () => {
+    // Local Vite → always prefer /api proxy (avoids flaky Dev Tunnel in the browser).
+    if (typeof window !== 'undefined' && import.meta.env.DEV) {
+      const host = window.location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') {
+        const localWorking = await probeApiUrl(window.location.origin);
+        if (localWorking) {
+          resolvedApiBase = '/api';
+          try {
+            localStorage.removeItem(API_URL_KEY);
+          } catch {
+            // ignore storage errors
+          }
+          return resolvedApiBase;
+        }
+      }
+    }
+
     const envUrl = getEnvApiUrl();
     if (envUrl) {
-      const envBase = normalizeApiBase(envUrl);
       const envWorking = await probeApiUrl(envUrl);
       if (envWorking) {
         resolvedApiBase = envWorking;
@@ -239,7 +255,7 @@ export async function bootstrapApiBase(options = {}) {
       const working = await probeApiUrl(candidate);
       if (working) {
         resolvedApiBase = working;
-        setStoredApiUrl(working);
+        if (!working.startsWith('/')) setStoredApiUrl(working);
         return working;
       }
     }

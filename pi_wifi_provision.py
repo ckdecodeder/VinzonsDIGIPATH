@@ -507,12 +507,13 @@ def html_page() -> bytes:
   <div class="wrap">
     <div class="hero">
       <div class="badge">DigiPath Setup</div>
-      <h1>Connect this scanner to WiFi</h1>
+      <h1>Connect or change WiFi</h1>
       <p>Device: <strong>{DEVICE_LABEL}</strong></p>
       <ol class="steps">
-        <li>Stay on this Pi hotspot.</li>
-        <li>Pick your office WiFi below.</li>
-        <li>After success, hotspot turns off automatically.</li>
+        <li>Stay on this DigiPath-Setup hotspot.</li>
+        <li>Pick / change the office WiFi below.</li>
+        <li>Works even if the scanner already has internet.</li>
+        <li>After success, this hotspot turns off automatically.</li>
       </ol>
     </div>
 
@@ -730,14 +731,22 @@ class ProvisionHandler(BaseHTTPRequestHandler):
         self._send(400, json.dumps({"ok": False, "error": message}).encode("utf-8"), "application/json")
 
 
+def force_hotspot_enabled() -> bool:
+    return os.environ.get("DIGIPATH_WIFI_FORCE_HOTSPOT", "1").strip().lower() not in {"0", "false", "no"}
+
+
 def main() -> int:
     if os.environ.get("DIGIPATH_WIFI_PROVISION", "1").strip() in {"0", "false", "no"}:
         log("Provisioning disabled by DIGIPATH_WIFI_PROVISION.")
         return 0
 
-    if wifi_client_connected():
-        log("Already connected to WiFi — provisioning not needed.")
+    force_hotspot = force_hotspot_enabled()
+    if wifi_client_connected() and not force_hotspot:
+        log("Already connected to WiFi — provisioning not needed (DIGIPATH_WIFI_FORCE_HOTSPOT=0).")
         return 0
+
+    if force_hotspot:
+        log("Force hotspot enabled — setup portal stays open for WiFi reconfiguration.")
 
     server = None
     port = PROVISION_PORT
@@ -760,8 +769,10 @@ def main() -> int:
 
     try:
         while not shutdown_requested():
-            if wifi_client_connected():
-                log("WiFi connection detected.")
+            # Stay open while DigiPath-Setup AP is active so online Pis can still be reconfigured.
+            # Exit only after a real office WiFi client link is up (hotspot already torn down).
+            if wifi_client_connected() and not hotspot_active():
+                log("Office WiFi connection detected.")
                 break
             time.sleep(0.5)
     except KeyboardInterrupt:

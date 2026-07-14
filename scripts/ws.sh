@@ -30,7 +30,4 @@ if ! "$PY" -c "import cv2, websocket" 2>/dev/null; then
 fi
 
 echo "[PiWS] Starting scanner (JPEG preview over WebSocket)..."
-# shellcheck source=pi-load-env.sh
-source "$SCRIPT_DIR/pi-load-env.sh"
-pi_load_env "$ROOT_DIR/.env"
-exec "$PY" "$ROOT_DIR/pi_ws_scanner.py"
+exec bash "$ROOT_DIR/scripts/pi-run-ws-scanner.sh"

@@ -20,6 +20,7 @@ const {
 const { normalizeSenderNotificationChannels, queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
+const { persistAttachments } = require('../utils/attachments');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
@@ -139,23 +140,35 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
 
 const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => {
   const userOfficeId = getUserOfficeId(req);
-  const documentDirection = !isApprovalRole(req)
-    ? 'Incoming'
-    : (body.documentDirection === 'Outgoing' ? 'Outgoing' : 'Incoming');
-  const originOfficeId = isApprovalRole(req)
+  const isOfficeUser = req.user?.role === 'Office';
+  const canChooseOffices =
+    isApprovalRole(req) || req.user?.role === 'Receptionist';
+  const documentDirection = isOfficeUser
+    ? 'Outgoing'
+    : (!isApprovalRole(req)
+      ? 'Incoming'
+      : (body.documentDirection === 'Outgoing' ? 'Outgoing' : 'Incoming'));
+  const originOfficeId = canChooseOffices
     ? (body.originOfficeId || body.currentOfficeId || userOfficeId)
     : userOfficeId;
-  const currentOfficeId = isApprovalRole(req)
-    ? (body.currentOfficeId || body.originOfficeId || userOfficeId)
+  const currentOfficeId = canChooseOffices
+    ? (body.currentOfficeId || body.destinationOfficeId || body.originOfficeId || userOfficeId)
     : userOfficeId;
+  // Office staff pick destination (reception / other offices) when sending.
+  const destinationOfficeId = (canChooseOffices || isOfficeUser)
+    ? (body.destinationOfficeId || (isOfficeUser ? '' : body.currentOfficeId) || '')
+    : (body.destinationOfficeId || '');
   const now = new Date().toISOString();
   const scannedFiles = await persistAttachments(req, body.scannedFiles || []);
-  const defaultIntakeStatus = (scanner || !isApprovalRole(req)) ? 'Pending Review' : 'Approved';
+  // Office-created docs are ready to send (no intake queue). Receptionist scans need review.
+  const defaultIntakeStatus = (scanner || req.user?.role === 'Receptionist')
+    ? 'Pending Review'
+    : 'Approved';
   const requestedIntakeStatus = isApprovalRole(req) && intakeStatuses.includes(body.intakeStatus)
     ? body.intakeStatus
     : defaultIntakeStatus;
   const requestedStatus = normalizeWorkflowStatus(body.status);
-  const canSetInitialStatus = req.user?.role === 'Receptionist';
+  const canSetInitialStatus = req.user?.role === 'Receptionist' || isApprovalRole(req);
   const registrationStatus = canSetInitialStatus && registrationStatuses.includes(requestedStatus) ? requestedStatus : 'Received';
 
   return {
@@ -172,6 +185,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     originOfficeId,
     originOfficeOther: normalizeText(body.originOfficeOther),
     currentOfficeId,
+    destinationOfficeId,
     destinationOfficeOther: normalizeText(body.destinationOfficeOther),
     notifySender: body.notifySender !== undefined ? Boolean(body.notifySender) : true,
     senderNotificationConsent: body.senderNotificationConsent !== undefined ? Boolean(body.senderNotificationConsent) : true,
@@ -188,9 +202,6 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
   const payload = req.body.document || req.body;
   requireFields(payload, ['subject']);
 
-  const officeId = isApprovalRole(req)
-    ? (payload.currentOfficeId || payload.originOfficeId || getUserOfficeId(req))
-    : getUserOfficeId(req);
   const now = new Date().toISOString();
 
   const rawScannedFiles = payload.scannedFiles || (req.body.attachment ? [{
@@ -207,6 +218,12 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
     ...payload,
     scannedFiles: rawScannedFiles,
   }, { scanner: true });
+
+  const canChooseOffices =
+    isApprovalRole(req) || req.user?.role === 'Receptionist';
+  const officeId = canChooseOffices
+    ? (documentPayload.currentOfficeId || documentPayload.destinationOfficeId || documentPayload.originOfficeId || getUserOfficeId(req))
+    : getUserOfficeId(req);
 
   const doc = new Document({
     ...documentPayload,
@@ -272,7 +289,14 @@ router.get('/:id', allRoles, asyncHandler(async (req, res) => {
 }));
 
 router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
-  requireFields(req.body, ['subject']);
+  requireFields(req.body, ['subject', 'senderName']);
+  const hasAttachment = Boolean(
+    (Array.isArray(req.body.scannedFiles) && req.body.scannedFiles.length)
+    || req.body.scannedImageUrl,
+  );
+  if (!hasAttachment) {
+    return res.status(400).json({ message: 'A scanned file attachment is required' });
+  }
   const documentPayload = await normalizeDocumentPayload(req, req.body);
   const doc = new Document({
     ...documentPayload,

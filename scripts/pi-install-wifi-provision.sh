@@ -88,14 +88,16 @@ fi
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=DigiPath WiFi hotspot setup portal
-After=NetworkManager.service
-Before=network-online.target digipath-ws-scanner.service digipath-scanner.service
+After=NetworkManager.service network.target
 Wants=NetworkManager.service
+Before=digipath-ws-scanner.service digipath-scanner.service
 
 [Service]
 Type=simple
 Restart=on-failure
-RestartSec=15
+RestartSec=20
+StartLimitIntervalSec=120
+StartLimitBurst=5
 EnvironmentFile=-$DEST/.env
 EnvironmentFile=-/etc/digipath-scanner.env
 ExecStart=/bin/bash $DEST/scripts/pi-wifi-provision.sh
@@ -125,10 +127,17 @@ if [[ -f /run/digipath-wifi-provisioning.lock ]]; then
   exit 0
 fi
 
-if nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | grep -q "802-11-wireless"; then
-  active_name="$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | awk -F: '$2=="802-11-wireless"{print $1; exit}')"
-  if [[ -n "$active_name" && "$active_name" != "digipath-setup" ]]; then
-    exit 0
+# FORCE_HOTSPOT=1 → always reopen setup AP when office WiFi drops,
+# even if another path still has internet.
+FORCE_HOTSPOT="$(grep -E '^DIGIPATH_WIFI_FORCE_HOTSPOT=' /etc/digipath-scanner.env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"' || true)"
+FORCE_HOTSPOT="${FORCE_HOTSPOT:-1}"
+
+if [[ "$FORCE_HOTSPOT" == "0" || "$FORCE_HOTSPOT" == "false" || "$FORCE_HOTSPOT" == "no" ]]; then
+  if nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | grep -q "802-11-wireless"; then
+    active_name="$(nmcli -t -f NAME,TYPE connection show --active 2>/dev/null | awk -F: '$2=="802-11-wireless"{print $1; exit}')"
+    if [[ -n "$active_name" && "$active_name" != "digipath-setup" ]]; then
+      exit 0
+    fi
   fi
 fi
 

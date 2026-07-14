@@ -73,9 +73,7 @@ start_background() {
   log "No systemd service — starting scanner in background..."
   sudo -u "$RUN_USER" bash -lc "
     cd '$DEST'
-    source '$DEST/scripts/pi-load-env.sh'
-    pi_load_env '$DEST/.env'
-    nohup '$PY' '$DEST/pi_ws_scanner.py' >>'$DEST/scanner.log' 2>&1 &
+    nohup bash '$DEST/scripts/pi-run-ws-scanner.sh' >>'$DEST/scanner.log' 2>&1 &
     disown
   " >>"$LOG" 2>&1 || return 1
   log "Scanner started in background (see $DEST/scanner.log)."

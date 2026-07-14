@@ -90,13 +90,14 @@ Optional `.env` settings:
 
 ```env
 DIGIPATH_WIFI_PROVISION=1
+DIGIPATH_WIFI_FORCE_HOTSPOT=1
 DIGIPATH_WIFI_HOTSPOT_SSID=DigiPath-Setup
 DIGIPATH_WIFI_HOTSPOT_PASSWORD=
 ```
 
 If WiFi is lost later, the hotspot opens again automatically.
 
-### Deploy scanner bridge
+By default (`DIGIPATH_WIFI_FORCE_HOTSPOT=1`) the Pi also opens **DigiPath-Setup** even when it already has internet, so you can change the office WiFi later. That uses `wlan0`, so any current WiFi client link is dropped while the hotspot is up (Ethernet internet stays). Set `DIGIPATH_WIFI_FORCE_HOTSPOT=0` if you only want the hotspot when offline.
 
 From this Windows project folder, deploy the bridge over SSH:
 

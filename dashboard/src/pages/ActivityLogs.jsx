@@ -7,6 +7,7 @@ import {
   Archive,
   ScanLine,
   LogIn,
+  LogOut,
   Monitor,
   Clock,
   User,
@@ -110,7 +111,7 @@ const actionConfig = {
   },
   user_logout: {
     label: "User Logout",
-    icon: <LogIn size={14} />,
+    icon: <LogOut size={14} />,
     color: "var(--text-muted)",
     bg: "rgba(148, 163, 184, 0.08)",
   },

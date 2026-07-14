@@ -271,7 +271,14 @@ const ScannedPreviewModal = ({
             <option value="jpeg">JPG</option>
           </select>
           <button type="button" onClick={handleDownload} className="btn btn-secondary">
-            <Download size={16} /> Download
+            <Download size={16} />{' '}
+            {downloadFormat === 'pdf'
+              ? 'Download PDF'
+              : downloadFormat === 'jpeg'
+                ? 'Download JPEG'
+                : downloadFormat === 'png'
+                  ? 'Download PNG'
+                  : 'Download'}
           </button>
           {isImage && canEdit && hasRotation && (
             <button

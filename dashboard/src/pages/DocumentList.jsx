@@ -46,28 +46,35 @@ const DocumentList = ({
   onFocusDocumentConsumed,
   onNotify,
 }) => {
-  const getInitialForm = () => ({
-    subject: '',
-    documentDirection: 'Incoming',
-    status: 'Received',
-    priorityLevel: 'normal',
-    dateReceived: new Date().toISOString().split('T')[0],
-    documentTypeId: documentTypes[0]?.id || 'DT-001',
-    documentTypeOther: '',
-    originOfficeId: currentUser?.officeId || offices[0]?.id || 'OFF-001',
-    originOfficeOther: '',
-    currentOfficeId: currentUser?.officeId || offices[0]?.id || 'OFF-001',
-    destinationOfficeId: '',
-    destinationOfficeOther: '',
-    senderName: '',
-    senderContact: '',
-    senderEmail: '',
-    notifySender: true,
-    senderNotificationConsent: true,
-    senderNotificationChannels: ['sms', 'email'],
-    remarks: '',
-    scannedText: '',
-  });
+  const getInitialForm = () => {
+    const myOfficeId = currentUser?.officeId || offices[0]?.id || 'OFF-001';
+    const defaultDestination = offices.find(o => o.id !== myOfficeId)?.id || '';
+    const isOffice = currentRole === 'office' || currentUser?.role === 'Office';
+    return {
+      subject: '',
+      documentDirection: isOffice ? 'Outgoing' : 'Incoming',
+      status: 'Received',
+      priorityLevel: 'normal',
+      dateReceived: new Date().toISOString().split('T')[0],
+      documentTypeId: documentTypes[0]?.id || 'DT-001',
+      documentTypeOther: '',
+      originOfficeId: myOfficeId,
+      originOfficeOther: '',
+      currentOfficeId: myOfficeId,
+      destinationOfficeId: isOffice ? defaultDestination : '',
+      destinationOfficeOther: '',
+      senderName: isOffice
+        ? `${currentUser?.fname || ''} ${currentUser?.lname || ''}`.trim()
+        : '',
+      senderContact: '',
+      senderEmail: '',
+      notifySender: true,
+      senderNotificationConsent: true,
+      senderNotificationChannels: ['sms', 'email'],
+      remarks: '',
+      scannedText: '',
+    };
+  };
 
   const notify = (message, title = 'Action needed', type = 'warning') => {
     onNotify?.({ type, title, message });
@@ -134,7 +141,11 @@ const DocumentList = ({
   const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
   const transmittableStatuses = [...registrationStatuses, ...finalWorkflowStatuses];
   const statuses = ['All', 'Received', 'In Transit', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
-  const directions = currentRole === 'receptionist' ? ['All', 'Incoming'] : ['All', 'Incoming', 'Outgoing'];
+  const directions = currentRole === 'receptionist'
+    ? ['All', 'Incoming']
+    : currentRole === 'office'
+      ? ['All', 'Outgoing']
+      : ['All', 'Incoming', 'Outgoing'];
   const priorities = ['All', ...priorityLevels.map(p => p.id)];
 
   const getWorkflowStatus = (value) => {
@@ -450,7 +461,8 @@ const DocumentList = ({
     e.preventDefault();
 
     const hasExistingAttachment = Boolean(editDoc?.scannedFiles?.length || editDoc?.scannedImageUrl);
-    const validation = validateRequiredFields([
+    const isOfficeStaff = currentUser?.role === 'Office';
+    const requiredFields = [
       { key: 'subject', label: 'Document subject', value: formData.subject },
       {
         key: 'documentTypeOther',
@@ -464,7 +476,14 @@ const DocumentList = ({
         label: 'Scanned file attachment',
         value: attachmentFile?.name || (hasExistingAttachment ? 'existing' : ''),
       },
-    ]);
+      {
+        key: 'destinationOfficeId',
+        label: 'Destination office',
+        value: formData.destinationOfficeId,
+        when: isOfficeStaff && !editDoc,
+      },
+    ];
+    const validation = validateRequiredFields(requiredFields);
 
     if (!validation.isValid) {
       setDocumentFormErrors(validation.errors);
@@ -477,18 +496,38 @@ const DocumentList = ({
 
     const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
     const isReceptionist = currentUser?.role === 'Receptionist';
-    const pinnedOfficeId = isReceptionist ? currentUser?.officeId : formData.currentOfficeId;
+    const myOfficeId = currentUser?.officeId || formData.currentOfficeId;
     const editingDoc = editDoc;
     const normalizedFormData = {
       ...formData,
-      documentDirection: isReceptionist ? 'Incoming' : formData.documentDirection,
+      documentDirection: isReceptionist
+        ? 'Incoming'
+        : (isOfficeStaff ? 'Outgoing' : formData.documentDirection),
       status: editingDoc ? getWorkflowStatus(formData.status) : getWorkflowStatus(formData.status),
       dateReceived: editingDoc ? editingDoc.dateReceived : formData.dateReceived,
       documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
       originOfficeOther: formData.originOfficeOther.trim(),
-      originOfficeId: isReceptionist ? currentUser?.officeId : formData.originOfficeId || pinnedOfficeId,
-      currentOfficeId: pinnedOfficeId,
+      originOfficeId: isOfficeStaff
+        ? myOfficeId
+        : (formData.originOfficeId || formData.currentOfficeId || currentUser?.officeId),
+      currentOfficeId: isOfficeStaff
+        ? myOfficeId
+        : (formData.currentOfficeId || formData.originOfficeId || currentUser?.officeId),
+      destinationOfficeId: formData.destinationOfficeId || (isOfficeStaff ? '' : formData.currentOfficeId) || '',
+      intakeStatus: isOfficeStaff ? 'Approved' : undefined,
     };
+
+    if (isOfficeStaff && !editingDoc && !normalizedFormData.destinationOfficeId) {
+      setDocumentFormErrors({ destinationOfficeId: 'Choose where to send this document.' });
+      setDocumentFormErrorSummary('Destination office is required.');
+      return;
+    }
+
+    if (isOfficeStaff && !editingDoc && normalizedFormData.destinationOfficeId === myOfficeId) {
+      setDocumentFormErrors({ destinationOfficeId: 'Choose a different office than your own.' });
+      setDocumentFormErrorSummary('Send the document to reception or another office.');
+      return;
+    }
 
     const payload = editingDoc
       ? {
@@ -509,8 +548,19 @@ const DocumentList = ({
 
     if (editingDoc) {
       await onEdit(payload);
-    } else {
-      await onAdd(payload);
+      return;
+    }
+
+    const saved = await onAdd(payload);
+    // Office staff: register then route directly to the chosen destination.
+    if (isOfficeStaff && saved?.id && normalizedFormData.destinationOfficeId) {
+      await onRouteDocument({
+        documentId: saved.id,
+        fromOfficeId: myOfficeId,
+        toOfficeId: normalizedFormData.destinationOfficeId,
+        transmissionDate: normalizedFormData.dateReceived,
+        transmissionType: 'Internal',
+      });
     }
   };
 
@@ -747,10 +797,11 @@ const DocumentList = ({
   };
 
   const isApprovalUser = currentRole === 'admin' || currentRole === 'mayor';
+  const isOfficeUser = currentRole === 'office';
   const canDelete = currentRole === 'admin';
-  const canCreate = currentRole === 'admin' || currentRole === 'receptionist';
+  const canCreate = currentRole === 'admin' || currentRole === 'receptionist' || isOfficeUser;
   const canEdit = currentRole === 'admin' || currentRole === 'receptionist';
-  const canRoute = isApprovalUser || currentRole === 'receptionist';
+  const canRoute = isApprovalUser || currentRole === 'receptionist' || isOfficeUser;
   const canVerify = isApprovalUser;
   const isApprovedForWorkflow = (doc) => (doc.intakeStatus || 'Approved') === 'Approved';
   const canResubmitDocument = (doc) => doc.intakeStatus === 'Rejected' && registrationStatuses.includes(getWorkflowStatus(doc)) && (
@@ -769,6 +820,12 @@ const DocumentList = ({
   );
   const canTakeDocumentAction = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && ['Received', 'For Signing', 'For Filing', ...finalWorkflowStatuses].includes(getWorkflowStatus(doc));
   const canArchiveDocument = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && finalWorkflowStatuses.includes(getWorkflowStatus(doc));
+  const pageTitle = isOfficeUser ? 'My Documents' : 'Documents';
+  const pageSubtitle = isOfficeUser
+    ? 'Send documents to reception or other offices and track their progress'
+    : 'Scan, route, acknowledge, sign, file, and archive official documents';
+  const createButtonLabel = isOfficeUser ? 'Send Document' : 'New Document';
+  const destinationOffices = offices.filter(o => o.id !== (currentUser?.officeId || formData.currentOfficeId));
 
   const renderDocumentActions = (doc, pendingTransmission) => {
     const status = getWorkflowStatus(doc);
@@ -833,13 +890,13 @@ const DocumentList = ({
         header={
           <div className="page-header page-header--align-bottom">
             <div className="page-header-left">
-              <h1>Documents</h1>
-              <p>Scan, route, acknowledge, sign, file, and archive official documents</p>
+              <h1>{pageTitle}</h1>
+              <p>{pageSubtitle}</p>
             </div>
             {canCreate && (
               <div className="page-header-actions page-header-actions--inline">
                 <button className="btn btn-primary" onClick={() => handleOpenForm()}>
-                  <Plus size={16} /> New Document
+                  <Plus size={16} /> {createButtonLabel}
                 </button>
               </div>
             )}
@@ -1055,6 +1112,13 @@ const DocumentList = ({
                                     </select>
                                     <button type="button" className="attachment-download" onClick={() => handleAttachmentDownload(file)} title="Download scanned file">
                                       <Download size={14} />
+                                      {(downloadFormats[file.id] || 'original') === 'pdf'
+                                        ? ' PDF'
+                                        : (downloadFormats[file.id] || 'original') === 'jpeg'
+                                          ? ' JPEG'
+                                          : (downloadFormats[file.id] || 'original') === 'png'
+                                            ? ' PNG'
+                                            : ''}
                                     </button>
                                   </div>
                                 ))}
@@ -1218,6 +1282,13 @@ const DocumentList = ({
                             </select>
                             <button type="button" className="attachment-download" onClick={() => handleAttachmentDownload(file)} title="Download scanned file">
                               <Download size={14} />
+                              {(downloadFormats[file.id] || 'original') === 'pdf'
+                                ? ' PDF'
+                                : (downloadFormats[file.id] || 'original') === 'jpeg'
+                                  ? ' JPEG'
+                                  : (downloadFormats[file.id] || 'original') === 'png'
+                                    ? ' PNG'
+                                    : ''}
                             </button>
                           </div>
                         ))}
@@ -1285,7 +1356,11 @@ const DocumentList = ({
         <ModalOverlay onClose={() => setShowForm(false)}>
           <div className="modal document-form-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{editDoc ? 'Edit Document' : 'New Document'}</h2>
+              <h2>
+                {editDoc
+                  ? 'Edit Document'
+                  : (isOfficeUser ? 'Send Document' : 'New Document')}
+              </h2>
               <button className="btn-icon" onClick={() => setShowForm(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleSubmit} noValidate>
@@ -1294,7 +1369,7 @@ const DocumentList = ({
                   <div className="form-error-summary" role="alert">{documentFormErrorSummary}</div>
                 )}
                 <div className="form-group">
-                  <label className="form-label">Document Subject</label>
+                  <label className="form-label">Document Subject <span className="required-mark">*</span></label>
                   <input
                     className={`form-input${documentFormErrors.subject ? ' is-invalid' : ''}`}
                     type="text"
@@ -1351,12 +1426,16 @@ const DocumentList = ({
                       className="form-select"
                       value={formData.documentDirection}
                       onChange={e => setFormData({ ...formData, documentDirection: e.target.value })}
-                      disabled={currentRole === 'receptionist'}
+                      disabled={currentRole === 'receptionist' || isOfficeUser}
                     >
-                      <option>Incoming</option>
-                      {currentRole !== 'receptionist' && <option>Outgoing</option>}
+                      {!isOfficeUser && <option>Incoming</option>}
+                      {(currentRole !== 'receptionist' || isOfficeUser) && <option>Outgoing</option>}
                     </select>
-                    <p className="field-hint">Incoming means received from a sender; outgoing means created by the office.</p>
+                    <p className="field-hint">
+                      {isOfficeUser
+                        ? 'Office staff send outgoing documents to reception or other offices.'
+                        : 'Incoming means received from a sender; outgoing means created by the office.'}
+                    </p>
                   </div>
                 </div>
                 <div className="form-grid">
@@ -1391,7 +1470,7 @@ const DocumentList = ({
                       className="form-select"
                       value={formData.status}
                       onChange={e => setFormData({ ...formData, status: e.target.value })}
-                      disabled={Boolean(editDoc) || (currentRole !== 'receptionist' && currentRole !== 'admin')}
+                      disabled={Boolean(editDoc) || (currentRole !== 'receptionist' && currentRole !== 'admin') || isOfficeUser}
                     >
                       {registrationStatuses.map(status => (
                         <option key={status} value={status}>{status}</option>
@@ -1412,23 +1491,84 @@ const DocumentList = ({
                     />
                     <p className="field-hint">Locked to the registration date.</p>
                   </div>
+                  {isOfficeUser ? (
+                    <div className="form-group">
+                      <label className="form-label">Send To Office <span className="required-mark">*</span></label>
+                      <select
+                        className={`form-select${documentFormErrors.destinationOfficeId ? ' is-invalid' : ''}`}
+                        value={formData.destinationOfficeId}
+                        onChange={e => {
+                          setFormData({ ...formData, destinationOfficeId: e.target.value });
+                          setDocumentFormErrors(prev => clearFieldError(prev, 'destinationOfficeId'));
+                          if (documentFormErrorSummary) setDocumentFormErrorSummary('');
+                        }}
+                        disabled={Boolean(editDoc)}
+                      >
+                        <option value="">Select reception or other office</option>
+                        {destinationOffices.map(o => (
+                          <option key={o.id} value={o.id}>{o.name}</option>
+                        ))}
+                      </select>
+                      {documentFormErrors.destinationOfficeId && (
+                        <p className="form-field-error">{documentFormErrors.destinationOfficeId}</p>
+                      )}
+                      <p className="field-hint">Document is registered from your office, then sent to this destination.</p>
+                    </div>
+                  ) : (
+                    <div className="form-group">
+                      <label className="form-label">Incoming Office</label>
+                      <select
+                        className="form-select"
+                        value={formData.originOfficeId}
+                        onChange={e => setFormData({
+                          ...formData,
+                          originOfficeId: e.target.value,
+                        })}
+                        disabled={Boolean(editDoc)}
+                      >
+                        {(Boolean(editDoc)
+                          ? offices.filter(o => o.id === formData.originOfficeId)
+                          : offices
+                        ).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </select>
+                      <p className="field-hint">Where the document came from within the municipal office list.</p>
+                    </div>
+                  )}
+                </div>
+                {!isOfficeUser && (
                   <div className="form-group">
                     <label className="form-label">Receiving Office</label>
                     <select
                       className="form-select"
                       value={formData.currentOfficeId}
-                      onChange={e => setFormData({ ...formData, currentOfficeId: e.target.value, originOfficeId: formData.originOfficeId || e.target.value })}
-                      disabled={Boolean(editDoc) || currentRole === 'receptionist'}
+                      onChange={e => setFormData({
+                        ...formData,
+                        currentOfficeId: e.target.value,
+                        destinationOfficeId: e.target.value,
+                      })}
+                      disabled={Boolean(editDoc)}
                     >
-                      {(Boolean(editDoc) || currentRole === 'receptionist'
+                      {(Boolean(editDoc)
                         ? offices.filter(o => o.id === formData.currentOfficeId)
                         : offices
                       ).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
                     <p className="field-hint">The office currently responsible for the document after registration.</p>
                   </div>
-                </div>
+                )}
+                {isOfficeUser && (
+                  <div className="form-group">
+                    <label className="form-label">From Office</label>
+                    <select className="form-select" value={formData.currentOfficeId} disabled>
+                      {offices
+                        .filter(o => o.id === formData.currentOfficeId)
+                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                    </select>
+                    <p className="field-hint">Your assigned office — documents are always sent from here.</p>
+                  </div>
+                )}
 
+                {!isOfficeUser && (
                 <div className="form-group">
                   <label className="form-label">External / Other Source Office</label>
                   <input
@@ -1440,6 +1580,7 @@ const DocumentList = ({
                   />
                   <p className="field-hint">Use this when the document came from outside the municipal office list.</p>
                 </div>
+                )}
 
                 <div style={{
                   padding: '0.75rem', background: 'var(--bg-elevated)',
@@ -1451,7 +1592,7 @@ const DocumentList = ({
                     Sender Information
                   </p>
                   <div className="form-group">
-                    <label className="form-label">Sender Name *</label>
+                    <label className="form-label">Sender Name <span className="required-mark">*</span></label>
                     <input
                       className={`form-input${documentFormErrors.senderName ? ' is-invalid' : ''}`}
                       type="text"
@@ -1531,7 +1672,7 @@ const DocumentList = ({
                 <div className="form-group" style={{ marginTop: '1rem' }}>
                   <label className="form-label">
                     <Upload size={12} style={{ marginRight: '0.25rem' }} />
-                    Scanned File Attachment *
+                    Scanned File Attachment <span className="required-mark">*</span>
                   </label>
                   <input
                     className={`form-input${documentFormErrors.attachmentFile ? ' is-invalid' : ''}`}
@@ -1559,7 +1700,9 @@ const DocumentList = ({
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
                 <button type="submit" className="btn btn-primary">
-                  {editDoc ? 'Update' : 'Create Document'}
+                  {editDoc
+                    ? 'Update'
+                    : (isOfficeUser ? 'Send Document' : 'Create Document')}
                 </button>
               </div>
             </form>

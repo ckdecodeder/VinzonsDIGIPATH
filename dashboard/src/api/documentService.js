@@ -395,6 +395,11 @@ export const authService = {
   },
 
   async logout() {
+    try {
+      await apiRequest('/auth/logout', { method: 'POST' });
+    } catch {
+      // Still clear the local session even if the audit log request fails.
+    }
     clearAuthSession();
   },
 

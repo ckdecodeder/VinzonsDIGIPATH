@@ -1,12 +1,15 @@
 [Unit]
 Description=DigiPath WiFi hotspot setup portal
-After=NetworkManager.service
-Before=network-online.target digipath-scanner.service
+After=NetworkManager.service network.target
 Wants=NetworkManager.service
+Before=digipath-ws-scanner.service digipath-scanner.service
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
+Restart=on-failure
+RestartSec=20
+StartLimitIntervalSec=120
+StartLimitBurst=5
 EnvironmentFile=-/etc/digipath-scanner.env
 ExecStart=/opt/digipath-scanner/scripts/pi-wifi-provision.sh
 TimeoutStartSec=0

@@ -93,7 +93,7 @@ router.post('/', allRoles, asyncHandler(async (req, res) => {
     }
     const userOfficeId = getUserOfficeId(req);
     if (req.body.fromOfficeId !== userOfficeId || doc.currentOfficeId !== userOfficeId) {
-      return res.status(403).json({ message: 'Receptionists can only route approved documents from their current office' });
+      return res.status(403).json({ message: 'You can only route approved documents from your assigned office' });
     }
   }
 

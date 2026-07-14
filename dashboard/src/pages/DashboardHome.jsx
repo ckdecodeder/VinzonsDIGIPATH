@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import {
   FileText,
   ArrowRightLeft,
@@ -10,6 +10,7 @@ import {
   Flag,
   CheckCircle2,
   Clock,
+  AlertTriangle,
 } from "lucide-react";
 import {
   documentTypes as defaultDocumentTypes,
@@ -127,52 +128,6 @@ const AdminDashboard = ({
   const statusTotal = statusCounts.reduce((s, c) => s + c.count, 0);
   const total = statusTotal || 1;
 
-  const [chartReady, setChartReady] = useState(false);
-  const [displayTotal, setDisplayTotal] = useState(0);
-  const [hoveredStatus, setHoveredStatus] = useState(null);
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setChartReady(true));
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(() => {
-    if (!chartReady) return undefined;
-
-    const duration = 900;
-    const start = performance.now();
-    let rafId = 0;
-
-    const tick = (now) => {
-      const progress = Math.min((now - start) / duration, 1);
-      const eased = 1 - (1 - progress) ** 3;
-      setDisplayTotal(Math.round(eased * statusTotal));
-      if (progress < 1) rafId = requestAnimationFrame(tick);
-    };
-
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
-  }, [chartReady, statusTotal]);
-
-  const circ = 2 * Math.PI * 56;
-  let segmentOffset = 0;
-  const donutSegments = statusCounts.map((seg) => {
-    const pct = (seg.count / total) * 100;
-    const dashLen = (pct / 100) * circ;
-    const dashOff = -(segmentOffset / 100) * circ;
-    segmentOffset += pct;
-    return { ...seg, pct, dashLen, dashOff };
-  });
-
-  const showStatus = (seg) => {
-    setHoveredStatus({
-      label: seg.label,
-      count: seg.count,
-      color: seg.color,
-      pct: seg.pct,
-    });
-  };
-
   const priorityRank = { urgent: 0, high: 1, normal: 2, low: 3 };
   const actionStatusRank = {
     Received: 0,
@@ -181,31 +136,43 @@ const AdminDashboard = ({
     "For Filing": 3,
   };
 
+  const needsImmediateAction = (doc) => {
+    const status = getWorkflowStatus(doc);
+    if (status === "Archived") return false;
+    if (doc.intakeStatus === "Pending Review" || doc.intakeStatus === "Rejected") return true;
+    if (ACTION_STATUSES.has(status)) return true;
+    return doc.priorityLevel === "urgent";
+  };
+
   const attentionDocuments = [...documents]
-    .filter((doc) => {
-      const status = getWorkflowStatus(doc);
-      if (status === "Archived") return false;
-      if (doc.intakeStatus === "Pending Review") return true;
-      if (ACTION_STATUSES.has(status)) return true;
-      return doc.priorityLevel === "urgent";
-    })
+    .filter(needsImmediateAction)
     .sort((a, b) => {
-      // Newest scans / pending review rise to the top
       const pendingDiff =
         Number(b.intakeStatus === "Pending Review") -
         Number(a.intakeStatus === "Pending Review");
       if (pendingDiff !== 0) return pendingDiff;
+      const receivedDiff =
+        Number(getWorkflowStatus(b) === "Received") -
+        Number(getWorkflowStatus(a) === "Received");
+      if (receivedDiff !== 0) return receivedDiff;
       const urgentDiff =
         Number(b.priorityLevel === "urgent") - Number(a.priorityLevel === "urgent");
       if (urgentDiff !== 0) return urgentDiff;
-      const statusA = getWorkflowStatus(a);
-      const statusB = getWorkflowStatus(b);
       const statusDiff =
-        (actionStatusRank[statusA] ?? 9) - (actionStatusRank[statusB] ?? 9);
+        (actionStatusRank[getWorkflowStatus(a)] ?? 9) -
+        (actionStatusRank[getWorkflowStatus(b)] ?? 9);
       if (statusDiff !== 0) return statusDiff;
       return compareNewest(a, b, ["createdAt", "updatedAt", "dateReceived"]);
     })
-    .slice(0, 10);
+    .slice(0, 12);
+
+  const newlyReceivedCount = documents.filter(
+    (d) => getWorkflowStatus(d) === "Received" && d.intakeStatus !== "Rejected",
+  ).length;
+  const pendingReviewCount = documents.filter(
+    (d) => d.intakeStatus === "Pending Review",
+  ).length;
+  const actionQueueCount = attentionDocuments.length;
 
   const recentTransmissions = [...transmissions]
     .sort((a, b) =>
@@ -231,7 +198,8 @@ const AdminDashboard = ({
   const welcomeName = currentUser ? currentUser.fname : "Admin";
   const canScan =
     currentUser?.role === "Admin" || currentUser?.role === "Receptionist";
-  const canCreateDocument = currentUser?.role === "Admin";
+  const canCreateDocument =
+    currentUser?.role === "Admin" || currentUser?.role === "Office";
 
   const getOfficeName = (officeId) => {
     const office = offices.find((o) => o.id === officeId);
@@ -284,8 +252,10 @@ const AdminDashboard = ({
           <div className="page-header-left">
             <h1>Dashboard</h1>
             <p>
-              Welcome back, {welcomeName}. Here's an overview of your document
-              system.
+              Welcome back, {welcomeName}.{" "}
+              {currentUser?.role === "Office"
+                ? "Send documents to reception or other offices and track their progress."
+                : "Focus on newly received documents that need action first."}
             </p>
           </div>
           <div className="page-header-actions">
@@ -341,16 +311,46 @@ const AdminDashboard = ({
         })}
       </div>
 
-      {/* Needs attention + status / activity */}
+      {/* Action queue (primary) + compact status / activity */}
       <div className="dashboard-priority-grid">
         <div className="card dashboard-attention-card">
           <div className="card-header dashboard-attention-header">
             <div>
-              <h3 className="card-title">Needs Attention</h3>
+              <div className="attention-title-row">
+                <h3 className="card-title">Needs Immediate Attention</h3>
+                {actionQueueCount > 0 && (
+                  <span className="attention-count-pill">{actionQueueCount}</span>
+                )}
+              </div>
               <p className="attention-header-meta">
-                Highlights newly received documents requiring immediate attention.
-                Prioritizes documents that need action so you can identify and process them quickly.
+                Newly received and pending documents that need action — process these first.
               </p>
+              <div className="attention-summary-chips">
+                <button
+                  type="button"
+                  className="attention-chip attention-chip--received"
+                  onClick={() => openStatusInterface("Received")}
+                >
+                  <Inbox size={13} />
+                  {newlyReceivedCount} newly received
+                </button>
+                <button
+                  type="button"
+                  className="attention-chip attention-chip--review"
+                  onClick={() => openStatusInterface("All")}
+                >
+                  <AlertTriangle size={13} />
+                  {pendingReviewCount} pending review
+                </button>
+                <button
+                  type="button"
+                  className="attention-chip attention-chip--urgent"
+                  onClick={() => onNavigate("documents")}
+                >
+                  <Flag size={13} />
+                  {urgentCount} urgent
+                </button>
+              </div>
             </div>
             <button
               className="btn btn-ghost btn-sm"
@@ -365,41 +365,73 @@ const AdminDashboard = ({
               <div className="attention-empty">
                 <CheckCircle2 size={20} strokeWidth={1.75} />
                 <p>You're all caught up</p>
-                <span>Documents needing action will appear here.</span>
+                <span>Newly received documents that need action will appear here.</span>
               </div>
             ) : (
               attentionDocuments.map((doc) => {
                 const status = getWorkflowStatus(doc);
+                const pInfo = getPriorityInfo(doc.priorityLevel);
+                const isNewReceived =
+                  status === "Received" || doc.intakeStatus === "Pending Review";
                 const hint =
                   doc.intakeStatus === "Pending Review"
-                    ? "Pending review"
-                    : STATUS_ACTION_HINT[status] || "Needs follow-up";
+                    ? "Needs intake review"
+                    : doc.intakeStatus === "Rejected"
+                      ? "Needs correction"
+                      : STATUS_ACTION_HINT[status] || "Needs follow-up";
 
                 return (
                   <button
                     key={doc.id}
                     type="button"
-                    className={`attention-item ${doc.priorityLevel === "urgent" ? "attention-item--urgent" : ""}`}
+                    className={[
+                      "attention-item",
+                      doc.priorityLevel === "urgent" ? "attention-item--urgent" : "",
+                      isNewReceived ? "attention-item--new" : "",
+                    ].filter(Boolean).join(" ")}
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
                       openDocumentInterface(doc);
                     }}
-                    title={`Preview ${doc.trackingNumber}`}
+                    title={`Open ${doc.trackingNumber}`}
                   >
                     <div className="attention-item-main">
-                      <p className="attention-item-subject">{doc.subject}</p>
+                      <div className="attention-item-topline">
+                        {isNewReceived && (
+                          <span className="attention-new-badge">New</span>
+                        )}
+                        <p className="attention-item-subject">{doc.subject}</p>
+                      </div>
                       <p className="attention-item-sub">
                         {doc.trackingNumber}
                         <span aria-hidden="true">·</span>
                         {hint}
+                        <span aria-hidden="true">·</span>
+                        {getOfficeName(doc.currentOfficeId || doc.originOfficeId)}
                       </p>
                     </div>
                     <div className="attention-item-side">
                       <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "0.2rem",
+                          padding: "0.12rem 0.45rem",
+                          borderRadius: "9999px",
+                          fontSize: "0.65rem",
+                          fontWeight: 600,
+                          background: pInfo.bg,
+                          color: pInfo.color,
+                        }}
+                      >
+                        <Flag size={9} />
+                        {pInfo.label}
+                      </span>
+                      <span
                         className={`status-badge status-${status.toLowerCase().replace(/\s+/g, "-")}`}
                       >
-                        {status}
+                        {doc.intakeStatus === "Pending Review" ? "Pending Review" : status}
                       </span>
                       <span className="attention-item-date">
                         {doc.dateReceived || doc.updatedAt?.slice?.(0, 10) || "—"}
@@ -413,88 +445,38 @@ const AdminDashboard = ({
         </div>
 
         <div className="dashboard-side-stack">
-          <div className="card dashboard-status-card">
+          <div className="card dashboard-status-card dashboard-status-card--mini">
             <div className="card-header">
-              <h3 className="card-title">Status</h3>
+              <h3 className="card-title">Status overview</h3>
+              <span className="status-mini-total">{statusTotal} docs</span>
             </div>
-            <div className="chart-donut chart-donut--compact">
-              <div className={`donut-ring donut-ring--compact ${chartReady ? "donut-ring--ready" : ""}`}>
-                <svg width="156" height="156" viewBox="0 0 156 156" aria-hidden="true">
-                  {donutSegments.map((seg, i) => (
-                    <circle
+            <div className="status-mini-bars">
+              {statusCounts
+                .filter((seg) => seg.count > 0)
+                .map((seg) => {
+                  const pct = Math.max((seg.count / total) * 100, 4);
+                  return (
+                    <button
                       key={seg.label}
-                      className={[
-                        "donut-segment",
-                        hoveredStatus && hoveredStatus.label !== seg.label ? "donut-segment--dimmed" : "",
-                        hoveredStatus?.label === seg.label ? "donut-segment--active" : "",
-                      ].filter(Boolean).join(" ")}
-                      cx="78"
-                      cy="78"
-                      r="56"
-                      fill="none"
-                      stroke={seg.color}
-                      strokeWidth="12"
-                      strokeDasharray={
-                        chartReady ? `${seg.dashLen} ${circ - seg.dashLen}` : `0 ${circ}`
-                      }
-                      strokeDashoffset={chartReady ? seg.dashOff : 0}
-                      strokeLinecap="butt"
+                      type="button"
+                      className="status-mini-row"
                       onClick={() => openStatusInterface(seg.label)}
-                      onMouseEnter={() => showStatus(seg)}
-                      onMouseLeave={() => setHoveredStatus(null)}
-                      style={{
-                        transition: chartReady
-                          ? `stroke-dasharray 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.08}s, stroke-dashoffset 0.85s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.08}s, opacity 0.2s ease`
-                          : "none",
-                      }}
-                    />
-                  ))}
-                </svg>
-                <div className={`donut-center ${hoveredStatus ? "donut-center--hover" : ""}`}>
-                  {hoveredStatus ? (
-                    <>
-                      <span
-                        className="donut-total donut-total--hover"
-                        style={{ color: hoveredStatus.color }}
-                      >
-                        {hoveredStatus.count}
+                      title={`Show ${seg.label} documents`}
+                    >
+                      <span className="status-mini-label">{seg.label}</span>
+                      <span className="status-mini-track">
+                        <span
+                          className="status-mini-fill"
+                          style={{ width: `${pct}%`, background: seg.color }}
+                        />
                       </span>
-                      <span className="donut-label donut-label--hover">{hoveredStatus.label}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="donut-total">{displayTotal}</span>
-                      <span className="donut-label">Total</span>
-                    </>
-                  )}
-                </div>
-              </div>
-              <div className="donut-legend donut-legend--compact">
-                {donutSegments.filter((seg) => seg.count > 0).map((seg, i) => (
-                  <button
-                    key={seg.label}
-                    type="button"
-                    className={[
-                      "legend-item",
-                      "status-legend-button",
-                      chartReady ? "legend-item--visible" : "",
-                      hoveredStatus?.label === seg.label ? "status-legend-button--active" : "",
-                    ].filter(Boolean).join(" ")}
-                    onClick={() => openStatusInterface(seg.label)}
-                    onMouseEnter={() => showStatus(seg)}
-                    onMouseLeave={() => setHoveredStatus(null)}
-                    title={`Show ${seg.label} documents`}
-                    style={{ animationDelay: `${0.2 + i * 0.05}s` }}
-                  >
-                    <span
-                      className="legend-dot"
-                      style={{ background: seg.color }}
-                    ></span>
-                    {seg.label}
-                    <span className="legend-value">{seg.count}</span>
-                  </button>
-                ))}
-              </div>
+                      <span className="status-mini-count">{seg.count}</span>
+                    </button>
+                  );
+                })}
+              {statusTotal === 0 && (
+                <p className="attention-empty-inline">No documents yet.</p>
+              )}
             </div>
           </div>
 

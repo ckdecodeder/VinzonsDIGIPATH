@@ -4,8 +4,8 @@ export const MAYORS_OFFICE_NAME = "Mayor's Office";
 export const ROLE_HINTS = {
   Receptionist: 'Receives, scans, and routes documents at their assigned office.',
   Office:
-    'Send documents to reception or other offices and track their progress. Monitor document status without administrative actions.',
-  Admin: 'Manages users, offices, and system settings for one office.',
+    'Users can send documents directly to the reception or other offices and track the status of the documents they have sent. They can monitor the progress of their documents but cannot perform administrative actions.',
+  Admin: 'Full system access: all offices, documents, users, and settings.',
   Mayor: 'Approves documents and oversees municipal workflows.',
 };
 

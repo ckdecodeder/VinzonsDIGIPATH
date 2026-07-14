@@ -25,6 +25,7 @@ import {
   priorityLevels,
 } from '../data/mockData';
 import { compareNewest } from '../utils/sorting';
+import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
 
 const ReceptionistDashboard = ({
   documents,
@@ -50,6 +51,7 @@ const ReceptionistDashboard = ({
     status: 'Received',
     priorityLevel: 'normal',
     dateReceived: new Date().toISOString().split('T')[0],
+    originOfficeId: currentUser?.officeId || 'OFF-001',
     currentOfficeId: currentUser?.officeId || 'OFF-001',
     originOfficeOther: '',
     senderName: '',
@@ -62,6 +64,8 @@ const ReceptionistDashboard = ({
     scannedText: '',
   });
 
+  const [receiveFormErrors, setReceiveFormErrors] = useState({});
+  const [receiveFormErrorSummary, setReceiveFormErrorSummary] = useState('');
   const [routeForm, setRouteForm] = useState({
     documentId: '',
     fromOfficeId: currentUser?.officeId || 'OFF-001',
@@ -229,6 +233,29 @@ const ReceptionistDashboard = ({
 
   const handleReceive = async (e) => {
     e.preventDefault();
+    const validation = validateRequiredFields([
+      { key: 'subject', label: 'Document subject', value: receiveForm.subject },
+      { key: 'senderName', label: 'Sender name', value: receiveForm.senderName },
+      {
+        key: 'documentTypeOther',
+        label: 'Document type',
+        value: receiveForm.documentTypeOther,
+        when: isOtherDocumentType(receiveForm.documentTypeId),
+      },
+      {
+        key: 'attachmentFile',
+        label: 'Scanned file attachment',
+        value: attachmentFile?.name || '',
+      },
+    ]);
+    if (!validation.isValid) {
+      setReceiveFormErrors(validation.errors);
+      setReceiveFormErrorSummary(validation.summary);
+      return;
+    }
+    setReceiveFormErrors({});
+    setReceiveFormErrorSummary('');
+
     const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
     const newDoc = {
       ...receiveForm,
@@ -236,8 +263,9 @@ const ReceptionistDashboard = ({
       documentTypeOther: isOtherDocumentType(receiveForm.documentTypeId) ? receiveForm.documentTypeOther.trim() : '',
       originOfficeOther: receiveForm.originOfficeOther.trim(),
       status: receiveForm.status,
-      originOfficeId: currentUser?.officeId || 'OFF-001',
-      currentOfficeId: currentUser?.officeId || receiveForm.currentOfficeId || 'OFF-001',
+      originOfficeId: receiveForm.originOfficeId || receiveForm.currentOfficeId || currentUser?.officeId || 'OFF-001',
+      currentOfficeId: receiveForm.currentOfficeId || currentUser?.officeId || 'OFF-001',
+      destinationOfficeId: receiveForm.currentOfficeId || currentUser?.officeId || 'OFF-001',
       scannedFiles: newFiles,
       scannedImageUrl: newFiles[0]?.dataUrl || '',
     };
@@ -251,6 +279,7 @@ const ReceptionistDashboard = ({
       status: 'Received',
       priorityLevel: 'normal',
       dateReceived: new Date().toISOString().split('T')[0],
+      originOfficeId: currentUser?.officeId || 'OFF-001',
       currentOfficeId: currentUser?.officeId || 'OFF-001',
       originOfficeOther: '',
       senderName: '',
@@ -607,13 +636,27 @@ const ReceptionistDashboard = ({
               <h2>Register Document</h2>
               <button className="btn-icon" onClick={() => setShowReceiveForm(false)}><X size={18} /></button>
             </div>
-            <form onSubmit={handleReceive}>
+            <form onSubmit={handleReceive} noValidate>
               <div className="modal-body">
+                {receiveFormErrorSummary && (
+                  <div className="form-error-summary" role="alert">{receiveFormErrorSummary}</div>
+                )}
                 <div className="form-group">
-                  <label className="form-label">Document Subject</label>
-                  <input className="form-input" type="text" value={receiveForm.subject}
-                    onChange={e => setReceiveForm({ ...receiveForm, subject: e.target.value })}
-                    placeholder="Enter document subject" required />
+                  <label className="form-label">Document Subject <span className="required-mark">*</span></label>
+                  <input
+                    className={`form-input${receiveFormErrors.subject ? ' is-invalid' : ''}`}
+                    type="text"
+                    value={receiveForm.subject}
+                    onChange={e => {
+                      setReceiveForm({ ...receiveForm, subject: e.target.value });
+                      setReceiveFormErrors(prev => clearFieldError(prev, 'subject'));
+                      if (receiveFormErrorSummary) setReceiveFormErrorSummary('');
+                    }}
+                    placeholder="Enter document subject"
+                  />
+                  {receiveFormErrors.subject && (
+                    <p className="form-field-error">{receiveFormErrors.subject}</p>
+                  )}
                   <p className="field-hint">Shortly describe the document so it is easy to find in tracking, tables, and reports.</p>
                 </div>
                 <div className="form-grid">
@@ -693,18 +736,27 @@ const ReceptionistDashboard = ({
                     <p className="field-hint">Receptionists set this during registration. Mayor/Admin actions finish it after approval.</p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Receiving Office</label>
+                    <label className="form-label">Incoming Office</label>
                     <select
                       className="form-select"
-                      value={receiveForm.currentOfficeId}
-                      disabled
+                      value={receiveForm.originOfficeId}
+                      onChange={e => setReceiveForm({ ...receiveForm, originOfficeId: e.target.value })}
                     >
-                      {offices
-                        .filter(o => o.id === receiveForm.currentOfficeId)
-                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
-                    <p className="field-hint">Your assigned office is the starting location of the record.</p>
+                    <p className="field-hint">Where the document came from within the municipal office list.</p>
                   </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Receiving Office</label>
+                  <select
+                    className="form-select"
+                    value={receiveForm.currentOfficeId}
+                    onChange={e => setReceiveForm({ ...receiveForm, currentOfficeId: e.target.value })}
+                  >
+                    {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                  </select>
+                  <p className="field-hint">The office currently responsible for the document after registration.</p>
                 </div>
 
                 <div className="form-group">
@@ -729,10 +781,21 @@ const ReceptionistDashboard = ({
                     <User size={12} style={{ marginRight: '0.25rem' }} />Sender Information
                   </p>
                   <div className="form-group">
-                    <label className="form-label">Sender Name</label>
-                    <input className="form-input" type="text" value={receiveForm.senderName}
-                      onChange={e => setReceiveForm({ ...receiveForm, senderName: e.target.value })}
-                      placeholder="Full name of the sender" />
+                    <label className="form-label">Sender Name <span className="required-mark">*</span></label>
+                    <input
+                      className={`form-input${receiveFormErrors.senderName ? ' is-invalid' : ''}`}
+                      type="text"
+                      value={receiveForm.senderName}
+                      onChange={e => {
+                        setReceiveForm({ ...receiveForm, senderName: e.target.value });
+                        setReceiveFormErrors(prev => clearFieldError(prev, 'senderName'));
+                        if (receiveFormErrorSummary) setReceiveFormErrorSummary('');
+                      }}
+                      placeholder="Full name of the sender"
+                    />
+                    {receiveFormErrors.senderName && (
+                      <p className="form-field-error">{receiveFormErrors.senderName}</p>
+                    )}
                     <p className="field-hint">Identifies who submitted the document and appears in tracking details.</p>
                   </div>
                   <div className="form-grid">
@@ -792,14 +855,21 @@ const ReceptionistDashboard = ({
                 <div className="form-group" style={{ marginTop: '1rem' }}>
                   <label className="form-label">
                     <Upload size={12} style={{ marginRight: '0.25rem' }} />
-                    Scanned File Attachment
+                    Scanned File Attachment <span className="required-mark">*</span>
                   </label>
                   <input
-                    className="form-input"
+                    className={`form-input${receiveFormErrors.attachmentFile ? ' is-invalid' : ''}`}
                     type="file"
                     accept="image/*,.pdf"
-                    onChange={e => setAttachmentFile(e.target.files?.[0] || null)}
+                    onChange={e => {
+                      setAttachmentFile(e.target.files?.[0] || null);
+                      setReceiveFormErrors(prev => clearFieldError(prev, 'attachmentFile'));
+                      if (receiveFormErrorSummary) setReceiveFormErrorSummary('');
+                    }}
                   />
+                  {receiveFormErrors.attachmentFile && (
+                    <p className="form-field-error">{receiveFormErrors.attachmentFile}</p>
+                  )}
                   <p className="field-hint">Attach a scanned image or PDF, matching the Document Tracker form.</p>
                 </div>
 

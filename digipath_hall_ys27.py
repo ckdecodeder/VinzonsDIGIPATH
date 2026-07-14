@@ -1,13 +1,15 @@
 """
 YS-27 Hall sensor modules on Raspberry Pi GPIO.
 
-Vinzons 5-sensor wiring:
-  1 = door          GPIO 5
-  2 = main + layer 1 (shared)  GPIO 6
-  3 = capture       GPIO 13
-  4 = layer 1 (logical; same as main)
-  5 = layer 2       GPIO 19
-  6 = layer 3       GPIO 12
+Physical placement (Vinzons — 5 sensors):
+  hall 1 = door            GPIO 5
+  hall 2 = main / layer 1  GPIO 6
+  hall 3 = scanner         GPIO 13
+  hall 4 = layer 2         GPIO 19
+  hall 5 = layer 3         GPIO 12
+
+Logical IDs used by mechanism (LAYER_1 shares hall 2 with MAIN):
+  DOOR=1 MAIN=2 CAPTURE=3 LAYER_1=4 LAYER_2=5 LAYER_3=6
 """
 
 from __future__ import annotations
@@ -46,12 +48,32 @@ LAYER_TO_SENSOR = {
 }
 
 SENSOR_LABELS = {
-    DOOR: "door",
-    MAIN: "main+layer1",
-    CAPTURE: "capture",
-    LAYER_1: "layer1-memorandum",
-    LAYER_2: "layer2-executive-order",
-    LAYER_3: "layer3-communication-letter",
+    DOOR: "hall1-door",
+    MAIN: "hall2-main-layer1",
+    CAPTURE: "hall3-scanner",
+    LAYER_1: "hall2-layer1",
+    LAYER_2: "hall4-layer2",
+    LAYER_3: "hall5-layer3",
+}
+
+# Physical hall number printed in logs (1–5)
+PHYSICAL_HALL_NO = {
+    DOOR: 1,
+    MAIN: 2,
+    CAPTURE: 3,
+    LAYER_1: 2,
+    LAYER_2: 4,
+    LAYER_3: 5,
+}
+
+# Vertical lift axis: smaller = higher (toward main), larger = lower (toward layer 3).
+# Door is a trigger only — not on this axis.
+LIFT_AXIS_RANK = {
+    MAIN: 0,
+    LAYER_1: 0,
+    CAPTURE: 1,
+    LAYER_2: 2,
+    LAYER_3: 3,
 }
 
 
@@ -211,6 +233,7 @@ def build_default_bank(simulate: bool = False) -> HallSensorBank:
     active_low = _env_bool("DIGIPATH_HALL_ACTIVE_LOW", "1")
     bank = HallSensorBank(pin_map, active_low=active_low, simulate=simulate)
     print(
-        "[Hall] Vinzons map: door=5 main+layer1=6 capture=13 layer2=19 layer3=12"
+        "[Hall] map: #1 door=5  #2 main/layer1=6  #3 scanner=13  "
+        "#4 layer2=19  #5 layer3=12"
     )
     return bank

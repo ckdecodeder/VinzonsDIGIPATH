@@ -242,13 +242,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const staleReloadAtRef = useRef(0);
   const streamStaleRef = useRef(false);
   const realtime = useOptionalRealtime();
-  const canChooseSourceOffice = currentUser?.role === 'Admin';
+  const canChooseSourceOffice =
+    currentUser?.role === 'Admin' || currentUser?.role === 'Receptionist';
   const canChooseDirection = currentUser?.role === 'Admin';
   const canSetInitialStatus = currentUser?.role === 'Receptionist' || currentUser?.role === 'Admin';
   const defaultSourceOfficeId = currentUser?.officeId || offices[0]?.id || MAYORS_OFFICE_ID;
-  const receptionOfficeId = currentUser?.role === 'Receptionist'
-    ? (currentUser?.officeId || MAYORS_OFFICE_ID)
-    : MAYORS_OFFICE_ID;
+  const receptionOfficeId = currentUser?.officeId || MAYORS_OFFICE_ID;
   const getNextOfficeId = (fromOfficeId) => offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId;
   const isOtherDocumentType = (typeId) => {
     const docType = documentTypes.find(item => item.id === typeId);
@@ -321,6 +320,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const validateScannerDetails = () => validateRequiredFields([
     { key: 'subject', label: 'Document subject', value: formData.subject },
     { key: 'senderName', label: 'Sender name', value: formData.senderName },
+    { key: 'toOfficeId', label: 'To office', value: formData.toOfficeId },
     {
       key: 'documentTypeOther',
       label: 'Document type',
@@ -1119,6 +1119,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setFormErrorSummary('');
 
     if (hardwareScannedDoc?.id) {
+      const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? null : formData.fromOfficeId;
+      const receivingOfficeId = formData.toOfficeId || receptionOfficeId;
       await onEditDocument?.({
         ...hardwareScannedDoc,
         subject: formData.subject,
@@ -1128,6 +1130,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         priorityLevel: formData.priorityLevel,
         status: canSetInitialStatus ? formData.status : 'Received',
         dateReceived: formData.dateReceived,
+        originOfficeId: sourceOfficeId || receivingOfficeId,
+        originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
+        currentOfficeId: receivingOfficeId,
+        destinationOfficeId: receivingOfficeId,
         senderName: formData.senderName,
         senderContact: formData.senderContact,
         senderEmail: formData.senderEmail,
@@ -1142,6 +1148,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
 
     const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? null : formData.fromOfficeId;
+    const receivingOfficeId = formData.toOfficeId || receptionOfficeId;
     const newDoc = {
       subject: formData.subject,
       documentDirection: canChooseDirection ? formData.documentDirection : 'Incoming',
@@ -1150,10 +1157,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       priorityLevel: formData.priorityLevel,
       status: canSetInitialStatus ? formData.status : 'Received',
       dateReceived: formData.dateReceived,
-      originOfficeId: sourceOfficeId || receptionOfficeId,
+      originOfficeId: sourceOfficeId || receivingOfficeId,
       originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
-      currentOfficeId: receptionOfficeId,
-      destinationOfficeId: formData.toOfficeId,
+      currentOfficeId: receivingOfficeId,
+      destinationOfficeId: receivingOfficeId,
       senderName: formData.senderName,
       senderContact: formData.senderContact,
       senderEmail: formData.senderEmail,
@@ -1168,8 +1175,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     };
 
     const newTransmission = {
-      fromOfficeId: sourceOfficeId,
-      toOfficeId: formData.toOfficeId,
+      fromOfficeId: sourceOfficeId || receivingOfficeId,
+      toOfficeId: receivingOfficeId,
       transmissionDate: formData.dateReceived,
       transmissionType: formData.fromOfficeId === formData.toOfficeId ? 'Internal' : 'External',
     };
@@ -1734,7 +1741,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   <div className="form-group">
                     <label className="form-label">
                       <Building2 size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                      From Office
+                      From Office <span className="required-mark">*</span>
                     </label>
                     <select
                       className="form-select"
@@ -1774,7 +1781,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   <div className="form-group">
                     <label className="form-label">
                       <Building2 size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                      To Office
+                      To Office <span className="required-mark">*</span>
                     </label>
                     <select className="form-select" value={formData.toOfficeId}
                       onChange={e => handleFormChange('toOfficeId', e.target.value)}>

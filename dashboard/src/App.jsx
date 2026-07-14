@@ -49,7 +49,7 @@ const PAGE_STORAGE_KEY = 'dp_currentPage';
 const ROLE_PAGES = {
   admin: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents', 'profile-settings'],
   mayor: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'reports', 'logs', 'profile-settings'],
-  office: ['dashboard', 'documents', 'transmissions', 'reports', 'logs', 'profile-settings'],
+  office: ['dashboard', 'documents', 'add-document', 'transmissions', 'reports', 'logs', 'profile-settings'],
   receptionist: ['dashboard', 'scan-documents', 'documents', 'reports', 'logs', 'profile-settings'],
 };
 
@@ -372,7 +372,7 @@ function App() {
     });
     if (!confirmed) return;
 
-    authService.logout();
+    await authService.logout();
     localStorage.removeItem(PAGE_STORAGE_KEY);
     setCurrentUser(null);
     setCurrentPage('dashboard');
@@ -579,7 +579,8 @@ function App() {
         ...newDoc,
         scannedText: text,
         originOfficeId: newDoc.originOfficeId || newTransmission.fromOfficeId || getUserOfficeId(),
-        currentOfficeId: newDoc.currentOfficeId || newTransmission.fromOfficeId || getUserOfficeId(),
+        currentOfficeId: newDoc.currentOfficeId || newTransmission.toOfficeId || getUserOfficeId(),
+        destinationOfficeId: newDoc.destinationOfficeId || newTransmission.toOfficeId || newDoc.currentOfficeId || '',
         intakeStatus: 'Pending Review',
       },
       attachment,
@@ -734,7 +735,11 @@ function App() {
       .slice(0, 3)
       .map((doc) => ({ id: `urgent-${doc.id}`, type: 'urgent', status: doc.status, text: `Urgent: ${doc.subject} is ${doc.status}`, page: 'documents', referenceType: 'document', referenceId: doc.id })),
     ...visibleTransmissions
-      .filter((item) => !item.receivedBy)
+      .filter((item) => {
+        if (item.receivedBy) return false;
+        if (currentRole === 'admin' || currentRole === 'mayor') return true;
+        return item.toOfficeId === currentUser?.officeId;
+      })
       .slice(0, 3)
       .map((item) => {
         const doc = getDocument(item.documentId);
@@ -809,7 +814,12 @@ function App() {
     setCurrentPage(item?.page || 'documents');
   };
 
-  const pendingTransmissions = visibleTransmissions.filter((item) => !item.receivedBy).length;
+  const pendingTransmissions = visibleTransmissions.filter((item) => {
+    if (item.receivedBy) return false;
+    // Admin/Mayor: all pending moves. Office/Receptionist: only inbound to their office.
+    if (currentRole === 'admin' || currentRole === 'mayor') return true;
+    return item.toOfficeId === currentUser?.officeId;
+  }).length;
 
   if (!currentUser) {
     return (
@@ -1115,6 +1125,7 @@ function App() {
               />
             );
           case 'documents':
+          case 'add-document':
             return (
               <DocumentList
                 key={`documents-${documentFocusKey}`}
@@ -1140,6 +1151,7 @@ function App() {
                 focusDocumentId={documentFocusId}
                 onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
+                autoOpenCreate={currentPage === 'add-document'}
                 onNotify={notifyUser}
               />
             );

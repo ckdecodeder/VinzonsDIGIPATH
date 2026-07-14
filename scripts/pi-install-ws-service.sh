@@ -61,9 +61,10 @@ Wants=network-online.target digipath-wifi-provision.service
 Type=simple
 User=${RUN_USER}
 WorkingDirectory=${DEST}
-EnvironmentFile=-${DEST}/.env
+# Do NOT rely on EnvironmentFile alone (.env JSON / UTF-8 BOM can make systemd skip it).
+# pi-run-ws-scanner.sh loads .env the same way as test-motors.sh.
 ExecStartPre=/bin/bash ${DEST}/scripts/pi-bootstrap-ws.sh
-ExecStart=${DEST}/.venv/bin/python ${DEST}/pi_ws_scanner.py
+ExecStart=/bin/bash ${DEST}/scripts/pi-run-ws-scanner.sh
 Restart=always
 RestartSec=5
 TimeoutStartSec=300

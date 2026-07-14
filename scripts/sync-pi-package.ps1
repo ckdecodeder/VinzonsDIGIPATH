@@ -62,6 +62,7 @@ $rootFiles = @(
   "digipath_hall_ys27.py",
   "digipath_mechanism.py",
   "digipath_motor_test.py",
+  "digipath_hall_test.py",
   "digipath_mechanism.env.example",
   "pi_ws_scanner.env.example",
   "PI-WS-FIX.txt",
@@ -84,7 +85,9 @@ $scriptFiles = @(
   "scripts/pi-wifi-provision.sh",
   "scripts/pi-restart-ws-scanner.sh",
   "scripts/pi-usb-ensure-scanner.sh",
-  "scripts/test-motors.sh"
+  "scripts/pi-run-ws-scanner.sh",
+  "scripts/test-motors.sh",
+  "scripts/test-hall.sh"
 )
 
 $legacyPaths = @(

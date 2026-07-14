@@ -320,8 +320,14 @@ const TransmissionList = ({
         header={
           <div className="page-header page-header--align-bottom">
             <div className="page-header-left">
-              <h1>Transmissions</h1>
-              <p>Track document movement between offices</p>
+              <h1>
+                {currentUser?.role === "Office" ? "Sent / Received" : "Transmissions"}
+              </h1>
+              <p>
+                {currentUser?.role === "Office"
+                  ? "Monitor documents you sent to reception or other offices"
+                  : "Track document movement between offices"}
+              </p>
             </div>
             {visibleRouteDocuments.length > 0 && (
               <div className="page-header-actions page-header-actions--inline">

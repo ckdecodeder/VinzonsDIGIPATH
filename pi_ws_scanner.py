@@ -28,6 +28,7 @@ import websocket
 
 from digipath_mechanism import (
     get_mechanism,
+    mechanism_home_on_startup,
     mechanism_prepare_for_capture,
     mechanism_start_door_monitor,
     mechanism_start_sort_async,
@@ -1283,6 +1284,7 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
         )
         if mech.enabled:
             try:
+                print(f"[PiWS] Scan {cmd_id} — starting NEMA prepare (same pins as test-motors)")
                 mechanism_prepare_for_capture()
             except Exception as mech_err:
                 update_command_status(
@@ -1291,6 +1293,11 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
                     f"Lift/hall prep failed: {mech_err}",
                 )
                 return
+        else:
+            print(
+                f"[PiWS] Scan {cmd_id} — *** NEMA SKIPPED (MECH_ENABLED=0) *** "
+                "Camera will still capture. Fix: DIGIPATH_MECH_ENABLED=1 + restart"
+            )
 
         snap = capture_scan_bytes(profile)
         if not snap:
@@ -1303,10 +1310,15 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
         update_command_status(cmd_id, "Executing")
         upload_scan(snap, cmd_id)
         update_command_status(cmd_id, "Executed")
-        print(f"[PiWS] Scan {cmd_id} uploaded — live preview resumed")
+        print(f"[PiWS] Scan {cmd_id} uploaded — sending upload_done → sort")
         if mech.enabled:
-            print(f"[PiWS] Scan {cmd_id} — post-upload sort to layer {sort_layer}")
+            print(f"[PiWS] SIGNAL to mechanism: upload_done sort_layer={sort_layer}")
             mechanism_start_sort_async(sort_layer)
+        else:
+            print(
+                "[PiWS] Mechanism OFF — no NEMA after upload. "
+                "Set DIGIPATH_MECH_ENABLED=1"
+            )
     except Exception as err:
         print(f"[PiWS] Scan {cmd_id} failed: {err}")
         update_command_status(cmd_id, "Failed", str(err))
@@ -2412,15 +2424,29 @@ def run():
     threading.Thread(target=ws_health_watchdog, daemon=True).start()
     threading.Thread(target=heartbeat_worker, daemon=True).start()
     try:
-        mechanism_start_door_monitor()
+        if get_mechanism().home_on_start:
+            print("[PiWS] Homing lift to MAIN (top) before ready...")
+            mechanism_home_on_startup()
+        else:
+            print("[PiWS] Startup home skipped (sensors/home off)")
+    except Exception as err:
+        print(f"[PiWS] Startup home failed: {err}")
+    try:
+        if get_mechanism().door_monitor_enabled:
+            mechanism_start_door_monitor()
+        else:
+            print("[PiWS] Door monitor off — Capture button drives lift down")
     except Exception as err:
         print(f"[PiWS] Door monitor not started: {err}")
     mech = get_mechanism()
     if mech.enabled:
-        print(
-            f"[PiWS] Mechanism: ON "
-            f"({'open-loop' if mech.open_loop else 'hall-guided'})"
+        mode = (
+            f"Capture→{mech.capture_down_count}×DOWN {mech.move_steps}→photo→"
+            f"SORT {mech.sort_deposit_steps}→UP {mech.move_steps}"
+            if mech.open_loop
+            else "hall-guided"
         )
+        print(f"[PiWS] Mechanism: ON — {mode}")
     else:
         print(
             "[PiWS] Mechanism: OFF — scan will not move NEMA motors. "

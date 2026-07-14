@@ -243,13 +243,13 @@ const Layout = ({
     { group: 'Overview', items: [
       { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
     ]},
-    { group: 'Document Tracking', items: [
-      { id: 'documents', label: 'Documents', icon: <FileText size={18} /> },
-      { id: 'transmissions', label: 'Transmissions', icon: <ArrowRightLeft size={18} />, badge: pendingTransmissions },
+    { group: 'Send & Track', items: [
+      { id: 'documents', label: 'My Documents', icon: <FileText size={18} /> },
+      { id: 'transmissions', label: 'Sent / Received', icon: <ArrowRightLeft size={18} />, badge: pendingTransmissions },
     ]},
     { group: 'Monitoring', items: [
       { id: 'reports', label: 'Reports', icon: <BarChart3 size={18} /> },
-      { id: 'logs', label: 'Activity Logs', icon: <History size={18} /> },
+      { id: 'logs', label: 'My Activity', icon: <History size={18} /> },
     ]},
   ];
 
