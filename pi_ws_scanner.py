@@ -186,10 +186,15 @@ _auth_timer = None
 _auth_retry_stop = threading.Event()
 _active_ws_app = None
 _ws_last_activity_at = 0.0
-WS_STALE_SECS = max(15.0, float(os.environ.get("DIGIPATH_WS_STALE_SECS", "90")))
-WS_RECONNECT_MAX_SECS = max(2.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_MAX_SECS", "12")))
-WS_PING_INTERVAL = int(os.environ.get("DIGIPATH_WS_PING_INTERVAL", "0"))
-WS_PING_TIMEOUT = max(10, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "30")))
+_ws_offline_since = None
+_ws_last_reconnect_kick_at = 0.0
+WS_STALE_SECS = max(15.0, float(os.environ.get("DIGIPATH_WS_STALE_SECS", "60")))
+WS_RECONNECT_MAX_SECS = max(1.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_MAX_SECS", "5")))
+WS_RECONNECT_MIN_SECS = max(0.5, float(os.environ.get("DIGIPATH_WS_RECONNECT_MIN_SECS", "1")))
+WS_OFFLINE_KICK_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_OFFLINE_KICK_SECS", "8")))
+# TCP keepalives so half-open tunnels/networks drop and the reconnect loop can run.
+WS_PING_INTERVAL = int(os.environ.get("DIGIPATH_WS_PING_INTERVAL", "20"))
+WS_PING_TIMEOUT = max(5, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "10")))
 STREAM_HTTP_UPLOAD_RAW = os.environ.get("DIGIPATH_STREAM_HTTP_UPLOAD", "auto").strip().lower()
 STREAM_HTTP_UPLOAD = STREAM_HTTP_UPLOAD_RAW not in ("0", "false", "no", "off")
 STREAM_HTTP_WS_PRIORITY = STREAM_HTTP_UPLOAD_RAW in ("auto", "ws", "1", "true", "yes", "on")
@@ -435,7 +440,7 @@ def device_payload(event_type: str) -> dict:
             "ip": ip,
             "bridgeVersion": "ws-jpeg-1.0",
             "backendBaseUrl": BACKEND_BASE_URL,
-            "websocketConnected": True,
+            "websocketConnected": bool(ws_connected and ws_authenticated),
             "streamMode": "jpeg-ws",
             "httpBridgeEnabled": False,
             "cameraReady": latest_bgr is not None,
@@ -1572,22 +1577,49 @@ def _touch_ws_activity():
     _ws_last_activity_at = time.monotonic()
 
 
+def _mark_ws_offline():
+    global _ws_offline_since
+    if _ws_offline_since is None:
+        _ws_offline_since = time.monotonic()
+
+
+def _mark_ws_online():
+    global _ws_offline_since
+    _ws_offline_since = None
+
+
+def _close_ws_socket(ws) -> None:
+    """Hard-close websocket-client sockets so run_forever() cannot hang forever."""
+    if ws is None:
+        return
+    sock = getattr(ws, "sock", None)
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
+        try:
+            sock.close()
+        except Exception:
+            pass
+    try:
+        ws.close()
+    except Exception:
+        pass
+
+
 def _force_ws_reconnect(reason: str):
-    global ws_connected, ws_authenticated, realtime_ws, _active_ws_app
+    global ws_connected, ws_authenticated, realtime_ws, _active_ws_app, _ws_last_reconnect_kick_at
     ws_connected = False
     ws_authenticated = False
+    _mark_ws_offline()
+    _ws_last_reconnect_kick_at = time.monotonic()
     ws = realtime_ws
-    if ws is not None:
-        try:
-            ws.close()
-        except Exception:
-            pass
+    realtime_ws = None
+    _close_ws_socket(ws)
     app = _active_ws_app
-    if app is not None:
-        try:
-            app.close()
-        except Exception:
-            pass
+    if app is not None and app is not ws:
+        _close_ws_socket(app)
     print(f"[PiWS] Auto-reconnect: {reason}")
 
 
@@ -2247,10 +2279,31 @@ def stream_producer_worker():
             time.sleep(0.35)
 
 
+def _http_presence_heartbeat() -> bool:
+    """Fallback when WebSocket is down so the backend still sees the Pi recovering."""
+    try:
+        response = requests.post(
+            f"{BACKEND_BASE_URL}/devices/heartbeat",
+            json=device_payload("device_heartbeat"),
+            headers=DEVICE_HEADERS,
+            timeout=8,
+        )
+        if response.status_code >= 400:
+            print(f"[PiWS] HTTP heartbeat failed: {response.status_code} {response.text[:160]}")
+            return False
+        return True
+    except Exception as err:
+        print(f"[PiWS] HTTP heartbeat error: {err}")
+        return False
+
+
 def heartbeat_worker():
     while not stop_event.wait(HEARTBEAT_SECS):
         if ws_authenticated:
             send_ws_presence("device_heartbeat")
+        else:
+            # Keep trying to look alive while WS auto-reconnects.
+            _http_presence_heartbeat()
 
 
 def handle_realtime_control_message(message: str):
@@ -2266,7 +2319,8 @@ def handle_realtime_control_message(message: str):
         _clear_auth_timer()
         _stop_auth_retry()
         ws_authenticated = True
-        _ws_reconnect_delay = 1.0
+        _ws_reconnect_delay = WS_RECONNECT_MIN_SECS
+        _mark_ws_online()
         _touch_ws_activity()
         print("[PiWS] Backend auth OK — starting stream + heartbeat")
         send_ws_presence("device_connected")
@@ -2324,6 +2378,7 @@ def on_realtime_close(_ws, close_status_code, close_msg):
     ws_connected = False
     ws_authenticated = False
     realtime_ws = None
+    _mark_ws_offline()
     print(
         f"[PiWS] WebSocket disconnected ({close_status_code or 'n/a'}): "
         f"{close_msg or 'closed'} — auto-reconnect pending"
@@ -2332,26 +2387,35 @@ def on_realtime_close(_ws, close_status_code, close_msg):
 
 def on_realtime_error(_ws, error):
     print(f"[PiWS] WebSocket error: {error} — auto-reconnect pending")
-    try:
-        _ws.close()
-    except Exception:
-        pass
+    _mark_ws_offline()
+    _close_ws_socket(_ws)
 
 
 def ws_health_watchdog():
-    """Reconnect if the WS link goes idle while we should still be streaming."""
-    while not stop_event.wait(5):
-        if not ws_connected or not ws_authenticated:
+    """Keep the reconnect loop alive: kick stale or stuck sockets quickly."""
+    while not stop_event.wait(3):
+        now = time.monotonic()
+        if ws_connected and ws_authenticated:
+            idle = now - _ws_last_activity_at
+            if idle > WS_STALE_SECS:
+                _force_ws_reconnect(f"stale link ({idle:.0f}s idle)")
             continue
-        idle = time.monotonic() - _ws_last_activity_at
-        if idle > WS_STALE_SECS:
-            _force_ws_reconnect(f"stale link ({idle:.0f}s idle)")
+
+        offline_since = _ws_offline_since or now
+        offline_for = now - offline_since
+        since_kick = now - _ws_last_reconnect_kick_at
+        # If run_forever() is hung after a network drop, keep force-closing
+        # the socket so the reconnect loop can start a new connection.
+        if offline_for >= WS_OFFLINE_KICK_SECS and since_kick >= WS_OFFLINE_KICK_SECS:
+            _force_ws_reconnect(f"offline supervisor ({offline_for:.0f}s)")
 
 
 def realtime_worker():
     global ws_connected, ws_authenticated, realtime_ws, _ws_reconnect_delay, _active_ws_app
+    _ws_reconnect_delay = WS_RECONNECT_MIN_SECS
     while not stop_event.is_set():
         try:
+            print(f"[PiWS] Connecting WebSocket → {ws_url()}")
             ws_app = websocket.WebSocketApp(
                 ws_url(),
                 header=ws_connect_headers(),
@@ -2376,14 +2440,15 @@ def realtime_worker():
         ws_connected = False
         ws_authenticated = False
         realtime_ws = None
+        _mark_ws_offline()
         if stop_event.is_set():
             break
 
-        delay = max(1.0, _ws_reconnect_delay)
-        print(f"[PiWS] Auto-reconnect in {delay:.0f}s...")
+        delay = max(WS_RECONNECT_MIN_SECS, min(_ws_reconnect_delay, WS_RECONNECT_MAX_SECS))
+        print(f"[PiWS] Auto-reconnect in {delay:.1f}s...")
         if stop_event.wait(delay):
             break
-        _ws_reconnect_delay = min(_ws_reconnect_delay * 1.4, WS_RECONNECT_MAX_SECS)
+        _ws_reconnect_delay = min(_ws_reconnect_delay * 1.35, WS_RECONNECT_MAX_SECS)
 
 
 def run():
