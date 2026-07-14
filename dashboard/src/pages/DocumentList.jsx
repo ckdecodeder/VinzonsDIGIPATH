@@ -508,23 +508,40 @@ const DocumentList = ({
     const isReceptionist = currentUser?.role === 'Receptionist';
     const myOfficeId = currentUser?.officeId || formData.currentOfficeId;
     const editingDoc = editDoc;
+    // On edit, never rewrite location offices — routing/receive/RFID own those fields.
     const normalizedFormData = {
       ...formData,
       documentDirection: isReceptionist
         ? 'Incoming'
         : (isOfficeStaff ? 'Outgoing' : formData.documentDirection),
-      status: editingDoc ? getWorkflowStatus(formData.status) : getWorkflowStatus(formData.status),
+      status: editingDoc
+        ? (editingDoc.status || getWorkflowStatus(formData.status))
+        : getWorkflowStatus(formData.status),
       dateReceived: editingDoc ? editingDoc.dateReceived : formData.dateReceived,
       documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
-      originOfficeOther: formData.originOfficeOther.trim(),
-      originOfficeId: isOfficeStaff
-        ? myOfficeId
-        : (formData.originOfficeId || formData.currentOfficeId || currentUser?.officeId),
-      currentOfficeId: isOfficeStaff
-        ? myOfficeId
-        : (formData.currentOfficeId || formData.originOfficeId || currentUser?.officeId),
-      destinationOfficeId: formData.destinationOfficeId || (isOfficeStaff ? '' : formData.currentOfficeId) || '',
-      intakeStatus: isOfficeStaff ? 'Approved' : undefined,
+      originOfficeOther: editingDoc
+        ? (editingDoc.originOfficeOther || '')
+        : formData.originOfficeOther.trim(),
+      originOfficeId: editingDoc
+        ? editingDoc.originOfficeId
+        : (isOfficeStaff
+          ? myOfficeId
+          : (formData.originOfficeId || formData.currentOfficeId || currentUser?.officeId)),
+      currentOfficeId: editingDoc
+        ? editingDoc.currentOfficeId
+        : (isOfficeStaff
+          ? myOfficeId
+          : (formData.currentOfficeId || formData.originOfficeId || currentUser?.officeId)),
+      destinationOfficeId: editingDoc
+        ? (editingDoc.destinationOfficeId || '')
+        : (formData.destinationOfficeId || (isOfficeStaff ? '' : formData.currentOfficeId) || ''),
+      destinationOfficeOther: editingDoc
+        ? (editingDoc.destinationOfficeOther || '')
+        : (formData.destinationOfficeOther || ''),
+      // Do not change intake on metadata edits.
+      intakeStatus: editingDoc
+        ? undefined
+        : (isOfficeStaff ? 'Approved' : undefined),
     };
 
     if (isOfficeStaff && !editingDoc && !normalizedFormData.destinationOfficeId) {

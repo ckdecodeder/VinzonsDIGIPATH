@@ -1,253 +1,77 @@
 #!/usr/bin/env bash
-set -eu
+# Self-contained installer for this raspberry_pi package.
+# Prefer: copy folder to ~/Desktop/VinzonsDIGIPATH-Pi then run pi-install-all.sh
+#
+# Usage (from this folder on the Pi):
+#   sudo bash install_digipath_scanner.sh
+#   sudo bash install_digipath_scanner.sh --backend-url URL --device-key KEY
+set -euo pipefail
 
-TARGET_DIR="/opt/digipath-scanner"
-ENV_FILE="/etc/digipath-scanner.env"
-SERVICE_FILE="/etc/systemd/system/digipath-scanner.service"
-DEVICE_ID="DEV-001"
-OFFICE_ID="OFF-001"
-STREAM_PORT="8080"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_BASE_URL="${DIGIPATH_BACKEND_BASE_URL:-}"
 DEVICE_API_KEY="${DIGIPATH_DEVICE_API_KEY:-}"
-WIFI_SSID=""
-WIFI_PASSWORD=""
-
-usage() {
-  cat <<'USAGE'
-Usage:
-  sudo bash install_digipath_scanner.sh --backend-url http://COMPUTER_IP:5000/api --device-key DEVICE_API_KEY [options]
-
-Options:
-  --backend-url URL       Backend API URL reachable from the Pi over WiFi.
-  --device-key KEY        Must match DEVICE_API_KEY in backend/.env.
-  --device-id ID          Default: DEV-001.
-  --office-id ID          Default: OFF-001.
-  --stream-port PORT      Local Pi bridge port. Default: 8080.
-  --wifi-ssid SSID        Optional WiFi network name to connect through NetworkManager.
-  --wifi-password PASS    Optional WiFi password.
-USAGE
-}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --backend-url)
-      BACKEND_BASE_URL="${2:-}"
-      shift 2
-      ;;
-    --device-key)
-      DEVICE_API_KEY="${2:-}"
-      shift 2
-      ;;
-    --device-id)
-      DEVICE_ID="${2:-}"
-      shift 2
-      ;;
-    --office-id)
-      OFFICE_ID="${2:-}"
-      shift 2
-      ;;
-    --stream-port)
-      STREAM_PORT="${2:-}"
-      shift 2
-      ;;
-    --wifi-ssid)
-      WIFI_SSID="${2:-}"
-      shift 2
-      ;;
-    --wifi-password)
-      WIFI_PASSWORD="${2:-}"
-      shift 2
-      ;;
+    --backend-url) BACKEND_BASE_URL="${2:-}"; shift 2 ;;
+    --device-key) DEVICE_API_KEY="${2:-}"; shift 2 ;;
     -h|--help)
-      usage
+      echo "Usage: sudo bash install_digipath_scanner.sh [--backend-url URL] [--device-key KEY]"
       exit 0
       ;;
-    *)
-      echo "Unknown option: $1" >&2
-      usage
-      exit 1
-      ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
 
-if [[ -z "$BACKEND_BASE_URL" || -z "$DEVICE_API_KEY" ]]; then
-  echo "Missing --backend-url or --device-key." >&2
-  usage
+if [[ "${EUID:-0}" -ne 0 ]]; then
+  echo "Run with sudo."
   exit 1
 fi
 
-if [[ "$BACKEND_BASE_URL" != */api ]]; then
-  echo "Backend URL should end with /api, for example http://192.168.100.10:5000/api" >&2
+if [[ ! -f "$SCRIPT_DIR/pi_ws_scanner.py" ]]; then
+  echo "pi_ws_scanner.py missing in $SCRIPT_DIR" >&2
   exit 1
 fi
 
-RUN_USER="${SUDO_USER:-$(id -un)}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BRIDGE_SOURCE="$REPO_ROOT/pi_scanner_bridge.py"
+RUN_USER="${SUDO_USER:-digipath}"
+USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+DEST="${DIGIPATH_WS_DIR:-$USER_HOME/Desktop/VinzonsDIGIPATH-Pi}"
 
-if [[ ! -f "$BRIDGE_SOURCE" ]]; then
-  echo "Cannot find pi_scanner_bridge.py at $BRIDGE_SOURCE" >&2
-  exit 1
-fi
+echo "[DigiPath] Installing package → $DEST (user=$RUN_USER)"
+mkdir -p "$DEST/scripts"
+rsync -a --delete \
+  --exclude '.venv' \
+  --exclude '__pycache__' \
+  --exclude '.env' \
+  --exclude '*.pyc' \
+  "$SCRIPT_DIR/" "$DEST/"
 
-if [[ -n "$WIFI_SSID" ]]; then
-  if command -v nmcli >/dev/null 2>&1; then
-    echo "Connecting wlan0 to WiFi network: $WIFI_SSID"
-    nmcli dev wifi connect "$WIFI_SSID" password "$WIFI_PASSWORD" ifname wlan0 || true
+if [[ -n "$BACKEND_BASE_URL" || -n "$DEVICE_API_KEY" || ! -f "$DEST/.env" ]]; then
+  if [[ ! -f "$DEST/.env" ]]; then
+    cp "$DEST/pi_ws_scanner.env.example" "$DEST/.env"
+  fi
+  if [[ -n "$BACKEND_BASE_URL" ]]; then
+    sed -i "s|^DIGIPATH_BACKEND_BASE_URL=.*|DIGIPATH_BACKEND_BASE_URL=${BACKEND_BASE_URL}|" "$DEST/.env"
+  fi
+  if [[ -n "$DEVICE_API_KEY" ]]; then
+    sed -i "s|^DIGIPATH_DEVICE_API_KEY=.*|DIGIPATH_DEVICE_API_KEY=${DEVICE_API_KEY}|" "$DEST/.env"
+  fi
+  # Prefer office WiFi over always-on hotspot so heartbeats reach the tunnel.
+  if ! grep -q '^DIGIPATH_WIFI_FORCE_HOTSPOT=' "$DEST/.env"; then
+    echo 'DIGIPATH_WIFI_FORCE_HOTSPOT=0' >> "$DEST/.env"
   else
-    echo "nmcli is not installed. Skipping WiFi configuration; make sure the Pi is already on the same WiFi." >&2
+    sed -i 's|^DIGIPATH_WIFI_FORCE_HOTSPOT=.*|DIGIPATH_WIFI_FORCE_HOTSPOT=0|' "$DEST/.env"
   fi
 fi
 
-echo "Installing system packages..."
-apt-get update
-apt-get install -y \
-  python3-pip \
-  python3-venv \
-  python3-requests \
-  python3-pil \
-  python3-opencv \
-  python3-numpy \
-  tesseract-ocr \
-  libgl1 \
-  libglib2.0-0 \
-  libavformat-dev \
-  libavcodec-dev \
-  libavdevice-dev \
-  libavutil-dev \
-  libavfilter-dev \
-  libswscale-dev \
-  libswresample-dev \
-  pkg-config
-apt-get install -y python3-gpiozero || true
-apt-get install -y rpicam-apps || apt-get install -y libcamera-apps || true
+chown -R "$RUN_USER:$RUN_USER" "$DEST"
+sudo -u "$RUN_USER" bash "$DEST/fix-pi-scripts.sh" || true
 
-echo "Installing bridge files..."
-mkdir -p "$TARGET_DIR"
-cp "$BRIDGE_SOURCE" "$TARGET_DIR/pi_scanner_bridge.py"
-if [[ -f "$REPO_ROOT/pi_wifi_provision.py" ]]; then
-  cp "$REPO_ROOT/pi_wifi_provision.py" "$TARGET_DIR/pi_wifi_provision.py"
-fi
-if [[ -d "$REPO_ROOT/scripts" ]]; then
-  mkdir -p "$TARGET_DIR/scripts"
-  cp "$REPO_ROOT/scripts/pi-wifi-provision.sh" "$TARGET_DIR/scripts/pi-wifi-provision.sh" 2>/dev/null || true
-  cp "$REPO_ROOT/scripts/pi-load-env.sh" "$TARGET_DIR/scripts/pi-load-env.sh" 2>/dev/null || true
-  chmod +x "$TARGET_DIR/scripts/"*.sh 2>/dev/null || true
-fi
-if [[ -f "$REPO_ROOT/motor_controller.py" ]]; then
-  cp "$REPO_ROOT/motor_controller.py" "$TARGET_DIR/motor_controller.py"
-fi
-if [[ -f "$REPO_ROOT/relay_controller.py" ]]; then
-  cp "$REPO_ROOT/relay_controller.py" "$TARGET_DIR/relay_controller.py"
-fi
-if [[ -f "$REPO_ROOT/install-pi-deps.sh" ]]; then
-  cp "$REPO_ROOT/install-pi-deps.sh" "$TARGET_DIR/install-pi-deps.sh"
-  chmod +x "$TARGET_DIR/install-pi-deps.sh"
-fi
-if [[ -f "$REPO_ROOT/verify-pi-deps.py" ]]; then
-  cp "$REPO_ROOT/verify-pi-deps.py" "$TARGET_DIR/verify-pi-deps.py"
-fi
-if [[ -f "$REPO_ROOT/requirements-pi.txt" ]]; then
-  cp "$REPO_ROOT/requirements-pi.txt" "$TARGET_DIR/requirements-pi.txt"
-fi
-chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
+DIGIPATH_WS_DIR="$DEST" DIGIPATH_USER="$RUN_USER" \
+  bash "$DEST/scripts/pi-install-all.sh"
 
-echo "Creating Python environment..."
-python3 -m venv --system-site-packages "$TARGET_DIR/.venv"
-"$TARGET_DIR/.venv/bin/python" -m pip install --upgrade pip
-"$TARGET_DIR/.venv/bin/python" -m pip install requests Pillow pytesseract websocket-client gpiozero
-"$TARGET_DIR/.venv/bin/python" - <<'PY'
-import importlib.util
-
-optional_modules = {
-    "cv2": "OpenCV document auto-cropping",
-    "numpy": "OpenCV document auto-cropping",
-    "picamera2": "Raspberry Pi camera capture",
-}
-
-for module, feature in optional_modules.items():
-    if importlib.util.find_spec(module):
-        print(f"{module}: available")
-    else:
-        print(f"{module}: not available; {feature} may be disabled")
-PY
-chown -R "$RUN_USER:$RUN_USER" "$TARGET_DIR"
-
-echo "Writing $ENV_FILE..."
-cat > "$ENV_FILE" <<ENV
-DIGIPATH_BACKEND_BASE_URL="$BACKEND_BASE_URL"
-DIGIPATH_DEVICE_API_KEY="$DEVICE_API_KEY"
-DIGIPATH_DEVICE_ID="$DEVICE_ID"
-DIGIPATH_OFFICE_ID="$OFFICE_ID"
-DIGIPATH_STREAM_PORT="$STREAM_PORT"
-DIGIPATH_STREAM_FPS=30
-DIGIPATH_STREAM_WIDTH=640
-DIGIPATH_STREAM_HEIGHT=360
-DIGIPATH_STREAM_JPEG_QUALITY=82
-DIGIPATH_STREAM_FAST=0
-DIGIPATH_STREAM_COLOR_MODE=jpeg
-DIGIPATH_HEARTBEAT_INTERVAL_SECS=10
-DIGIPATH_RESTART_ON_IP_CHANGE=1
-DIGIPATH_IP_RESTART_DEBOUNCE_SECS=30
-DIGIPATH_AUTO_INSTALL=1
-DIGIPATH_USE_WEBSOCKET=1
-DIGIPATH_ENABLE_MJPEG_HTTP=0
-DIGIPATH_CAMERA_CLI=""
-DIGIPATH_ENABLE_OPENCV_CAMERA="auto"
-DIGIPATH_OPENCV_CAMERA_INDEX="0"
-DIGIPATH_DEVICE_NAME="Physical Document Scanner"
-DIGIPATH_DEVICE_LOCATION="Reception Area"
-DIGIPATH_WIFI_PROVISION=1
-DIGIPATH_WIFI_HOTSPOT_SSID=DigiPath-Setup
-DIGIPATH_WIFI_HOTSPOT_PASSWORD=
-ENV
-chmod 600 "$ENV_FILE"
-
-echo "Writing $SERVICE_FILE..."
-cat > "$SERVICE_FILE" <<SERVICE
-[Unit]
-Description=VinzonsDIGIPATH Raspberry Pi Scanner Bridge
-Wants=network-online.target digipath-wifi-provision.service
-After=network-online.target digipath-wifi-provision.service
-
-[Service]
-Type=simple
-User=$RUN_USER
-WorkingDirectory=$TARGET_DIR
-EnvironmentFile=$ENV_FILE
-Environment=PYTHONNOUSERSITE=1
-Environment=PYTHONUNBUFFERED=1
-ExecStart=$TARGET_DIR/.venv/bin/python $TARGET_DIR/pi_scanner_bridge.py
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-systemctl daemon-reload
-systemctl enable digipath-scanner.service
-
-HOOK_SCRIPT="$REPO_ROOT/scripts/pi-install-network-hook.sh"
-if [[ -f "$HOOK_SCRIPT" ]]; then
-  echo "Installing WiFi/IP auto-restart hook..."
-  bash "$HOOK_SCRIPT"
-fi
-
-WIFI_PROVISION_SCRIPT="$REPO_ROOT/scripts/pi-install-wifi-provision.sh"
-if [[ -f "$WIFI_PROVISION_SCRIPT" ]]; then
-  echo "Installing phone WiFi setup hotspot..."
-  DIGIPATH_WS_DIR="$TARGET_DIR" bash "$WIFI_PROVISION_SCRIPT"
-fi
-
-systemctl restart digipath-scanner.service
-
-echo
-echo "VinzonsDIGIPATH scanner bridge is installed and running."
-echo "Backend: $BACKEND_BASE_URL"
-echo "Bridge URL for the dashboard: http://$(hostname -I | awk '{print $1}'):$STREAM_PORT"
-echo
-echo "Check status with:"
-echo "  systemctl status digipath-scanner --no-pager"
-echo "  journalctl -u digipath-scanner -f"
+echo "[DigiPath] Done."
+echo "  Dest:    $DEST"
+echo "  Env:     $DEST/.env"
+echo "  Service: digipath-ws-scanner"
+echo "  Logs:    journalctl -u digipath-ws-scanner -f"

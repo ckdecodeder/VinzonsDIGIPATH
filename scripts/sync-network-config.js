@@ -241,6 +241,17 @@ if (!fs.existsSync(piWsEnvPath) && fs.existsSync(piWsEnvExample)) {
   fs.copyFileSync(piWsEnvExample, piWsEnvPath);
 }
 syncPiWsEnv(piWsEnvPath);
+syncPiWsEnv(piWsEnvExample);
+syncPiWsEnv(path.join(root, 'raspberry_pi', 'pi_ws_scanner.env.example'));
+syncPiWsEnv(path.join(root, 'raspberry_pi', 'digipath-scanner.env.example'));
+syncPiWsEnv(path.join(root, 'raspberry_pi', 'bridge.env.example'));
+const raspberryPiEnv = path.join(root, 'raspberry_pi', '.env');
+if (!fs.existsSync(raspberryPiEnv) && fs.existsSync(piWsEnvExample)) {
+  fs.copyFileSync(path.join(root, 'raspberry_pi', 'pi_ws_scanner.env.example'), raspberryPiEnv);
+}
+if (fs.existsSync(raspberryPiEnv)) {
+  syncPiWsEnv(raspberryPiEnv);
+}
 for (const drivePath of ['D:\\VinzonsDIGIPATH-Pi\\.env']) {
   if (!fs.existsSync(drivePath)) {
     const driveDir = path.dirname(drivePath);

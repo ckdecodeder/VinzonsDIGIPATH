@@ -211,3 +211,10 @@ foreach ($rel in ($rootFiles + $scriptFiles)) {
 
 Write-Host ""
 Write-Host "Synced to $Destination"
+
+# Keep repo raspberry_pi/ as the in-tree self-contained mirror (unless already targeting it).
+$repoPi = Join-Path $repoRoot "raspberry_pi"
+if ([IO.Path]::GetFullPath($Destination) -ne [IO.Path]::GetFullPath($repoPi)) {
+  Write-Host "Mirroring package into $repoPi ..."
+  & $PSCommandPath -Destination $repoPi
+}

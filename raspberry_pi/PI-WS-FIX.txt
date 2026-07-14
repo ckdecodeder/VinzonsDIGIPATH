@@ -1,0 +1,3 @@
+cd ~/Desktop/VinzonsDIGIPATH-Pi
+bash fix-pi-scripts.sh
+bash scripts/ws.sh
