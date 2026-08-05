@@ -1300,6 +1300,7 @@ function App() {
           users={users}
           documentTypes={documentTypes}
           transmissions={visibleTransmissions}
+          currentUser={currentUser}
           onClose={() => setPreviewDocument(null)}
         />
       )}

@@ -33,15 +33,15 @@ const ReceptionistDashboard = ({
   documentTypes = defaultDocumentTypes,
   currentUser,
   onAddDocument,
-  onAddTransmission,
   onNavigate,
   onOpenDocument,
   onNotify,
 }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [showReceiveForm, setShowReceiveForm] = useState(false);
-  const [showRouteForm, setShowRouteForm] = useState(false);
   const [attachmentFile, setAttachmentFile] = useState(null);
+
+  const mayorsOfficeId = offices.find(o => o.name.toLowerCase().includes('mayor'))?.id || 'OFF-001';
 
   const [receiveForm, setReceiveForm] = useState({
     subject: '',
@@ -53,33 +53,21 @@ const ReceptionistDashboard = ({
     dateReceived: new Date().toISOString().split('T')[0],
     originOfficeId: currentUser?.officeId || 'OFF-001',
     currentOfficeId: currentUser?.officeId || 'OFF-001',
+    destinationOfficeId: mayorsOfficeId,
     originOfficeOther: '',
     senderName: '',
     senderContact: '',
     senderEmail: '',
     notifySender: true,
     senderNotificationConsent: true,
-    senderNotificationChannels: ['sms', 'email'],
+    senderNotificationChannels: ['sms'],
     remarks: '',
     scannedText: '',
   });
 
   const [receiveFormErrors, setReceiveFormErrors] = useState({});
   const [receiveFormErrorSummary, setReceiveFormErrorSummary] = useState('');
-  const [routeForm, setRouteForm] = useState({
-    documentId: '',
-    fromOfficeId: currentUser?.officeId || 'OFF-001',
-    toOfficeId: offices.find(o => o.id !== currentUser?.officeId)?.id || 'OFF-002',
-    transmissionType: 'Internal',
-    transmissionDate: new Date().toISOString().split('T')[0],
-  });
 
-  const notify = (message, title = 'Action needed', type = 'warning') => {
-    onNotify?.({ type, title, message });
-  };
-
-  const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
-  const transmittableStatuses = ['Received', 'For Signing', 'For Filing'];
   const finishedStatuses = ['Signed', 'Acknowledged', 'Archived'];
   const getWorkflowStatus = (doc) => {
     if (doc?.status === 'For Signature') return 'For Signing';
@@ -91,15 +79,10 @@ const ReceptionistDashboard = ({
     const today = new Date().toISOString().split('T')[0];
     return d.dateReceived === today;
   });
-  const urgentDocs = documents.filter(d => d.priorityLevel === 'urgent' && d.status !== 'Archived');
-  const priorityOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
+  const forwardedToMayorDocs = documents.filter(d => d.destinationOfficeId === mayorsOfficeId || d.currentOfficeId === mayorsOfficeId);
   const pendingDocuments = [...documents]
     .filter(doc => !finishedStatuses.includes(getWorkflowStatus(doc)))
-    .sort((a, b) => {
-      const pDiff = (priorityOrder[a.priorityLevel] || 2) - (priorityOrder[b.priorityLevel] || 2);
-      if (pDiff !== 0) return pDiff;
-      return compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
-    });
+    .sort((a, b) => compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']));
 
   const statCards = [
     {
@@ -110,11 +93,11 @@ const ReceptionistDashboard = ({
       onClick: () => setActiveTab('incoming'),
     },
     {
-      label: 'Urgent Items',
-      value: urgentDocs.length,
-      icon: <Flag size={26} />,
-      color: 'red',
-      onClick: () => onNavigate('documents'),
+      label: 'Sent to Mayor',
+      value: forwardedToMayorDocs.length,
+      icon: <Send size={26} />,
+      color: 'purple',
+      onClick: () => setActiveTab('incoming'),
     },
     {
       label: 'Pending',
@@ -131,11 +114,6 @@ const ReceptionistDashboard = ({
       onClick: () => onNavigate('documents'),
     },
   ];
-
-  const getOfficeName = (officeId) => {
-    const office = offices.find(o => o.id === officeId);
-    return office ? office.name : 'Unknown Office';
-  };
 
   const getDocTypeName = (typeId) => {
     const docType = documentTypes.find(d => d.id === typeId);
@@ -159,11 +137,6 @@ const ReceptionistDashboard = ({
     return docType?.category?.toLowerCase().includes('other');
   };
   const isApprovedForWorkflow = (doc) => (doc?.intakeStatus || 'Approved') === 'Approved';
-  const routableDocuments = documents.filter(doc =>
-    doc.currentOfficeId === currentUser?.officeId &&
-    transmittableStatuses.includes(getWorkflowStatus(doc)) &&
-    isApprovedForWorkflow(doc)
-  );
   const getDocumentPendingReason = (doc) => {
     if ((doc.intakeStatus || 'Approved') === 'Pending Review') {
       return 'Waiting for Admin or Mayor approval before routing.';
@@ -173,34 +146,21 @@ const ReceptionistDashboard = ({
     }
     const status = getWorkflowStatus(doc);
     if (status === 'Received' && isApprovedForWorkflow(doc)) {
-      return 'Approved and ready to route.';
+      return 'Forwarded to Mayor\'s Office.';
     }
     if (status === 'In Transit') {
-      return 'Already routed. Waiting for the destination office to receive it.';
+      return 'Waiting for Mayor\'s office to receive it.';
     }
     if (status === 'For Signing') {
-      return 'Waiting for Mayor/Admin signing action.';
+      return 'Waiting for Mayor signing action.';
     }
     if (status === 'For Filing') {
-      return 'Waiting for Mayor/Admin acknowledgement.';
+      return 'Waiting for Mayor acknowledgement.';
     }
     if (status === 'Signed' || status === 'Acknowledged' || status === 'Archived') {
-      return 'Completed workflow. Routing is locked.';
+      return 'Completed workflow.';
     }
     return '';
-  };
-  const getNextOfficeId = (fromOfficeId) => offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId;
-
-  const toggleSenderChannel = (channel) => {
-    setReceiveForm(prev => {
-      const channels = prev.senderNotificationChannels || [];
-      return {
-        ...prev,
-        senderNotificationChannels: channels.includes(channel)
-          ? channels.filter(item => item !== channel)
-          : [...channels, channel],
-      };
-    });
   };
 
   const fileToAttachment = (file) => new Promise((resolve, reject) => {
@@ -217,19 +177,6 @@ const ReceptionistDashboard = ({
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-
-  const openRouteForm = () => {
-    const fromOfficeId = currentUser?.officeId || 'OFF-001';
-    const firstDocument = routableDocuments[0];
-    setRouteForm({
-      documentId: firstDocument?.id || '',
-      fromOfficeId,
-      toOfficeId: getNextOfficeId(fromOfficeId),
-      transmissionType: 'Internal',
-      transmissionDate: new Date().toISOString().split('T')[0],
-    });
-    setShowRouteForm(true);
-  };
 
   const handleReceive = async (e) => {
     e.preventDefault();
@@ -262,10 +209,11 @@ const ReceptionistDashboard = ({
       documentDirection: 'Incoming',
       documentTypeOther: isOtherDocumentType(receiveForm.documentTypeId) ? receiveForm.documentTypeOther.trim() : '',
       originOfficeOther: receiveForm.originOfficeOther.trim(),
-      status: receiveForm.status,
-      originOfficeId: receiveForm.originOfficeId || receiveForm.currentOfficeId || currentUser?.officeId || 'OFF-001',
-      currentOfficeId: receiveForm.currentOfficeId || currentUser?.officeId || 'OFF-001',
-      destinationOfficeId: receiveForm.currentOfficeId || currentUser?.officeId || 'OFF-001',
+      status: 'Received',
+      priorityLevel: 'normal',
+      originOfficeId: currentUser?.officeId || 'OFF-001',
+      currentOfficeId: currentUser?.officeId || 'OFF-001',
+      destinationOfficeId: mayorsOfficeId,
       scannedFiles: newFiles,
       scannedImageUrl: newFiles[0]?.dataUrl || '',
     };
@@ -281,13 +229,14 @@ const ReceptionistDashboard = ({
       dateReceived: new Date().toISOString().split('T')[0],
       originOfficeId: currentUser?.officeId || 'OFF-001',
       currentOfficeId: currentUser?.officeId || 'OFF-001',
+      destinationOfficeId: mayorsOfficeId,
       originOfficeOther: '',
       senderName: '',
       senderContact: '',
       senderEmail: '',
       notifySender: true,
       senderNotificationConsent: true,
-      senderNotificationChannels: ['sms', 'email'],
+      senderNotificationChannels: ['sms'],
       remarks: '',
       scannedText: '',
     });
@@ -298,37 +247,10 @@ const ReceptionistDashboard = ({
     }
   };
 
-  const handleRoute = async (e) => {
-    e.preventDefault();
-    const selectedDoc = documents.find(d => d.id === routeForm.documentId);
-    if (!selectedDoc || !routableDocuments.some(doc => doc.id === selectedDoc.id)) {
-      notify('Choose an approved Received, For Signing, or For Filing document from your assigned office.');
-      return;
-    }
-    if (routeForm.fromOfficeId === routeForm.toOfficeId) {
-      notify('Choose a different destination office before routing.');
-      return;
-    }
-    const newTrans = {
-      ...routeForm,
-      fromOfficeId: currentUser?.officeId || routeForm.fromOfficeId,
-    };
-    setShowRouteForm(false);
-    try {
-      await onAddTransmission(newTrans);
-    } catch {
-      // The shared save handler already shows the API error.
-    }
-  };
-
   // Recent incoming docs
   const recentIncoming = [...documents]
     .filter(d => d.documentDirection === 'Incoming')
-    .sort((a, b) => {
-      const pDiff = (priorityOrder[a.priorityLevel] || 2) - (priorityOrder[b.priorityLevel] || 2);
-      if (pDiff !== 0) return pDiff;
-      return compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
-    })
+    .sort((a, b) => compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']))
     .slice(0, 4);
 
   return (
@@ -336,17 +258,12 @@ const ReceptionistDashboard = ({
       <div className="page-header page-header--align-bottom">
         <div className="page-header-left">
           <h1>Receptionist Dashboard</h1>
-          <p>Scan, receive, route, and track documents efficiently</p>
+          <p>Scan, receive, and track external documents for Mayor's Office</p>
         </div>
         <div className="page-header-actions">
           <button className="btn btn-secondary" onClick={() => { setAttachmentFile(null); setShowReceiveForm(true); }}>
             <Inbox size={18} /> Register
           </button>
-          {routableDocuments.length > 0 && (
-            <button className="btn btn-primary" onClick={openRouteForm}>
-              <Send size={18} /> Route
-            </button>
-          )}
         </div>
       </div>
 
@@ -405,7 +322,6 @@ const ReceptionistDashboard = ({
             </div>
             <div className="activity-list">
               {recentIncoming.map(doc => {
-                const pInfo = getPriorityInfo(doc.priorityLevel);
                 return (
                   <div
                     key={doc.id}
@@ -416,16 +332,10 @@ const ReceptionistDashboard = ({
                     onKeyDown={(event) => handleKeyboardOpen(event, () => openDocumentInterface(doc))}
                     title="Open document details"
                   >
-                    <div className={`activity-dot ${doc.priorityLevel === 'urgent' ? 'red' : getWorkflowStatus(doc) === 'Received' ? 'blue' : getWorkflowStatus(doc) === 'In Transit' ? 'amber' : 'green'}`}></div>
+                    <div className={`activity-dot ${getWorkflowStatus(doc) === 'Received' ? 'blue' : getWorkflowStatus(doc) === 'In Transit' ? 'amber' : 'green'}`}></div>
                     <div className="activity-item-body">
                       <p className="activity-text"><strong>{doc.subject}</strong></p>
                       <div className="activity-badges">
-                        <span
-                          className="activity-tag"
-                          style={{ background: pInfo.bg, color: pInfo.color }}
-                        >
-                          {pInfo.label}
-                        </span>
                         <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`}>
                           {getWorkflowStatus(doc)}
                         </span>
@@ -454,7 +364,6 @@ const ReceptionistDashboard = ({
             {pendingDocuments.length > 0 ? (
               <div className="activity-list">
                 {pendingDocuments.slice(0, 4).map(doc => {
-                  const pInfo = getPriorityInfo(doc.priorityLevel);
                   return (
                     <div
                       key={doc.id}
@@ -471,12 +380,6 @@ const ReceptionistDashboard = ({
                           <strong>{doc.subject || 'Document'}</strong>
                         </p>
                         <div className="activity-badges">
-                          <span
-                            className="activity-tag"
-                            style={{ background: pInfo.bg, color: pInfo.color }}
-                          >
-                            {pInfo.label}
-                          </span>
                           <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`}>
                             {getWorkflowStatus(doc)}
                           </span>
@@ -512,7 +415,6 @@ const ReceptionistDashboard = ({
               <tr>
                 <th>Tracking #</th>
                 <th>Subject</th>
-                <th>Priority</th>
                 <th>Type</th>
                 <th>Sender</th>
                 <th>Status</th>
@@ -522,7 +424,6 @@ const ReceptionistDashboard = ({
             </thead>
             <tbody>
               {documents.filter(d => d.documentDirection === 'Incoming').map(doc => {
-                const pInfo = getPriorityInfo(doc.priorityLevel);
                 return (
                   <tr
                     key={doc.id}
@@ -532,17 +433,6 @@ const ReceptionistDashboard = ({
                   >
                     <td><span className="td-mono">{doc.trackingNumber}</span></td>
                     <td className="td-primary">{doc.subject}</td>
-                    <td>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                        padding: '0.15rem 0.5rem', borderRadius: '9999px',
-                        fontSize: '0.7rem', fontWeight: 600,
-                        background: pInfo.bg, color: pInfo.color,
-                      }}>
-                        <Flag size={10} />
-                        {pInfo.label}
-                      </span>
-                    </td>
                     <td>{getDocTypeName(doc.documentTypeId)}</td>
                     <td style={{ fontSize: '0.8rem' }}>{doc.senderName || '—'}</td>
                     <td>
@@ -567,7 +457,6 @@ const ReceptionistDashboard = ({
               <tr>
                 <th>Tracking #</th>
                 <th>Subject</th>
-                <th>Priority</th>
                 <th>Current Status</th>
                 <th>Pending For</th>
                 <th>Date Received</th>
@@ -575,7 +464,6 @@ const ReceptionistDashboard = ({
             </thead>
             <tbody>
               {pendingDocuments.map(doc => {
-                const pInfo = getPriorityInfo(doc.priorityLevel);
                 return (
                   <tr
                     key={doc.id}
@@ -585,17 +473,6 @@ const ReceptionistDashboard = ({
                   >
                     <td><span className="td-mono">{doc.trackingNumber}</span></td>
                     <td className="td-primary">{doc?.subject || '—'}</td>
-                    <td>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                        padding: '0.15rem 0.5rem', borderRadius: '9999px',
-                        fontSize: '0.7rem', fontWeight: 600,
-                        background: pInfo.bg, color: pInfo.color,
-                      }}>
-                        <Flag size={10} />
-                        {pInfo.label}
-                      </span>
-                    </td>
                     <td>
                       <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`}>
                         {getWorkflowStatus(doc)}
@@ -613,7 +490,7 @@ const ReceptionistDashboard = ({
               })}
               {!pendingDocuments.length && (
                 <tr>
-                  <td colSpan="6">
+                  <td colSpan="5">
                     <div className="empty-state">
                       <CheckCircle2 size={24} />
                       <h3>No pending documents</h3>
@@ -633,7 +510,7 @@ const ReceptionistDashboard = ({
         <ModalOverlay onClose={() => setShowReceiveForm(false)}>
           <div className="modal receptionist-register-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Register Document</h2>
+              <h2>Register External Document</h2>
               <button className="btn-icon" onClick={() => setShowReceiveForm(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleReceive} noValidate>
@@ -683,102 +560,32 @@ const ReceptionistDashboard = ({
                     )}
                   </div>
                   <div className="form-group">
-                    <label className="form-label">
-                      <Flag size={12} style={{ marginRight: '0.25rem' }} />Priority Level
-                    </label>
-                    <div
-                      className="priority-select-wrap"
-                      style={{
-                        '--priority-color': getPriorityInfo(receiveForm.priorityLevel).color,
-                        '--priority-bg': getPriorityInfo(receiveForm.priorityLevel).bg,
-                      }}
-                    >
-                      <span className="priority-color-preview"></span>
-                      <select className="form-select priority-select" value={receiveForm.priorityLevel}
-                        onChange={e => setReceiveForm({ ...receiveForm, priorityLevel: e.target.value })}>
-                        {priorityLevels.map(p => (
-                          <option key={p.id} value={p.id} style={{ color: p.color, backgroundColor: p.bg }}>{p.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <p className="field-hint">Controls queue urgency and highlights items that need faster attention.</p>
-                  </div>
-                </div>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">Direction</label>
-                    <select className="form-select" value={receiveForm.documentDirection}
-                      onChange={e => setReceiveForm({ ...receiveForm, documentDirection: e.target.value })}
-                      disabled>
-                      <option>Incoming</option>
-                    </select>
-                    <p className="field-hint">Receptionist intake is always incoming because the sender brought the document in.</p>
-                  </div>
-                  <div className="form-group">
                     <label className="form-label">Date Received</label>
                     <input className="form-input" type="date" value={receiveForm.dateReceived}
                       disabled required />
                     <p className="field-hint">Locked to the registration date.</p>
                   </div>
                 </div>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">Pending Workflow Status</label>
-                    <select
-                      className="form-select"
-                      value={receiveForm.status}
-                      onChange={e => setReceiveForm({ ...receiveForm, status: e.target.value })}
-                    >
-                      {registrationStatuses.map(status => (
-                        <option key={status} value={status}>{status}</option>
-                      ))}
-                    </select>
-                    <p className="field-hint">Receptionists set this during registration. Mayor/Admin actions finish it after approval.</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Incoming Office</label>
-                    <select
-                      className="form-select"
-                      value={receiveForm.originOfficeId}
-                      onChange={e => setReceiveForm({ ...receiveForm, originOfficeId: e.target.value })}
-                    >
-                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    <p className="field-hint">Where the document came from within the municipal office list.</p>
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Receiving Office</label>
-                  <select
-                    className="form-select"
-                    value={receiveForm.currentOfficeId}
-                    onChange={e => setReceiveForm({ ...receiveForm, currentOfficeId: e.target.value })}
-                  >
-                    {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                  </select>
-                  <p className="field-hint">The office currently responsible for the document after registration.</p>
-                </div>
 
                 <div className="form-group">
-                  <label className="form-label">External / Other Source Office</label>
+                  <label className="form-label">Destination Office</label>
                   <input
                     className="form-input"
                     type="text"
-                    value={receiveForm.originOfficeOther}
-                    onChange={e => setReceiveForm({ ...receiveForm, originOfficeOther: e.target.value })}
-                    placeholder="School, agency, municipality, barangay, or other sender office"
+                    value="Mayor's Office"
+                    disabled
                   />
-                  <p className="field-hint">Use this when the source is outside the municipal office list.</p>
+                  <p className="field-hint">All external documents are automatically routed to the Mayor's Office.</p>
                 </div>
 
-                {/* Sender  Info */}
+                {/* Sender Info */}
                 <div style={{
                   padding: '0.75rem', background: 'var(--bg-elevated)',
                   borderRadius: 'var(--radius-md)', border: '1px solid var(--border-light)',
                   marginTop: '0.25rem',
                 }}>
                   <p style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
-                    <User size={12} style={{ marginRight: '0.25rem' }} />Sender Information
+                    <User size={12} style={{ marginRight: '0.25rem' }} />Sender Information (External)
                   </p>
                   <div className="form-group">
                     <label className="form-label">Sender Name <span className="required-mark">*</span></label>
@@ -798,50 +605,23 @@ const ReceptionistDashboard = ({
                     )}
                     <p className="field-hint">Identifies who submitted the document and appears in tracking details.</p>
                   </div>
-                  <div className="form-grid">
-                    <div className="form-group">
-                      <label className="form-label"><Phone size={12} style={{ marginRight: '0.25rem' }} />Contact</label>
-                      <input className="form-input" type="tel" value={receiveForm.senderContact}
-                        onChange={e => setReceiveForm({ ...receiveForm, senderContact: e.target.value })}
-                        placeholder="09XX-XXX-XXXX" />
-                      <p className="field-hint">Used for SMS tracking updates when sender notifications are enabled.</p>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label"><Mail size={12} style={{ marginRight: '0.25rem' }} />Email</label>
-                      <input className="form-input" type="email" value={receiveForm.senderEmail}
-                        onChange={e => setReceiveForm({ ...receiveForm, senderEmail: e.target.value })}
-                        placeholder="email@example.com" />
-                      <p className="field-hint">Used for email updates about the document status.</p>
-                    </div>
+                  <div className="form-group">
+                    <label className="form-label"><Phone size={12} style={{ marginRight: '0.25rem' }} />Contact Number (Optional)</label>
+                    <input className="form-input" type="tel" value={receiveForm.senderContact}
+                      onChange={e => setReceiveForm({ ...receiveForm, senderContact: e.target.value })}
+                      placeholder="09XX-XXX-XXXX" />
+                    <p className="field-hint">Used for SMS tracking updates.</p>
                   </div>
-                  <div className="sender-notification-options">
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={receiveForm.notifySender}
-                        onChange={e => setReceiveForm({ ...receiveForm, notifySender: e.target.checked })}
-                      />
-                      Send tracking number and status updates to sender
-                    </label>
-                    <div className="sender-channel-options">
-                      <label className="checkbox-chip">
-                        <input
-                          type="checkbox"
-                          checked={(receiveForm.senderNotificationChannels || []).includes('sms')}
-                          onChange={() => toggleSenderChannel('sms')}
-                        />
-                        SMS
-                      </label>
-                      <label className="checkbox-chip">
-                        <input
-                          type="checkbox"
-                          checked={(receiveForm.senderNotificationChannels || []).includes('email')}
-                          onChange={() => toggleSenderChannel('email')}
-                        />
-                        Email
-                      </label>
-                    </div>
-                    <p className="field-hint">Choose how the sender will receive the tracking number and workflow updates.</p>
+                  <div className="form-group">
+                    <label className="form-label">Sender's Organization / Office (Optional)</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={receiveForm.originOfficeOther}
+                      onChange={e => setReceiveForm({ ...receiveForm, originOfficeOther: e.target.value })}
+                      placeholder="School, agency, barangay, or organization"
+                    />
+                    <p className="field-hint">Optional: Name of external office, company, or barangay sending the document.</p>
                   </div>
                   <div className="form-group">
                     <label className="form-label"><MessageSquare size={12} style={{ marginRight: '0.25rem' }} />Remarks</label>
@@ -896,80 +676,6 @@ const ReceptionistDashboard = ({
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setShowReceiveForm(false)}>Cancel</button>
                 <button type="submit" className="btn btn-success"><Inbox size={16} /> Register Document</button>
-              </div>
-            </form>
-          </div>
-        </ModalOverlay>
-      )}
-
-      {/* Route Document Modal */}
-      {showRouteForm && (
-        <ModalOverlay onClose={() => setShowRouteForm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Route Document</h2>
-              <button className="btn-icon" onClick={() => setShowRouteForm(false)}><X size={18} /></button>
-            </div>
-            <form onSubmit={handleRoute}>
-              <div className="modal-body">
-                <div className="form-group">
-                  <label className="form-label">Select Document</label>
-                  <select className="form-select" value={routeForm.documentId}
-                    onChange={e => setRouteForm({ ...routeForm, documentId: e.target.value })} required>
-                    <option value="">Choose a document to route</option>
-                    {routableDocuments.map(d => {
-                      const pInfo = getPriorityInfo(d.priorityLevel);
-                      return (
-                        <option key={d.id} value={d.id}>
-                          [{getWorkflowStatus(d)}] [{pInfo.label}] {d.trackingNumber} - {d.subject}
-                        </option>
-                      );
-                    })}
-                  </select>
-                  <p className="field-hint">Only approved documents in your office that can be routed are listed here.</p>
-                </div>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">From Office</label>
-                    <select className="form-select" value={routeForm.fromOfficeId}
-                      onChange={e => setRouteForm({ ...routeForm, fromOfficeId: e.target.value })}
-                      disabled>
-                      {offices
-                        .filter(o => o.id === routeForm.fromOfficeId)
-                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    <p className="field-hint">Your assigned office is the sending office for this route.</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">To Office</label>
-                    <select className="form-select" value={routeForm.toOfficeId}
-                      onChange={e => setRouteForm({ ...routeForm, toOfficeId: e.target.value })}>
-                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    <p className="field-hint">The office that must receive and acknowledge the document next.</p>
-                  </div>
-                </div>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">Transmission Type</label>
-                    <select className="form-select" value={routeForm.transmissionType}
-                      onChange={e => setRouteForm({ ...routeForm, transmissionType: e.target.value })}>
-                      <option>Internal</option>
-                      <option>External</option>
-                    </select>
-                    <p className="field-hint">Marks whether the transmission stays inside the municipality or leaves it.</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Date</label>
-                    <input className="form-input" type="date" value={routeForm.transmissionDate}
-                      onChange={e => setRouteForm({ ...routeForm, transmissionDate: e.target.value })} required />
-                    <p className="field-hint">The official date recorded for the routing action.</p>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowRouteForm(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary"><Send size={16} /> Route Document</button>
               </div>
             </form>
           </div>

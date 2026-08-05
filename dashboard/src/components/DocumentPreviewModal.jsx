@@ -34,9 +34,12 @@ const DocumentPreviewModal = ({
   users = [],
   documentTypes = [],
   transmissions = [],
+  currentUser,
   onClose,
 }) => {
   if (!doc) return null;
+
+  const currentRole = currentUser?.role?.toLowerCase() || '';
 
   const getOfficeName = (officeId) =>
     offices.find((office) => office.id === officeId)?.name || officeId || 'Unknown Office';
@@ -141,15 +144,19 @@ const DocumentPreviewModal = ({
                     || (doc.destinationOfficeId ? getOfficeName(doc.destinationOfficeId) : '-')}
                 </strong>
               </div>
-              <div className="detail-pair"><span>RFID Tag</span><strong>{doc.rfidTag || '-'}</strong></div>
-              <div className="detail-pair">
-                <span>Last Detected</span>
-                <strong>
-                  {doc.lastDetectedOfficeId
-                    ? `${getOfficeName(doc.lastDetectedOfficeId)} - ${formatDateTime(doc.lastDetectedAt)}`
-                    : '-'}
-                </strong>
-              </div>
+              {currentRole !== 'receptionist' && (
+                <>
+                  <div className="detail-pair"><span>RFID Tag</span><strong>{doc.rfidTag || '-'}</strong></div>
+                  <div className="detail-pair">
+                    <span>Last Detected</span>
+                    <strong>
+                      {doc.lastDetectedOfficeId
+                        ? `${getOfficeName(doc.lastDetectedOfficeId)} - ${formatDateTime(doc.lastDetectedAt)}`
+                        : '-'}
+                    </strong>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="document-detail-section">

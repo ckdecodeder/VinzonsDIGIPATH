@@ -1314,8 +1314,12 @@ const DocumentList = ({
                     <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc)}</strong></div>
                     <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
                     <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
-                    <div className="detail-pair"><span>RFID Tag</span><strong>{doc.rfidTag || '-'}</strong></div>
-                    <div className="detail-pair"><span>Last Detected</span><strong>{doc.lastDetectedOfficeId ? `${getOfficeName(doc.lastDetectedOfficeId)} - ${formatDateTime(doc.lastDetectedAt)}` : '-'}</strong></div>
+                    {currentRole !== 'receptionist' && (
+                      <>
+                        <div className="detail-pair"><span>RFID Tag</span><strong>{doc.rfidTag || '-'}</strong></div>
+                        <div className="detail-pair"><span>Last Detected</span><strong>{doc.lastDetectedOfficeId ? `${getOfficeName(doc.lastDetectedOfficeId)} - ${formatDateTime(doc.lastDetectedAt)}` : '-'}</strong></div>
+                      </>
+                    )}
                   </div>
 
                   <div className="document-detail-section">
