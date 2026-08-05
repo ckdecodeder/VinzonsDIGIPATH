@@ -20,7 +20,7 @@ __pycache__/
 local_scans.db
 scanned_files/
 
-# Cursor / editor local files
+# Local editor / agent files
 .cursor/
 .cursorrules
 .cursorignore
