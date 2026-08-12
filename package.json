@@ -1,0 +1,20 @@
+{
+  "name": "vinzons-digipath",
+  "private": true,
+  "scripts": {
+    "network:sync": "node scripts/sync-network-config.js",
+    "tunnel:token": "powershell -ExecutionPolicy Bypass -File scripts/fetch-devtunnel-token.ps1",
+    "install:all": "npm --prefix backend install && npm --prefix dashboard install",
+    "start": "node scripts/start-all.js",
+    "dev": "node scripts/dev.js",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:dashboard": "npm --prefix dashboard run dev",
+    "autostart:install": "powershell -ExecutionPolicy Bypass -File scripts/install-windows-autostart.ps1",
+    "autostart:remove": "powershell -ExecutionPolicy Bypass -File scripts/remove-windows-autostart.ps1",
+    "build": "npm --prefix dashboard run build",
+    "seed": "npm --prefix backend run seed",
+    "migrate": "npm --prefix backend run migrate",
+    "smoke": "npm --prefix backend run smoke",
+    "audit:roles": "npm --prefix backend run audit:roles"
+  }
+}

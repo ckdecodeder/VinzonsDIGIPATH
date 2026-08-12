@@ -1,0 +1,191 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model archives {
+  id                  String  @id @db.VarChar(255)
+  documentId          String?
+  userId              String?
+  date                String?
+  statusBeforeArchive String?
+  createdAt           String?
+  updatedAt           String?
+}
+
+model commands {
+  id               String  @id @db.VarChar(255)
+  deviceId         String?
+  command          String?
+  status           String? @default("Pending")
+  payload          Json?   @default("{}")
+  requestedBy      String?
+  resultDocumentId String?
+  errorMessage     String?
+  executedAt       String?
+  createdAt        String?
+}
+
+model device_events {
+  id             String  @id @db.VarChar(255)
+  deviceId       String?
+  eventType      String?
+  documentId     String?
+  officeId       String?
+  rfidTag        String?
+  status         String?
+  signalStrength String?
+  details        String?
+  payload        Json?   @default("{}")
+  recordedBy     String?
+  timestamp      String?
+}
+
+model devices {
+  id           String  @id @db.VarChar(255)
+  name         String?
+  model        String?
+  type         String?
+  status       String?
+  ip           String?
+  location     String?
+  lastActive   String?
+  firmware     String?
+  serialNumber String?
+  resolution   String?
+  assignedTo   String?
+  scanCount    Int?    @default(0)
+  createdAt    String?
+  updatedAt    String?
+}
+
+model document_types {
+  id        String  @id @db.VarChar(255)
+  category  String?
+  createdAt String?
+  updatedAt String?
+}
+
+model documents {
+  id                         String   @id @db.VarChar(255)
+  trackingNumber             String?  @unique
+  subject                    String?
+  documentDirection          String?
+  status                     String?
+  preTransitStatus           String?
+  intakeStatus               String?
+  verifiedBy                 String?
+  verifiedAt                 String?
+  rejectionReason            String?
+  priorityLevel              String?
+  dateReceived               String?
+  documentTypeId             String?
+  documentTypeOther          String?
+  originOfficeId             String?
+  originOfficeOther          String?
+  currentOfficeId            String?
+  destinationOfficeId        String?
+  destinationOfficeOther     String?
+  rfidTag                    String?
+  lastDetectedOfficeId       String?
+  lastDetectedAt             String?
+  lastRoutedAt               String?
+  completedAt                String?
+  archivedAt                 String?
+  senderName                 String?
+  senderContact              String?
+  senderEmail                String?
+  notifySender               Boolean? @default(true)
+  senderNotificationConsent  Boolean? @default(true)
+  senderNotificationChannels Json?    @default("[]")
+  remarks                    String?
+  scannedText                String?
+  scannedImageUrl            String?
+  scannedFiles               Json?    @default("[]")
+  timeline                   Json?    @default("[]")
+  createdAt                  String?
+  updatedAt                  String?
+}
+
+model logs {
+  id          String  @id @db.VarChar(255)
+  action      String?
+  userId      String?
+  details     String?
+  referenceId String?
+  timestamp   String?
+}
+
+model notifications {
+  id            String  @id @db.VarChar(255)
+  userId        String?
+  officeId      String?
+  role          String?
+  title         String?
+  message       String?
+  type          String?
+  referenceType String?
+  referenceId   String?
+  page          String?
+  readBy        Json?   @default("[]")
+  createdAt     String?
+}
+
+model offices {
+  id        String  @id @db.VarChar(255)
+  name      String  @db.VarChar(255)
+  acronym   String? @db.VarChar(255)
+  type      String? @db.VarChar(255)
+  headName  String? @db.VarChar(255)
+  headTitle String? @db.VarChar(255)
+  contact   String? @db.VarChar(255)
+  email     String? @db.VarChar(255)
+  createdAt String? @db.VarChar(255)
+  updatedAt String? @db.VarChar(255)
+}
+
+model sender_notifications {
+  id         String  @id @db.VarChar(255)
+  documentId String?
+  channel    String?
+  recipient  String?
+  subject    String?
+  message    String?
+  status     String? @default("pending")
+  error      String?
+  metadata   Json?   @default("{}")
+  createdAt  String?
+  sentAt     String?
+}
+
+model transmissions {
+  id                     String  @id @db.VarChar(255)
+  documentId             String?
+  fromOfficeId           String?
+  toOfficeId             String?
+  sentBy                 String?
+  receivedBy             String?
+  receivedAt             String?
+  transmissionDate       String?
+  transmissionType       String?
+  acknowledgementRemarks String?
+  createdAt              String?
+  updatedAt              String?
+}
+
+model users {
+  id       String  @id @db.VarChar(255)
+  username String  @unique @db.VarChar(255)
+  password String  @db.VarChar(255)
+  fname    String  @db.VarChar(255)
+  lname    String  @db.VarChar(255)
+  mname    String? @db.VarChar(255)
+  role     String? @default("Receptionist") @db.VarChar(255)
+  officeId String? @db.VarChar(255)
+  contact  String? @db.VarChar(255)
+  email    String? @db.VarChar(255)
+}

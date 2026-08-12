@@ -1,0 +1,17 @@
+[Unit]
+Description=DigiPath WebSocket Scanner Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=digipath
+WorkingDirectory=/home/digipath/Desktop/VinzonsDIGIPATH-Pi
+ExecStartPre=/bin/bash /home/digipath/Desktop/VinzonsDIGIPATH-Pi/scripts/pi-bootstrap-ws.sh
+ExecStart=/bin/bash /home/digipath/Desktop/VinzonsDIGIPATH-Pi/scripts/pi-run-ws-scanner.sh
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,3512 @@
+[{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39132"
+  },
+  "id": "NOTIF-141508-588",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-1483 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.508Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39131"
+  },
+  "id": "NOTIF-141496-327",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-1483 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.496Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39134"
+  },
+  "id": "NOTIF-141637-138",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document rejected",
+  "message": "TRK-2026-1483 was rejected: Role audit rejection reason.",
+  "type": "danger",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.637Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39136"
+  },
+  "id": "NOTIF-141665-751",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document resubmitted",
+  "message": "TRK-2026-1483 was corrected and needs review again.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.665Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39137"
+  },
+  "id": "NOTIF-141665-725",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document resubmitted",
+  "message": "TRK-2026-1483 was corrected and needs review again.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.665Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39139"
+  },
+  "id": "NOTIF-141685-766",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-1483 can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.685Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba3913c"
+  },
+  "id": "NOTIF-141729-387",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-1483 was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-141704-797",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.729Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39140"
+  },
+  "id": "NOTIF-141799-289",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-1483 was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-141704-797",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.799Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39142"
+  },
+  "id": "NOTIF-141800-775",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-1483 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-141704-797",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.800Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39141"
+  },
+  "id": "NOTIF-141800-450",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-1483 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-141704-797",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.800Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39144"
+  },
+  "id": "NOTIF-141855-374",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Document processing",
+  "message": "TRK-2026-1483 is now Processing.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.855Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39146"
+  },
+  "id": "NOTIF-141871-959",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Document signed",
+  "message": "TRK-2026-1483 is now Signed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.871Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39148"
+  },
+  "id": "NOTIF-141874-592",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document ready for archive",
+  "message": "TRK-2026-1483 has been signed and can be archived.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.874Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba39147"
+  },
+  "id": "NOTIF-141874-47",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document ready for archive",
+  "message": "TRK-2026-1483 has been signed and can be archived.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-141483-718",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.874Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde5d48dacf600ba3914b"
+  },
+  "id": "NOTIF-141894-797",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-1483 was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-141887-821",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:41.894Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba39152"
+  },
+  "id": "NOTIF-148564-874",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document registered",
+  "message": "TRK-SMOKE-1778114148419 is ready for office workflow.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114148419",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.564Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba39155"
+  },
+  "id": "NOTIF-148600-686",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-SMOKE-1778114148419 was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-SMOKE-1778114148419",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.600Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba39157"
+  },
+  "id": "NOTIF-148623-950",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-SMOKE-1778114148419 was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-SMOKE-1778114148419",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.623Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba39159"
+  },
+  "id": "NOTIF-148628-609",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-SMOKE-1778114148419 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-SMOKE-1778114148419",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.628Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba39158"
+  },
+  "id": "NOTIF-148627-133",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-SMOKE-1778114148419 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-SMOKE-1778114148419",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.627Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba3915b"
+  },
+  "id": "NOTIF-148647-64",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Processing started",
+  "message": "TRK-SMOKE-1778114148419: Smoke test started processing.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114148419",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.647Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba3915c"
+  },
+  "id": "NOTIF-148647-965",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing started",
+  "message": "TRK-SMOKE-1778114148419: Smoke test started processing.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114148419",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.647Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba3915e"
+  },
+  "id": "NOTIF-148662-812",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Processing completed / signed",
+  "message": "TRK-SMOKE-1778114148419: Smoke test completed processing.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114148419",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.663Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba3915f"
+  },
+  "id": "NOTIF-148663-131",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing completed / signed",
+  "message": "TRK-SMOKE-1778114148419: Smoke test completed processing.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114148419",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.663Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba39160"
+  },
+  "id": "NOTIF-148665-940",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Document completed",
+  "message": "TRK-SMOKE-1778114148419 is signed and ready for archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114148419",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.665Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbde6448dacf600ba39163"
+  },
+  "id": "NOTIF-148682-4",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-SMOKE-1778114148419 was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-SMOKE-1778114148419",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:35:48.682Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdeb2bca769a3e4038b27"
+  },
+  "id": "NOTIF-226422-850",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-6409 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-226409-224",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:06.422Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdeb2bca769a3e4038b2c"
+  },
+  "id": "NOTIF-226645-860",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document resubmitted",
+  "message": "TRK-2026-6409 was corrected and needs review again.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-226409-224",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:06.645Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdeb2bca769a3e4038b31"
+  },
+  "id": "NOTIF-226731-417",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-6409 was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-226701-166",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:06.731Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdeb2bca769a3e4038b37"
+  },
+  "id": "NOTIF-226820-556",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-6409 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-226701-166",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:06.820Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdeb2bca769a3e4038b39"
+  },
+  "id": "NOTIF-226864-535",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Document processing",
+  "message": "TRK-2026-6409 is now Processing.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-226409-224",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:06.864Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdeb2bca769a3e4038b3b"
+  },
+  "id": "NOTIF-226899-409",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Document signed",
+  "message": "TRK-2026-6409 is now Signed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-226409-224",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:06.899Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdeb2bca769a3e4038b3d"
+  },
+  "id": "NOTIF-226903-357",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document ready for archive",
+  "message": "TRK-2026-6409 has been signed and can be archived.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-226409-224",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:06.903Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdebbbca769a3e4038b52"
+  },
+  "id": "NOTIF-235189-544",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-SMOKE-1778114234992 was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-SMOKE-1778114234992",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:15.189Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdebbbca769a3e4038b56"
+  },
+  "id": "NOTIF-235218-606",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-SMOKE-1778114234992 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-SMOKE-1778114234992",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:15.218Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdebbbca769a3e4038b59"
+  },
+  "id": "NOTIF-235238-732",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing started",
+  "message": "TRK-SMOKE-1778114234992: Smoke test started processing.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114234992",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:15.238Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdebbbca769a3e4038b5c"
+  },
+  "id": "NOTIF-235255-1",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing completed / signed",
+  "message": "TRK-SMOKE-1778114234992: Smoke test completed processing.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114234992",
+  "page": "archives",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:15.255Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbdebbbca769a3e4038b5d"
+  },
+  "id": "NOTIF-235256-669",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Document completed",
+  "message": "TRK-SMOKE-1778114234992 is signed and ready for archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-SMOKE-1778114234992",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T00:37:15.256Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4c71b261bbbeee0e2a0"
+  },
+  "id": "NOTIF-879611-220",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-7596 was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-847845-39",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:19.611Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4c71b261bbbeee0e2a2"
+  },
+  "id": "NOTIF-879618-454",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-7596 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-847845-39",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:19.618Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4c71b261bbbeee0e2a1"
+  },
+  "id": "NOTIF-879617-32",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-7596 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-847845-39",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:19.617Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4cf1b261bbbeee0e2a4"
+  },
+  "id": "NOTIF-887354-873",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-6263 was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-906486-713",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:27.354Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4cf1b261bbbeee0e2a5"
+  },
+  "id": "NOTIF-887358-884",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-6263 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-906486-713",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:27.358Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4cf1b261bbbeee0e2a6"
+  },
+  "id": "NOTIF-887359-836",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-6263 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-906486-713",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:27.359Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4d31b261bbbeee0e2a8"
+  },
+  "id": "NOTIF-891953-71",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-9213 was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-929461-443",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:31.953Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4d31b261bbbeee0e2aa"
+  },
+  "id": "NOTIF-891959-113",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-9213 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-929461-443",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:31.959Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fbf4d31b261bbbeee0e2a9"
+  },
+  "id": "NOTIF-891959-652",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-9213 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-929461-443",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T02:11:31.959Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc2c4dac77603af92c53e7"
+  },
+  "id": "NOTIF-093655-942",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-9205 was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-093461-905",
+  "page": "transmissions",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T06:08:13.655Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc2e25ac77603af92c53eb"
+  },
+  "id": "NOTIF-565535-513",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOV3ERN3-LK71 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-565487-244",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T06:16:05.535Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc2e25ac77603af92c53ec"
+  },
+  "id": "NOTIF-565539-570",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOV3ERN3-LK71 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-565487-244",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T06:16:05.539Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc2f30ac77603af92c53f0"
+  },
+  "id": "NOTIF-832054-650",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOV3KHB2-YXOH needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-832030-874",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T06:20:32.054Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc2f30ac77603af92c53ef"
+  },
+  "id": "NOTIF-832053-421",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOV3KHB2-YXOH needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-832030-874",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T06:20:32.053Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc306aac77603af92c53f4"
+  },
+  "id": "NOTIF-146161-699",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOV3ERN3-LK71 can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-565487-244",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T06:25:46.161Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc39a3ac77603af92c53f8"
+  },
+  "id": "NOTIF-507161-334",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOV55TFG-T0M9 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-507132-545",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T07:05:07.161Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fc39a3ac77603af92c53f9"
+  },
+  "id": "NOTIF-507164-862",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOV55TFG-T0M9 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-507132-545",
+  "page": "documents",
+  "readBy": [
+    "USR-001"
+  ],
+  "createdAt": "2026-05-07T07:05:07.164Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fca8d702c6eaeb86ddcd00"
+  },
+  "id": "NOTIF-975020-126",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document rejected",
+  "message": "TRK-2026-MOV55TFG-T0M9 was rejected: Pangit, mali grammar",
+  "type": "danger",
+  "referenceType": "document",
+  "referenceId": "DOC-507132-545",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-07T14:59:35.020Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd47e0d9b7ebd01a966571"
+  },
+  "id": "NOTIF-688740-177",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWACM9U-Q69Y needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:18:08.740Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd47e0d9b7ebd01a966572"
+  },
+  "id": "NOTIF-688741-331",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWACM9U-Q69Y needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:18:08.741Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd48d4d9b7ebd01a966577"
+  },
+  "id": "NOTIF-932862-658",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOWACM9U-Q69Y can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:22:12.862Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd48ead9b7ebd01a96657c"
+  },
+  "id": "NOTIF-954243-477",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing started",
+  "message": "TRK-2026-MOWACM9U-Q69Y: okay",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:22:34.243Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd48ead9b7ebd01a96657b"
+  },
+  "id": "NOTIF-954241-370",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Processing started",
+  "message": "TRK-2026-MOWACM9U-Q69Y: okay",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:22:34.241Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd48f2d9b7ebd01a966581"
+  },
+  "id": "NOTIF-962143-273",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing completed / signed",
+  "message": "TRK-2026-MOWACM9U-Q69Y: okay",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:22:42.143Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd48f2d9b7ebd01a966580"
+  },
+  "id": "NOTIF-962142-533",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Processing completed / signed",
+  "message": "TRK-2026-MOWACM9U-Q69Y: okay",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:22:42.142Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd48f2d9b7ebd01a966582"
+  },
+  "id": "NOTIF-962152-269",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document completed",
+  "message": "TRK-2026-MOWACM9U-Q69Y is signed and ready for archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-688706-698",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:22:42.152Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd48f4d9b7ebd01a966587"
+  },
+  "id": "NOTIF-964238-208",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-MOWACM9U-Q69Y was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-964222-323",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:22:44.238Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd4908d9b7ebd01a96658b"
+  },
+  "id": "NOTIF-984434-229",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-9205 was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-093461-905",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:23:04.434Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd4908d9b7ebd01a96658c"
+  },
+  "id": "NOTIF-984439-90",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-9205 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-093461-905",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:23:04.439Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd4908d9b7ebd01a96658d"
+  },
+  "id": "NOTIF-984440-957",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-9205 was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-093461-905",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:23:04.440Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd4bfed9b7ebd01a966594"
+  },
+  "id": "NOTIF-742590-154",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWAZ7FS-6GWL needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-742568-29",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:35:42.590Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd4bfed9b7ebd01a966593"
+  },
+  "id": "NOTIF-742589-741",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWAZ7FS-6GWL needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-742568-29",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T02:35:42.589Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fd5713d9b7ebd01a9665a0"
+  },
+  "id": "NOTIF-579414-876",
+  "userId": null,
+  "officeId": "OFF-004",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-MOV3ERN3-LK71 was routed from Mayor's Office.",
+  "type": "danger",
+  "referenceType": "transmission",
+  "referenceId": "TRN-579379-934",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T03:22:59.414Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdb73ad9b7ebd01a9665a7"
+  },
+  "id": "NOTIF-194895-619",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-MOV3ERN3-LK71 was received by Municipal Treasurer.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-579379-934",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T10:13:14.895Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdb73ad9b7ebd01a9665a8"
+  },
+  "id": "NOTIF-194897-355",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOV3ERN3-LK71 was acknowledged at Municipal Treasurer.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-579379-934",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T10:13:14.897Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde64bd9b7ebd01a9665ba"
+  },
+  "id": "NOTIF-243467-150",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWYHUI7-O08Q needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:34:03.467Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde64bd9b7ebd01a9665b9"
+  },
+  "id": "NOTIF-243466-488",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWYHUI7-O08Q needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:34:03.466Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde76dd9b7ebd01a9665c1"
+  },
+  "id": "NOTIF-533092-417",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOWYHUI7-O08Q can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:38:53.092Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde783d9b7ebd01a9665c6"
+  },
+  "id": "NOTIF-555776-748",
+  "userId": null,
+  "officeId": "OFF-006",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-MOWYHUI7-O08Q was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-555710-179",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:39:15.776Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde794d9b7ebd01a9665ca"
+  },
+  "id": "NOTIF-572999-138",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOWAZ7FS-6GWL can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-742568-29",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:39:32.999Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde7d9d9b7ebd01a9665ce"
+  },
+  "id": "NOTIF-641871-55",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-MOWYHUI7-O08Q was received by Municipal Health Office.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-555710-179",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:40:41.871Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde7d9d9b7ebd01a9665d0"
+  },
+  "id": "NOTIF-641875-202",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOWYHUI7-O08Q was acknowledged at Municipal Health Office.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-555710-179",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:40:41.875Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fde7d9d9b7ebd01a9665cf"
+  },
+  "id": "NOTIF-641874-961",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOWYHUI7-O08Q was acknowledged at Municipal Health Office.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-555710-179",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:40:41.874Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeaa7d9b7ebd01a9665d6"
+  },
+  "id": "NOTIF-359260-303",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWZ5RGO-CH6S needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-359240-558",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:52:39.260Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeaa7d9b7ebd01a9665d7"
+  },
+  "id": "NOTIF-359260-383",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOWZ5RGO-CH6S needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-359240-558",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:52:39.260Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeaf9d9b7ebd01a9665dd"
+  },
+  "id": "NOTIF-441965-755",
+  "userId": null,
+  "officeId": "OFF-005",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-MOWYHUI7-O08Q was routed from Municipal Health Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-441923-687",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:01.965Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb00d9b7ebd01a9665e1"
+  },
+  "id": "NOTIF-448602-914",
+  "userId": null,
+  "officeId": "OFF-006",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-MOWYHUI7-O08Q was received by Municipal Assessor.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-441923-687",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:08.602Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb00d9b7ebd01a9665e2"
+  },
+  "id": "NOTIF-448606-75",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOWYHUI7-O08Q was acknowledged at Municipal Assessor.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-441923-687",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:08.606Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb00d9b7ebd01a9665e3"
+  },
+  "id": "NOTIF-448607-677",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOWYHUI7-O08Q was acknowledged at Municipal Assessor.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-441923-687",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:08.607Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb07d9b7ebd01a9665e8"
+  },
+  "id": "NOTIF-455941-473",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing started",
+  "message": "TRK-2026-MOWYHUI7-O08Q: Processing started",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:15.941Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb07d9b7ebd01a9665e7"
+  },
+  "id": "NOTIF-455935-110",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Processing started",
+  "message": "TRK-2026-MOWYHUI7-O08Q: Processing started",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:15.935Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb0fd9b7ebd01a9665ec"
+  },
+  "id": "NOTIF-463284-955",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Processing completed / signed",
+  "message": "TRK-2026-MOWYHUI7-O08Q: Processing completed / signed",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:23.284Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb0fd9b7ebd01a9665ed"
+  },
+  "id": "NOTIF-463285-670",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing completed / signed",
+  "message": "TRK-2026-MOWYHUI7-O08Q: Processing completed / signed",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:23.285Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb0fd9b7ebd01a9665ee"
+  },
+  "id": "NOTIF-463288-852",
+  "userId": null,
+  "officeId": "OFF-005",
+  "role": null,
+  "title": "Document completed",
+  "message": "TRK-2026-MOWYHUI7-O08Q is signed and ready for archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-243439-334",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:54:23.288Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdeb55d9b7ebd01a9665f2"
+  },
+  "id": "NOTIF-533230-673",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document rejected",
+  "message": "TRK-2026-MOWZ5RGO-CH6S was rejected: katamad",
+  "type": "danger",
+  "referenceType": "document",
+  "referenceId": "DOC-359240-558",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T13:55:33.230Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9c32a6359c434886ad1"
+  },
+  "id": "NOTIF-227156-525",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-MOWYHUI7-O08Q was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-227125-840",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:07.156Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9cc2a6359c434886ad5"
+  },
+  "id": "NOTIF-236427-613",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-2790 can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:16.427Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9d92a6359c434886ad7"
+  },
+  "id": "NOTIF-249022-301",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Processing started",
+  "message": "TRK-2026-2790: Processing started",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:29.022Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9d92a6359c434886ad8"
+  },
+  "id": "NOTIF-249023-272",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Processing started",
+  "message": "TRK-2026-2790: Processing started",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:29.023Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9df2a6359c434886adb"
+  },
+  "id": "NOTIF-255164-950",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Marked for signature",
+  "message": "TRK-2026-2790: Marked for signature",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:35.164Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9df2a6359c434886ada"
+  },
+  "id": "NOTIF-255163-600",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Marked for signature",
+  "message": "TRK-2026-2790: Marked for signature",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:35.163Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9e32a6359c434886add"
+  },
+  "id": "NOTIF-259158-669",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Marked for filing",
+  "message": "TRK-2026-2790: Marked for filing",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:39.158Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9e32a6359c434886ade"
+  },
+  "id": "NOTIF-259159-2",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Marked for filing",
+  "message": "TRK-2026-2790: Marked for filing",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:39.159Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9e32a6359c434886adf"
+  },
+  "id": "NOTIF-259162-94",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document ready for filing",
+  "message": "TRK-2026-2790 is marked for filing and ready for archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-612790-458",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:39.162Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdf9e52a6359c434886ae2"
+  },
+  "id": "NOTIF-261402-982",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-2790 was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-261390-859",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-08T14:57:41.402Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdfc722a6359c434886ae7"
+  },
+  "id": "NOTIF-914265-105",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOX1VE12-2QCQ needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-914118-495",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T15:08:34.265Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdfc722a6359c434886ae6"
+  },
+  "id": "NOTIF-914264-160",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOX1VE12-2QCQ needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-914118-495",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-08T15:08:34.264Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdfda22a6359c434886aec"
+  },
+  "id": "NOTIF-218178-867",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-MOWAZ7FS-6GWL was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-218147-171",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T15:13:38.178Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdfda62a6359c434886af0"
+  },
+  "id": "NOTIF-222487-684",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-MOWAZ7FS-6GWL was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-218147-171",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T15:13:42.487Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdfda62a6359c434886af2"
+  },
+  "id": "NOTIF-222491-274",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOWAZ7FS-6GWL was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-218147-171",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T15:13:42.491Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fdfda62a6359c434886af1"
+  },
+  "id": "NOTIF-222490-618",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOWAZ7FS-6GWL was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-218147-171",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-08T15:13:42.490Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff209537cb8f8c8681d1b8"
+  },
+  "id": "NOTIF-701884-135",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document resubmitted",
+  "message": "TRK-2026-MOWZ5RGO-CH6S was corrected and needs review again.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-359240-558",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T11:55:01.884Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff209537cb8f8c8681d1b9"
+  },
+  "id": "NOTIF-701886-233",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document resubmitted",
+  "message": "TRK-2026-MOWZ5RGO-CH6S was corrected and needs review again.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-359240-558",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T11:55:01.886Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff288237cb8f8c8681d220"
+  },
+  "id": "NOTIF-730581-622",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYBLTZ9-LNHU needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-730565-25",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T12:28:50.581Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff288237cb8f8c8681d21f"
+  },
+  "id": "NOTIF-730580-98",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYBLTZ9-LNHU needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-730565-25",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T12:28:50.580Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff323437cb8f8c8681d225"
+  },
+  "id": "NOTIF-212003-576",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYD30NM-356S needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-211986-663",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T13:10:12.003Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff323437cb8f8c8681d226"
+  },
+  "id": "NOTIF-212004-487",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYD30NM-356S needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-211986-663",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T13:10:12.004Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff327437cb8f8c8681d22a"
+  },
+  "id": "NOTIF-276677-269",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYD4EK3-GGPG needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-276659-130",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T13:11:16.677Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff327437cb8f8c8681d22b"
+  },
+  "id": "NOTIF-276679-325",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYD4EK3-GGPG needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-276659-130",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T13:11:16.679Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3e210748d5529efa1120"
+  },
+  "id": "NOTIF-265273-312",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYEWGKR-ND1T needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-265259-623",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:01:05.273Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3e210748d5529efa111f"
+  },
+  "id": "NOTIF-265272-927",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYEWGKR-ND1T needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-265259-623",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:01:05.272Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3e210748d5529efa1135"
+  },
+  "id": "NOTIF-265524-935",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document rejected",
+  "message": "TRK-2026-MOYEWGKR-ND1T was rejected: Role audit rejection reason.",
+  "type": "danger",
+  "referenceType": "document",
+  "referenceId": "DOC-265259-623",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:01:05.524Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3e210748d5529efa1137"
+  },
+  "id": "NOTIF-265585-666",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document resubmitted",
+  "message": "TRK-2026-MOYEWGKR-ND1T was corrected and needs review again.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-265259-623",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:01:05.585Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3e210748d5529efa1138"
+  },
+  "id": "NOTIF-265585-766",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document resubmitted",
+  "message": "TRK-2026-MOYEWGKR-ND1T was corrected and needs review again.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-265259-623",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:01:05.585Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3e210748d5529efa113b"
+  },
+  "id": "NOTIF-265625-632",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOYEWGKR-ND1T can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-265259-623",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:01:05.625Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3e210748d5529efa1141"
+  },
+  "id": "NOTIF-265690-783",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-MOYEWGKR-ND1T was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-265666-956",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:01:05.690Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3f510047c9ee6c90df34"
+  },
+  "id": "NOTIF-569175-288",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYF2Z2C-7D97 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-569156-747",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:06:09.175Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff3f510047c9ee6c90df35"
+  },
+  "id": "NOTIF-569176-555",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYF2Z2C-7D97 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-569156-747",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T14:06:09.176Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff659a0047c9ee6c90df3a"
+  },
+  "id": "NOTIF-370436-26",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-MOYEWGKR-ND1T was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-265666-956",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-09T16:49:30.436Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff659a0047c9ee6c90df3b"
+  },
+  "id": "NOTIF-370441-484",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOYEWGKR-ND1T was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-265666-956",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-09T16:49:30.441Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff659a0047c9ee6c90df3c"
+  },
+  "id": "NOTIF-370442-387",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOYEWGKR-ND1T was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-265666-956",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-09T16:49:30.442Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff68690047c9ee6c90df44"
+  },
+  "id": "NOTIF-089228-30",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYLCGDU-VZWK needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-089202-440",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T17:01:29.228Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff68690047c9ee6c90df45"
+  },
+  "id": "NOTIF-089230-780",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOYLCGDU-VZWK needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-089202-440",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T17:01:29.230Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ff839ca0bd143881f07723"
+  },
+  "id": "NOTIF-052838-494",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOYLCGDU-VZWK can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-089202-440",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-09T18:57:32.839Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe4fea0bd143881f07728"
+  },
+  "id": "NOTIF-982678-604",
+  "userId": null,
+  "officeId": "OFF-007",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-MOYLCGDU-VZWK was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-982654-601",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T01:53:02.678Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe529a0bd143881f0772c"
+  },
+  "id": "NOTIF-025876-987",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-MOYLCGDU-VZWK was received by Municipal Social Welfare & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-982654-601",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T01:53:45.876Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe529a0bd143881f0772e"
+  },
+  "id": "NOTIF-025882-818",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOYLCGDU-VZWK was acknowledged at Municipal Social Welfare & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-982654-601",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T01:53:45.882Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe529a0bd143881f0772d"
+  },
+  "id": "NOTIF-025881-69",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOYLCGDU-VZWK was acknowledged at Municipal Social Welfare & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-982654-601",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T01:53:45.881Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe786a0bd143881f0773b"
+  },
+  "id": "NOTIF-630879-870",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ4PXOY-7WGW needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-630866-277",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:03:50.879Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe786a0bd143881f0773c"
+  },
+  "id": "NOTIF-630880-656",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ4PXOY-7WGW needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-630866-277",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:03:50.880Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe7b0a0bd143881f07741"
+  },
+  "id": "NOTIF-672806-473",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ4QU1K-A83I needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-672792-347",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:04:32.806Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe7b0a0bd143881f07742"
+  },
+  "id": "NOTIF-672807-55",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ4QU1K-A83I needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-672792-347",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:04:32.807Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69ffe857a0bd143881f07746"
+  },
+  "id": "NOTIF-839003-453",
+  "userId": null,
+  "officeId": "OFF-008",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOZ4QU1K-A83I can now be routed.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-672792-347",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:07:19.003Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff02e0fa5a1395b78f46d"
+  },
+  "id": "NOTIF-846277-286",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ61F3X-GXDK needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-846269-414",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:40:46.277Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff02e0fa5a1395b78f46e"
+  },
+  "id": "NOTIF-846277-337",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ61F3X-GXDK needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-846269-414",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:40:46.277Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff05a0fa5a1395b78f473"
+  },
+  "id": "NOTIF-890420-227",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ62D65-J8AB needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-890413-792",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:41:30.420Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff05a0fa5a1395b78f474"
+  },
+  "id": "NOTIF-890420-479",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ62D65-J8AB needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-890413-792",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:41:30.420Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff0880fa5a1395b78f478"
+  },
+  "id": "NOTIF-936024-686",
+  "userId": null,
+  "officeId": "OFF-008",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOZ4PXOY-7WGW can now continue its For Filing workflow.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-630866-277",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:42:16.025Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff0900fa5a1395b78f47d"
+  },
+  "id": "NOTIF-944751-784",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Acknowledged",
+  "message": "TRK-2026-MOZ4PXOY-7WGW: Acknowledged",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-630866-277",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:42:24.751Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff0900fa5a1395b78f47c"
+  },
+  "id": "NOTIF-944751-753",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Acknowledged",
+  "message": "TRK-2026-MOZ4PXOY-7WGW: Acknowledged",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-630866-277",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:42:24.751Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff0900fa5a1395b78f47e"
+  },
+  "id": "NOTIF-944755-342",
+  "userId": null,
+  "officeId": "OFF-008",
+  "role": null,
+  "title": "Document finished",
+  "message": "TRK-2026-MOZ4PXOY-7WGW is acknowledged and ready for archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-630866-277",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:42:24.755Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff0920fa5a1395b78f483"
+  },
+  "id": "NOTIF-946396-811",
+  "userId": null,
+  "officeId": "OFF-008",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-MOZ4PXOY-7WGW was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-946387-167",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:42:26.396Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff1090fa5a1395b78f48a"
+  },
+  "id": "NOTIF-065808-186",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ664I2-NTAT needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-065801-328",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:44:25.808Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff1090fa5a1395b78f48b"
+  },
+  "id": "NOTIF-065809-185",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ664I2-NTAT needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-065801-328",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:44:25.809Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff1310fa5a1395b78f491"
+  },
+  "id": "NOTIF-105072-249",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ66YSL-ZTGT needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-105061-688",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:45:05.072Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff1310fa5a1395b78f490"
+  },
+  "id": "NOTIF-105071-732",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ66YSL-ZTGT needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-105061-688",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:45:05.071Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff1780fa5a1395b78f495"
+  },
+  "id": "NOTIF-176915-968",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOZ664I2-NTAT can now continue its For Signing workflow.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-065801-328",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:46:16.915Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff17c0fa5a1395b78f499"
+  },
+  "id": "NOTIF-180210-12",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Signed",
+  "message": "TRK-2026-MOZ664I2-NTAT: Signed",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-065801-328",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:46:20.210Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff17c0fa5a1395b78f49a"
+  },
+  "id": "NOTIF-180211-61",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Signed",
+  "message": "TRK-2026-MOZ664I2-NTAT: Signed",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-065801-328",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:46:20.211Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff17c0fa5a1395b78f49b"
+  },
+  "id": "NOTIF-180214-114",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document finished",
+  "message": "TRK-2026-MOZ664I2-NTAT is signed and ready for archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-065801-328",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:46:20.214Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff17e0fa5a1395b78f4a0"
+  },
+  "id": "NOTIF-182016-686",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-MOZ664I2-NTAT was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-182009-719",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:46:22.016Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff1bd0fa5a1395b78f4a4"
+  },
+  "id": "NOTIF-245362-83",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOZ66YSL-ZTGT can now continue its Received workflow.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-105061-688",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:47:25.362Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff2f60fa5a1395b78f4a9"
+  },
+  "id": "NOTIF-558963-565",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ6GP0R-3CFW needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-558955-270",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:52:38.963Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff2f60fa5a1395b78f4aa"
+  },
+  "id": "NOTIF-558963-739",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ6GP0R-3CFW needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-558955-270",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:52:38.963Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff38c0fa5a1395b78f4af"
+  },
+  "id": "NOTIF-708335-599",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Action note",
+  "message": "TRK-2026-MOZ66YSL-ZTGT: Archive",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-105061-688",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:55:08.335Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fff38c0fa5a1395b78f4ae"
+  },
+  "id": "NOTIF-708334-261",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Action note",
+  "message": "TRK-2026-MOZ66YSL-ZTGT: Archive",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-105061-688",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T02:55:08.334Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffc2ded08f6ea4cbd5f56"
+  },
+  "id": "NOTIF-917625-111",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-917614-184",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:31:57.625Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffc2ded08f6ea4cbd5f57"
+  },
+  "id": "NOTIF-917625-956",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-917614-184",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:31:57.625Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd19ed08f6ea4cbd5f69"
+  },
+  "id": "NOTIF-153539-54",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document approved",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX can now continue its For Signing workflow.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-917614-184",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:35:53.539Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd1ced08f6ea4cbd5f6e"
+  },
+  "id": "NOTIF-156445-930",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Signed",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX: Signed",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-917614-184",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:35:56.445Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd1ced08f6ea4cbd5f6d"
+  },
+  "id": "NOTIF-156444-404",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Signed",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX: Signed",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-917614-184",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:35:56.444Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd1ced08f6ea4cbd5f6f"
+  },
+  "id": "NOTIF-156448-232",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document finished",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX is signed and ready to return or archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-917614-184",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:35:56.448Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd2eed08f6ea4cbd5f74"
+  },
+  "id": "NOTIF-174242-222",
+  "userId": null,
+  "officeId": "OFF-002",
+  "role": null,
+  "title": "Incoming document route",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX was routed from Mayor's Office.",
+  "type": "warning",
+  "referenceType": "transmission",
+  "referenceId": "TRN-174229-994",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:36:14.242Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd30ed08f6ea4cbd5f78"
+  },
+  "id": "NOTIF-176272-520",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Route acknowledged",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX was received by Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-174229-994",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:36:16.272Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd30ed08f6ea4cbd5f79"
+  },
+  "id": "NOTIF-176274-339",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-174229-994",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:36:16.274Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd30ed08f6ea4cbd5f7a"
+  },
+  "id": "NOTIF-176275-135",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Transmission received",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX was acknowledged at Municipal Planning & Development.",
+  "type": "success",
+  "referenceType": "transmission",
+  "referenceId": "TRN-174229-994",
+  "page": "transmissions",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:36:16.275Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "69fffd32ed08f6ea4cbd5f7f"
+  },
+  "id": "NOTIF-178654-409",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-MOZ7V8Z2-N0XX was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-178639-939",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T03:36:18.654Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a0088810e3b16ac612b7a91"
+  },
+  "id": "NOTIF-841459-974",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document registered",
+  "message": "TRK-2026-MOZT97Z6-XR0X is ready for office workflow.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-841442-862",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T13:30:41.459Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a010adbb2e36eabe154f7d2"
+  },
+  "id": "NOTIF-211535-629",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Acknowledged",
+  "message": "TRK-2026-MOZT97Z6-XR0X: Acknowledged",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-841442-862",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T22:46:51.535Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a010adbb2e36eabe154f7d1"
+  },
+  "id": "NOTIF-211533-464",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Acknowledged",
+  "message": "TRK-2026-MOZT97Z6-XR0X: Acknowledged",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-841442-862",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T22:46:51.533Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a010adbb2e36eabe154f7d3"
+  },
+  "id": "NOTIF-211543-160",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document finished",
+  "message": "TRK-2026-MOZT97Z6-XR0X is acknowledged and ready to return or archive.",
+  "type": "success",
+  "referenceType": "document",
+  "referenceId": "DOC-841442-862",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-10T22:46:51.543Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a010adeb2e36eabe154f7d7"
+  },
+  "id": "NOTIF-214156-782",
+  "userId": null,
+  "officeId": "OFF-001",
+  "role": null,
+  "title": "Document archived",
+  "message": "TRK-2026-MOZT97Z6-XR0X was archived as a completed record.",
+  "type": "success",
+  "referenceType": "archive",
+  "referenceId": "ARC-214141-347",
+  "page": "archives",
+  "readBy": [],
+  "createdAt": "2026-05-10T22:46:54.156Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a01306e9bfcbc45191acab0"
+  },
+  "id": "NOTIF-830480-844",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MP0IUMHS-K770 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-SCAN-20260511-092710-Z1",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-11T01:27:10.480Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a01306e9bfcbc45191acab1"
+  },
+  "id": "NOTIF-830482-303",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MP0IUMHS-K770 needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-SCAN-20260511-092710-Z1",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-11T01:27:10.482Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a0131d9f2b43466774c7fc7"
+  },
+  "id": "NOTIF-193489-864",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MP0J2EM9-CDQE needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-SCAN-20260511-093313-RH",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-11T01:33:13.489Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a0131d9f2b43466774c7fc8"
+  },
+  "id": "NOTIF-193490-640",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MP0J2EM9-CDQE needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-SCAN-20260511-093313-RH",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-11T01:33:13.490Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a013583f2b43466774c7fcd"
+  },
+  "id": "NOTIF-131949-339",
+  "userId": null,
+  "officeId": null,
+  "role": "Mayor",
+  "title": "Document pending review",
+  "message": "TRK-2026-MP0JMIQK-EABM needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-SCAN-20260511-094851-KH",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-11T01:48:51.949Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a013583f2b43466774c7fcc"
+  },
+  "id": "NOTIF-131948-896",
+  "userId": null,
+  "officeId": null,
+  "role": "Admin",
+  "title": "Document pending review",
+  "message": "TRK-2026-MP0JMIQK-EABM needs intake approval before routing.",
+  "type": "warning",
+  "referenceType": "document",
+  "referenceId": "DOC-SCAN-20260511-094851-KH",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-05-11T01:48:51.948Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a334a52b7435cb95918f953"
+  },
+  "id": "NOTIF-258495-403",
+  "userId": null,
+  "officeId": "OFF-000",
+  "role": null,
+  "title": "Document received at Reception",
+  "message": "TRK-2026-MQITPVPY-K9AZ is in the Reception queue and ready to forward to the Mayor.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-258387-231",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-06-18T01:30:58.495Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a334aa6b7435cb95918f958"
+  },
+  "id": "NOTIF-342252-293",
+  "userId": null,
+  "officeId": "OFF-000",
+  "role": null,
+  "title": "Document ready for Mayor delivery",
+  "message": "TRK-2026-MQITROEP-P8G6 is registered at Reception and ready to forward to the Mayor.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-SCAN-20260618-093222-AD",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-06-18T01:32:22.252Z",
+  "__v": 0
+},
+{
+  "_id": {
+    "$oid": "6a335b20ba10c280a8ac3291"
+  },
+  "id": "NOTIF-560614-24",
+  "userId": null,
+  "officeId": "OFF-000",
+  "role": null,
+  "title": "Document received at Reception",
+  "message": "TRK-2026-MQIWA3B8-42YX is in the Reception queue and ready to forward to the Mayor.",
+  "type": "info",
+  "referenceType": "document",
+  "referenceId": "DOC-560580-476",
+  "page": "documents",
+  "readBy": [],
+  "createdAt": "2026-06-18T02:42:40.614Z",
+  "__v": 0
+}]
