@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Document, Transmission, Archive, DeviceEvent, Command, SenderNotification, Notification } = require('../models');
+const { Document, Transmission, Archive, DeviceEvent, Command, SenderNotification, Notification, Office, User } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const {
   asyncHandler,
@@ -27,14 +27,35 @@ const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 const approvalRoles = allowRoles('Admin', 'Mayor');
 const scannerRoles = allowRoles('Admin', 'Receptionist');
 const documentCreateRoles = allowRoles('Admin', 'Receptionist', 'Office');
+const sendRoles = allowRoles('Admin', 'Mayor', 'Office');
 
 const updateOptions = { new: true, runValidators: true };
-const intakeStatuses = ['Pending Review', 'Approved', 'Rejected'];
+const intakeStatuses = ['Pending Review', 'Approved', 'Rejected', 'Returned to Sender'];
 const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
 const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
 const transmittableStatuses = ['Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged'];
 
-const storedWorkflowStatuses = ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
+const storedWorkflowStatuses = ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived', 'Returned to Sender'];
+
+const runPostSaveSideEffects = async (label, fn) => {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`Post-save side effect failed (${label}):`, err.message);
+  }
+};
+
+const findMayorsOfficeId = async () => {
+  const offices = await Office.find({}).lean();
+  const mayorOffice = (offices || []).find((office) => /mayor/i.test(office.name || ''));
+  return mayorOffice?.id || 'OFF-001';
+};
+
+const findReceptionOfficeId = async (fallbackId = '') => {
+  const receptionist = await User.findOne({ role: 'Receptionist' }).lean();
+  if (receptionist?.officeId) return receptionist.officeId;
+  return fallbackId || 'OFF-001';
+};
 
 const assertCanAccessDocument = async (req, documentId) => {
   const doc = await Document.findOne({ id: documentId, ...(await getScopedDocumentQueryWithTransmissions(req)) });
@@ -132,35 +153,58 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
 const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => {
   const userOfficeId = getUserOfficeId(req);
   const isOfficeUser = req.user?.role === 'Office';
-  const canChooseOffices =
-    isApprovalRole(req) || req.user?.role === 'Receptionist';
+  const isReceptionist = req.user?.role === 'Receptionist';
+  const mayorsOfficeId = await findMayorsOfficeId();
   const documentDirection = isOfficeUser
     ? 'Outgoing'
     : (!isApprovalRole(req)
       ? 'Incoming'
       : (body.documentDirection === 'Outgoing' ? 'Outgoing' : 'Incoming'));
-  const originOfficeId = canChooseOffices
-    ? (body.originOfficeId || body.currentOfficeId || userOfficeId)
-    : userOfficeId;
-  const currentOfficeId = canChooseOffices
-    ? (body.currentOfficeId || body.destinationOfficeId || body.originOfficeId || userOfficeId)
-    : userOfficeId;
-  // Office staff pick destination (reception / other offices) when sending.
-  const destinationOfficeId = (canChooseOffices || isOfficeUser)
-    ? (body.destinationOfficeId || (isOfficeUser ? '' : body.currentOfficeId) || '')
-    : (body.destinationOfficeId || '');
+
+  let originOfficeId;
+  let currentOfficeId;
+  let destinationOfficeId;
+
+  if (isReceptionist || (scanner && !isApprovalRole(req))) {
+    // External citizen docs: register at reception custody source, deliver only to Mayor.
+    originOfficeId = userOfficeId;
+    currentOfficeId = mayorsOfficeId;
+    destinationOfficeId = mayorsOfficeId;
+  } else if (isOfficeUser) {
+    originOfficeId = userOfficeId;
+    currentOfficeId = userOfficeId;
+    destinationOfficeId = body.destinationOfficeId || '';
+  } else if (isApprovalRole(req)) {
+    originOfficeId = body.originOfficeId || body.currentOfficeId || userOfficeId;
+    currentOfficeId = body.currentOfficeId || body.destinationOfficeId || body.originOfficeId || userOfficeId;
+    destinationOfficeId = body.destinationOfficeId || '';
+  } else {
+    originOfficeId = userOfficeId;
+    currentOfficeId = userOfficeId;
+    destinationOfficeId = body.destinationOfficeId || '';
+  }
+
   const now = new Date().toISOString();
   const scannedFiles = await persistAttachments(req, body.scannedFiles || []);
-  // Office-created docs are ready to send (no intake queue). Receptionist scans need review.
-  const defaultIntakeStatus = (scanner || req.user?.role === 'Receptionist')
-    ? 'Pending Review'
+  // External docs go straight to Mayor as actionable (no Pending Review gate).
+  const defaultIntakeStatus = (isReceptionist || scanner)
+    ? 'Approved'
     : 'Approved';
   const requestedIntakeStatus = isApprovalRole(req) && intakeStatuses.includes(body.intakeStatus)
     ? body.intakeStatus
     : defaultIntakeStatus;
   const requestedStatus = normalizeWorkflowStatus(body.status);
-  const canSetInitialStatus = req.user?.role === 'Receptionist' || isApprovalRole(req);
+  const canSetInitialStatus = isApprovalRole(req);
   const registrationStatus = canSetInitialStatus && registrationStatuses.includes(requestedStatus) ? requestedStatus : 'Received';
+
+  // Document type is for outsiders only; internal office docs get a placeholder type.
+  let documentTypeId = body.documentTypeId;
+  if (isOfficeUser && !documentTypeId) {
+    documentTypeId = 'DT-INTERNAL';
+  }
+
+  const channels = normalizeSenderNotificationChannels(body.senderNotificationChannels, body)
+    .filter((channel) => channel !== 'email');
 
   return {
     ...body,
@@ -169,20 +213,28 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     documentDirection,
     status: registrationStatus,
     intakeStatus: requestedIntakeStatus,
+    priorityLevel: 'normal',
     dateReceived: body.dateReceived || now.split('T')[0],
     createdAt: body.createdAt || now,
     updatedAt: now,
+    documentTypeId,
     documentTypeOther: normalizeText(body.documentTypeOther),
     originOfficeId,
     originOfficeOther: normalizeText(body.originOfficeOther),
     currentOfficeId,
     destinationOfficeId,
     destinationOfficeOther: normalizeText(body.destinationOfficeOther),
+    rfidTag: '',
+    lastDetectedOfficeId: '',
+    lastDetectedAt: '',
+    senderEmail: '',
+    senderNotificationChannels: channels.length ? channels : (body.senderContact ? ['sms'] : []),
     notifySender: body.notifySender !== undefined ? Boolean(body.notifySender) : true,
     senderNotificationConsent: body.senderNotificationConsent !== undefined ? Boolean(body.senderNotificationConsent) : true,
-    senderNotificationChannels: normalizeSenderNotificationChannels(body.senderNotificationChannels, body),
     scannedFiles,
     scannedImageUrl: body.scannedImageUrl || scannedFiles[0]?.url || scannedFiles[0]?.dataUrl,
+    sendHistory: Array.isArray(body.sendHistory) ? body.sendHistory : [],
+    sendQueue: Array.isArray(body.sendQueue) ? body.sendQueue : [],
   };
 };
 
@@ -191,7 +243,7 @@ router.use(protect);
 // ================= SCANNER INTAKE =================
 router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
   const payload = req.body.document || req.body;
-  requireFields(payload, ['subject']);
+  requireFields(payload, ['subject', 'senderName']);
 
   const now = new Date().toISOString();
 
@@ -210,11 +262,7 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
     scannedFiles: rawScannedFiles,
   }, { scanner: true });
 
-  const canChooseOffices =
-    isApprovalRole(req) || req.user?.role === 'Receptionist';
-  const officeId = canChooseOffices
-    ? (documentPayload.currentOfficeId || documentPayload.destinationOfficeId || documentPayload.originOfficeId || getUserOfficeId(req))
-    : getUserOfficeId(req);
+  const officeId = documentPayload.currentOfficeId;
 
   const doc = new Document({
     ...documentPayload,
@@ -224,8 +272,8 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
       {
         id: generateId('TL'),
         action: 'scanner_intake',
-        label: 'Scanner intake',
-        details: `Document captured from scanner endpoint: ${payload.subject}`,
+        label: 'Scanned and registered',
+        details: `External document captured and forwarded to Mayor's Office: ${payload.subject}`,
         officeId,
         userId: req.user.id,
         referenceId: documentPayload.id,
@@ -237,31 +285,38 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
 
   let deviceEvent = null;
   if (req.body.deviceId) {
-    deviceEvent = new DeviceEvent({
-      id: generateId('EVT'),
-      deviceId: req.body.deviceId,
-      eventType: 'scan_completed',
-      documentId: doc.id,
-      officeId,
-      details: `Dashboard capture saved ${doc.trackingNumber}`,
-      recordedBy: req.user.id,
-      timestamp: now,
-    });
-    await deviceEvent.save();
+    try {
+      deviceEvent = new DeviceEvent({
+        id: generateId('EVT'),
+        deviceId: req.body.deviceId,
+        eventType: 'scan_completed',
+        documentId: doc.id,
+        officeId,
+        details: `Dashboard capture saved ${doc.trackingNumber}`,
+        recordedBy: req.user.id,
+        timestamp: now,
+      });
+      await deviceEvent.save();
+    } catch (err) {
+      console.error('Device event save failed (non-fatal):', err.message);
+    }
   }
 
-  await createLogEntry(req, 'document_scanned', `Scanned document awaiting review: ${doc.subject}`, doc.id);
-  await notifyApprovalUsers({
-    title: 'Document pending review',
-    message: `${doc.trackingNumber} needs intake approval before routing.`,
-    type: 'warning',
-    referenceType: 'document',
-    referenceId: doc.id,
-    page: 'documents',
-  });
-  await queueSenderNotifications(req, doc, 'document_scanned', {
-    message: `Your document was scanned and registered with tracking number ${doc.trackingNumber}.`,
-  });
+  await runPostSaveSideEffects('scanner_log', () =>
+    createLogEntry(req, 'document_scanned', `Scanned document forwarded to Mayor: ${doc.subject}`, doc.id));
+  await runPostSaveSideEffects('scanner_notify', () =>
+    notifyApprovalUsers({
+      title: 'External document registered',
+      message: `${doc.trackingNumber} was registered by Reception and is ready at Mayor's Office (FIFO).`,
+      type: 'info',
+      referenceType: 'document',
+      referenceId: doc.id,
+      page: 'documents',
+    }));
+  await runPostSaveSideEffects('scanner_sender', () =>
+    queueSenderNotifications(req, doc, 'document_scanned', {
+      message: `Your document was scanned and registered with tracking number ${doc.trackingNumber}.`,
+    }));
 
   broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications', 'device']);
   res.status(201).json({ document: doc, deviceEvent });
@@ -269,7 +324,8 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
 
 // ================= DOCUMENTS =================
 router.get('/', allRoles, asyncHandler(async (req, res) => {
-  const docs = await Document.find(await getScopedDocumentQueryWithTransmissions(req)).sort({ createdAt: -1, dateReceived: -1, _id: -1 }).lean();
+  // FIFO: oldest registration first
+  const docs = await Document.find(await getScopedDocumentQueryWithTransmissions(req)).sort({ createdAt: 1, dateReceived: 1, _id: 1 }).lean();
   res.json(docs);
 }));
 
@@ -297,39 +353,47 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
         req,
         documentPayload.scannedFiles?.length ? 'document_scanned' : 'document_received',
         documentPayload.scannedFiles?.length ? 'Scanned and registered' : 'Registered',
-        `Document registered: ${documentPayload.subject}`,
+        req.user?.role === 'Receptionist'
+          ? `External document registered and forwarded to Mayor's Office: ${documentPayload.subject}`
+          : `Document registered: ${documentPayload.subject}`,
         documentPayload.currentOfficeId,
         documentPayload.id,
       ),
     ],
   });
   await doc.save();
-  await createLogEntry(req, 'document_received', `Registered document: ${doc.subject}`, doc.id);
-  if (doc.intakeStatus === 'Pending Review') {
-    await notifyApprovalUsers({
-      title: 'Document pending review',
-      message: `${doc.trackingNumber} needs intake approval before routing.`,
-      type: 'warning',
-      referenceType: 'document',
-      referenceId: doc.id,
-      page: 'documents',
-    });
-  } else {
-    await createNotification({
-      officeId: doc.currentOfficeId,
-      title: 'Document registered',
-      message: `${doc.trackingNumber} is ready for office workflow.`,
-      type: 'info',
-      referenceType: 'document',
-      referenceId: doc.id,
-      page: 'documents',
-    });
-  }
-  await queueSenderNotifications(req, doc, 'document_received', {
-    message: `Your document was received and registered with tracking number ${doc.trackingNumber}.`,
+
+  await runPostSaveSideEffects('create_log', () =>
+    createLogEntry(req, 'document_received', `Registered document: ${doc.subject}`, doc.id));
+  await runPostSaveSideEffects('create_notify', async () => {
+    if (req.user?.role === 'Receptionist') {
+      await notifyApprovalUsers({
+        title: 'External document registered',
+        message: `${doc.trackingNumber} is ready at Mayor's Office (FIFO).`,
+        type: 'info',
+        referenceType: 'document',
+        referenceId: doc.id,
+        page: 'documents',
+      });
+    } else {
+      await createNotification({
+        officeId: doc.currentOfficeId,
+        title: 'Document registered',
+        message: `${doc.trackingNumber} is ready for office workflow.`,
+        type: 'info',
+        referenceType: 'document',
+        referenceId: doc.id,
+        page: 'documents',
+      });
+    }
   });
+  await runPostSaveSideEffects('create_sender', () =>
+    queueSenderNotifications(req, doc, 'document_received', {
+      message: `Your document was received and registered with tracking number ${doc.trackingNumber}.`,
+    }));
+
   broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
-  res.json(doc);
+  res.status(201).json(doc);
 }));
 
 router.put('/:id', allRoles, asyncHandler(async (req, res) => {
@@ -468,21 +532,34 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
   }
 
   const doc = await assertCanAccessDocument(req, req.params.id);
-  if (doc.intakeStatus !== 'Pending Review') {
-    return res.status(400).json({ message: `Only documents pending review can be approved or rejected. Current review status: ${doc.intakeStatus}` });
-  }
   const currentStatus = normalizeWorkflowStatus(doc.status, doc.status);
-  if (!registrationStatuses.includes(currentStatus)) {
-    return res.status(400).json({ message: `Only Received, For Signing, or For Filing documents can be reviewed for intake approval. Current status: ${doc.status}` });
+  const canReviewPending = doc.intakeStatus === 'Pending Review';
+  const canRejectApproved = intakeStatus === 'Rejected'
+    && doc.intakeStatus === 'Approved'
+    && registrationStatuses.includes(currentStatus)
+    && !['Signed', 'Acknowledged', 'Archived'].includes(currentStatus);
+
+  if (!canReviewPending && !canRejectApproved) {
+    return res.status(400).json({
+      message: `Document cannot be ${intakeStatus.toLowerCase()} in its current state (${doc.intakeStatus} / ${doc.status}).`,
+    });
+  }
+  if (!registrationStatuses.includes(currentStatus) && currentStatus !== 'Returned to Sender') {
+    return res.status(400).json({ message: `Only Received, For Signing, or For Filing documents can be reviewed. Current status: ${doc.status}` });
   }
 
   const now = new Date().toISOString();
+  const receptionOfficeId = doc.originOfficeId || await findReceptionOfficeId(getUserOfficeId(req));
+  const nextOfficeId = intakeStatus === 'Rejected' ? receptionOfficeId : doc.currentOfficeId;
+
   const event = createTimelineEvent(
     req,
     intakeStatus === 'Approved' ? 'document_approved' : 'document_rejected',
     intakeStatus === 'Approved' ? 'Document approved' : 'Document rejected',
-    intakeStatus === 'Approved' ? `${doc.subject} passed intake review` : (rejectionReason || `${doc.subject} was rejected during intake review`),
-    doc.currentOfficeId,
+    intakeStatus === 'Approved'
+      ? `${doc.subject} approved by Mayor`
+      : `Rejected and returned to Reception: ${rejectionReason || doc.subject}`,
+    nextOfficeId,
     doc.id,
   );
 
@@ -491,30 +568,32 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
     verifiedBy: req.user.id,
     verifiedAt: now,
     rejectionReason: intakeStatus === 'Rejected' ? String(rejectionReason).trim() : '',
+    ...(intakeStatus === 'Rejected' ? { currentOfficeId: nextOfficeId, destinationOfficeId: nextOfficeId } : {}),
   });
 
-  await createLogEntry(
+  await runPostSaveSideEffects('verify_log', () => createLogEntry(
     req,
     intakeStatus === 'Approved' ? 'document_approved' : 'document_rejected',
     `${intakeStatus} document: ${doc.subject}`,
     doc.id,
-  );
-  await createNotification({
-    officeId: doc.currentOfficeId,
+  ));
+  await runPostSaveSideEffects('verify_notify', () => createNotification({
+    officeId: nextOfficeId,
     title: intakeStatus === 'Approved' ? 'Document approved' : 'Document rejected',
     message: intakeStatus === 'Approved'
-      ? `${doc.trackingNumber} can now continue its ${currentStatus} workflow.`
-      : `${doc.trackingNumber} was rejected: ${String(rejectionReason).trim()}`,
+      ? `${doc.trackingNumber} can continue Mayor document actions.`
+      : `${doc.trackingNumber} was rejected and returned to Reception: ${String(rejectionReason).trim()}`,
     type: intakeStatus === 'Approved' ? 'success' : 'danger',
     referenceType: 'document',
     referenceId: doc.id,
     page: 'documents',
-  });
-  await queueSenderNotifications(req, savedDoc, intakeStatus === 'Approved' ? 'document_approved' : 'document_rejected', {
-    message: intakeStatus === 'Approved'
-      ? `Your document ${doc.trackingNumber} passed intake review and can continue its ${currentStatus} workflow.`
-      : `Your document ${doc.trackingNumber} was rejected during intake review. Reason: ${String(rejectionReason).trim()}`,
-  });
+  }));
+  await runPostSaveSideEffects('verify_sender', () =>
+    queueSenderNotifications(req, savedDoc, intakeStatus === 'Approved' ? 'document_approved' : 'document_rejected', {
+      message: intakeStatus === 'Approved'
+        ? `Your document ${doc.trackingNumber} was approved.`
+        : `Your document ${doc.trackingNumber} was rejected. Reason: ${String(rejectionReason).trim()}`,
+    }));
 
   broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(savedDoc);
@@ -610,15 +689,15 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
 
   const updates = {};
   if (action === 'sign_document') {
-    if (!['For Signing', 'For Signature'].includes(currentStatus)) {
-      return res.status(400).json({ message: 'Only For Signing documents can be marked Signed' });
+    if (!['Received', 'For Signing', 'For Signature'].includes(currentStatus)) {
+      return res.status(400).json({ message: 'Only Received or For Signing documents can be marked Signed' });
     }
     updates.status = 'Signed';
     updates.completedAt = new Date().toISOString();
   }
   if (action === 'acknowledge_document') {
-    if (!['Received', 'For Filing'].includes(currentStatus)) {
-      return res.status(400).json({ message: 'Only Received or For Filing documents can be acknowledged' });
+    if (!['Received', 'For Filing', 'For Signing', 'Signed'].includes(currentStatus)) {
+      return res.status(400).json({ message: 'Only Received, For Filing, For Signing, or Signed documents can be acknowledged' });
     }
     updates.status = 'Acknowledged';
     updates.completedAt = new Date().toISOString();
@@ -637,18 +716,18 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
     updates,
   );
 
-  await createLogEntry(req, action, `${labels[action]}: ${doc.subject}`, doc.id);
-  await notifyApprovalUsers({
+  await runPostSaveSideEffects('process_log', () => createLogEntry(req, action, `${labels[action]}: ${doc.subject}`, doc.id));
+  await runPostSaveSideEffects('process_notify', () => notifyApprovalUsers({
     title: labels[action],
     message: `${doc.trackingNumber}: ${note || labels[action]}`,
     type: ['sign_document', 'acknowledge_document'].includes(action) ? 'success' : 'info',
     referenceType: 'document',
     referenceId: doc.id,
     page: ['sign_document', 'acknowledge_document'].includes(action) ? 'archives' : 'documents',
-  });
+  }));
 
   if (['sign_document', 'acknowledge_document'].includes(action)) {
-    await createNotification({
+    await runPostSaveSideEffects('process_office_notify', () => createNotification({
       officeId: doc.currentOfficeId,
       title: 'Document finished',
       message: `${doc.trackingNumber} is ${updates.status.toLowerCase()} and ready to return or archive.`,
@@ -656,11 +735,154 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
       referenceType: 'document',
       referenceId: doc.id,
       page: 'documents',
-    });
+    }));
   }
-  await queueSenderNotifications(req, savedDoc, updates.status ? `document_${updates.status.toLowerCase()}` : action, {
-    message: `${labels[action]} for ${doc.trackingNumber}${note ? `: ${note}` : '.'}`,
+  await runPostSaveSideEffects('process_sender', () =>
+    queueSenderNotifications(req, savedDoc, updates.status ? `document_${updates.status.toLowerCase()}` : action, {
+      message: `${labels[action]} for ${doc.trackingNumber}${note ? `: ${note}` : '.'}`,
+    }));
+
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  res.json(savedDoc);
+}));
+
+// Office / Mayor send to one or many offices (chronological send history; custody to first).
+router.post('/:id/send', sendRoles, asyncHandler(async (req, res) => {
+  const doc = await assertCanAccessDocument(req, req.params.id);
+  const toOfficeIds = [...new Set(
+    (Array.isArray(req.body.toOfficeIds) ? req.body.toOfficeIds : [req.body.toOfficeId])
+      .map((id) => normalizeText(id))
+      .filter(Boolean),
+  )];
+
+  if (!toOfficeIds.length) {
+    return res.status(400).json({ message: 'Select at least one destination office' });
+  }
+  if (doc.intakeStatus !== 'Approved') {
+    return res.status(400).json({ message: 'Document must be approved before it can be sent' });
+  }
+  if (['Archived', 'Returned to Sender'].includes(doc.status) || doc.intakeStatus === 'Rejected') {
+    return res.status(400).json({ message: 'This document can no longer be sent' });
+  }
+  if (!isApprovalRole(req) && doc.currentOfficeId !== getUserOfficeId(req)) {
+    return res.status(403).json({ message: 'Only the current office can send this document' });
+  }
+  if (toOfficeIds.includes(doc.currentOfficeId)) {
+    return res.status(400).json({ message: 'Cannot send a document to its current office' });
+  }
+
+  const offices = await Office.find({}).lean();
+  const officeMap = new Map((offices || []).map((office) => [office.id, office.name]));
+  const invalid = toOfficeIds.filter((id) => !officeMap.has(id));
+  if (invalid.length) {
+    return res.status(400).json({ message: `Unknown office id(s): ${invalid.join(', ')}` });
+  }
+
+  const now = new Date().toISOString();
+  const fromOfficeId = doc.currentOfficeId;
+  const [firstOfficeId, ...remaining] = toOfficeIds;
+  const existingHistory = Array.isArray(doc.sendHistory) ? doc.sendHistory : [];
+  const sendEvents = toOfficeIds.map((toOfficeId, index) => ({
+    id: generateId('SND'),
+    fromOfficeId,
+    toOfficeId,
+    sentBy: req.user.id,
+    sentAt: new Date(new Date(now).getTime() + index).toISOString(),
+    order: index + 1,
+    active: index === 0,
+  }));
+
+  const timelineEvents = sendEvents.map((event) => {
+    const label = toOfficeIds.length > 1
+      ? `Sent to office (${event.order}/${toOfficeIds.length})`
+      : 'Sent to office';
+    const tl = createTimelineEvent(
+      req,
+      'document_sent',
+      label,
+      `Sent from ${officeMap.get(fromOfficeId) || fromOfficeId} to ${officeMap.get(event.toOfficeId) || event.toOfficeId}`,
+      event.toOfficeId,
+      doc.id,
+    );
+    tl.timestamp = event.sentAt;
+    return tl;
   });
+
+  const existingTimeline = Array.isArray(doc.timeline) ? doc.timeline : [];
+  const savedDoc = await Document.findOneAndUpdate(
+    { id: doc.id },
+    {
+      $set: {
+        currentOfficeId: firstOfficeId,
+        destinationOfficeId: firstOfficeId,
+        lastRoutedAt: now,
+        preTransitStatus: normalizeWorkflowStatus(doc.status, 'Received'),
+        status: 'Received',
+        sendHistory: [...existingHistory, ...sendEvents],
+        sendQueue: remaining,
+        timeline: [...existingTimeline, ...timelineEvents],
+        updatedAt: now,
+      },
+    },
+    updateOptions,
+  );
+
+  await runPostSaveSideEffects('send_log', () =>
+    createLogEntry(req, 'document_sent', `Sent ${doc.subject} to ${toOfficeIds.map((id) => officeMap.get(id) || id).join(' → ')}`, doc.id));
+  await runPostSaveSideEffects('send_notify', () => createNotification({
+    officeId: firstOfficeId,
+    title: 'Document received',
+    message: `${doc.trackingNumber} was sent to your office.`,
+    type: 'info',
+    referenceType: 'document',
+    referenceId: doc.id,
+    page: 'documents',
+  }));
+  await runPostSaveSideEffects('send_sender', () =>
+    queueSenderNotifications(req, savedDoc, 'document_routed', {
+      message: `Your document ${doc.trackingNumber} was sent to ${officeMap.get(firstOfficeId) || firstOfficeId}.`,
+    }));
+
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  res.json(savedDoc);
+}));
+
+// Receptionist returns a rejected external document to the citizen sender.
+router.post('/:id/return-to-sender', allowRoles('Admin', 'Receptionist'), asyncHandler(async (req, res) => {
+  const doc = await assertCanAccessDocument(req, req.params.id);
+  if (doc.intakeStatus !== 'Rejected') {
+    return res.status(400).json({ message: 'Only rejected documents can be returned to the sender' });
+  }
+  if (!isApprovalRole(req) && doc.currentOfficeId !== getUserOfficeId(req)) {
+    return res.status(403).json({ message: 'Only Reception can return this document to the sender' });
+  }
+
+  const note = normalizeText(req.body.note) || 'Document returned to external sender';
+  const savedDoc = await appendDocumentTimeline(
+    doc.id,
+    createTimelineEvent(
+      req,
+      'returned_to_sender',
+      'Returned to sender',
+      note,
+      doc.currentOfficeId,
+      doc.id,
+    ),
+    {
+      intakeStatus: 'Returned to Sender',
+      status: 'Returned to Sender',
+      completedAt: new Date().toISOString(),
+      destinationOfficeId: '',
+      sendQueue: [],
+    },
+  );
+
+  await runPostSaveSideEffects('return_log', () =>
+    createLogEntry(req, 'returned_to_sender', `Returned to sender: ${doc.subject}`, doc.id));
+  await runPostSaveSideEffects('return_sender', () =>
+    queueSenderNotifications(req, savedDoc, 'document_rejected', {
+      message: `Your document ${doc.trackingNumber} has been returned. ${note}`,
+    }));
 
   broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
   res.json(savedDoc);

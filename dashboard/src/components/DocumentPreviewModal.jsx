@@ -9,7 +9,6 @@ import {
 } from 'lucide-react';
 import ModalOverlay from './ModalOverlay';
 import DocumentWorkflowPipeline from './DocumentWorkflowPipeline';
-import { getPriorityInfo } from '../data/mockData';
 import { getWorkflowStatus } from '../utils/documentWorkflow';
 import { getDocumentFiles } from '../utils/documentFiles';
 import { resolveUploadUrl } from '../utils/mediaUrl';
@@ -39,8 +38,6 @@ const DocumentPreviewModal = ({
 }) => {
   if (!doc) return null;
 
-  const currentRole = currentUser?.role?.toLowerCase() || '';
-
   const getOfficeName = (officeId) =>
     offices.find((office) => office.id === officeId)?.name || officeId || 'Unknown Office';
 
@@ -61,42 +58,31 @@ const DocumentPreviewModal = ({
       : 'Unknown';
   };
 
-  const pendingTransmission = transmissions
-    .filter((item) => item.documentId === doc.id && !item.receivedBy)
-    .sort((a, b) => new Date(b.transmissionDate || 0) - new Date(a.transmissionDate || 0))[0];
-
   const status = getWorkflowStatus(doc);
   const files = getDocumentFiles(doc);
   const timeline = [...(doc.timeline || [])].sort(
-    (a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0),
+    (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0),
   );
+  const sendHistory = Array.isArray(doc.sendHistory) ? doc.sendHistory : [];
 
   let workflowExplanation = '';
-  if (doc.intakeStatus === 'Pending Review') {
-    workflowExplanation = 'Waiting for Admin or Mayor intake review before the document can be routed, signed, filed, or archived.';
+  if (doc.intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') {
+    workflowExplanation = 'Document was returned to the external sender.';
   } else if (doc.intakeStatus === 'Rejected') {
     workflowExplanation = doc.rejectionReason
-      ? `Rejected for correction: ${doc.rejectionReason}`
-      : 'Rejected for correction. Resubmit after fixing the document details.';
-  } else if (pendingTransmission) {
-    workflowExplanation = `Waiting for ${getOfficeName(pendingTransmission.toOfficeId)} to receive transmission ${pendingTransmission.id}.`;
+      ? `Rejected by Mayor — return to sender: ${doc.rejectionReason}`
+      : 'Rejected by Mayor — Reception should return it to the sender.';
   } else if (status === 'For Signing') {
     workflowExplanation = 'Waiting for Mayor/Admin signing action.';
   } else if (status === 'For Filing') {
     workflowExplanation = 'Waiting for Mayor/Admin acknowledgement.';
   } else if (status === 'Received') {
-    workflowExplanation = 'Approved and ready to acknowledge or route.';
+    workflowExplanation = doc.documentDirection === 'Outgoing'
+      ? 'At current office — ready to send or complete.'
+      : "At Mayor's Office (FIFO queue).";
   }
 
-  const currentLocation = (() => {
-    if (doc.lastDetectedOfficeId && status === 'In Transit') {
-      return `Detected at ${getOfficeName(doc.lastDetectedOfficeId)} (pending receipt)`;
-    }
-    if (pendingTransmission) {
-      return `In transit to ${getOfficeName(pendingTransmission.toOfficeId)}`;
-    }
-    return getOfficeName(doc.currentOfficeId) || '-';
-  })();
+  const currentLocation = getOfficeName(doc.currentOfficeId) || '-';
 
   return (
     <ModalOverlay onClose={onClose}>
@@ -116,7 +102,7 @@ const DocumentPreviewModal = ({
         <div className="modal-body">
           <DocumentWorkflowPipeline
             doc={doc}
-            hasPendingTransmission={Boolean(pendingTransmission)}
+            hasPendingTransmission={false}
             locationLabel={currentLocation}
             workflowNote={workflowExplanation}
           />
@@ -125,7 +111,7 @@ const DocumentPreviewModal = ({
             <div className="document-detail-section">
               <h4><MapPin size={14} /> Location</h4>
               <div className="detail-pair"><span>Status</span><strong>{status}</strong></div>
-              <div className="detail-pair"><span>Intake Review</span><strong>{doc.intakeStatus || 'Approved'}</strong></div>
+              <div className="detail-pair"><span>Review</span><strong>{doc.intakeStatus || 'Approved'}</strong></div>
               {workflowExplanation && (
                 <div className="detail-pair"><span>Workflow Note</span><strong>{workflowExplanation}</strong></div>
               )}
@@ -134,8 +120,8 @@ const DocumentPreviewModal = ({
               )}
               <div className="detail-pair"><span>Current</span><strong>{currentLocation}</strong></div>
               <div className="detail-pair">
-                <span>Origin</span>
-                <strong>{doc.originOfficeOther || getOfficeName(doc.originOfficeId)}</strong>
+                <span>From Organization</span>
+                <strong>{doc.originOfficeOther || '-'}</strong>
               </div>
               <div className="detail-pair">
                 <span>Destination</span>
@@ -144,36 +130,18 @@ const DocumentPreviewModal = ({
                     || (doc.destinationOfficeId ? getOfficeName(doc.destinationOfficeId) : '-')}
                 </strong>
               </div>
-              {currentRole !== 'receptionist' && (
-                <>
-                  <div className="detail-pair"><span>RFID Tag</span><strong>{doc.rfidTag || '-'}</strong></div>
-                  <div className="detail-pair">
-                    <span>Last Detected</span>
-                    <strong>
-                      {doc.lastDetectedOfficeId
-                        ? `${getOfficeName(doc.lastDetectedOfficeId)} - ${formatDateTime(doc.lastDetectedAt)}`
-                        : '-'}
-                    </strong>
-                  </div>
-                </>
-              )}
             </div>
 
             <div className="document-detail-section">
               <h4><User size={14} /> Sender</h4>
               <div className="detail-pair"><span>Name</span><strong>{doc.senderName || '-'}</strong></div>
               <div className="detail-pair"><span>Contact</span><strong>{doc.senderContact || '-'}</strong></div>
-              <div className="detail-pair"><span>Email</span><strong>{doc.senderEmail || '-'}</strong></div>
               <div className="detail-pair">
-                <span>Priority</span>
-                <strong>{getPriorityInfo(doc.priorityLevel).label}</strong>
-              </div>
-              <div className="detail-pair">
-                <span>Updates</span>
+                <span>SMS Updates</span>
                 <strong>
                   {doc.notifySender === false
                     ? 'Disabled'
-                    : (doc.senderNotificationChannels || []).join(', ').toUpperCase() || 'Enabled'}
+                    : (doc.senderContact ? 'Enabled' : 'No contact number')}
                 </strong>
               </div>
             </div>
@@ -197,7 +165,7 @@ const DocumentPreviewModal = ({
                             <span>{file.name}</span>
                           </a>
                         ) : (
-                          <span className="attachment-link">
+                          <span className="attachment-link is-disabled">
                             <Eye size={14} />
                             <span>{file.name}</span>
                           </span>
@@ -207,31 +175,45 @@ const DocumentPreviewModal = ({
                   })}
                 </div>
               ) : (
-                <p className="detail-empty">No scanned file attached yet.</p>
+                <p className="detail-empty">No attachments</p>
               )}
             </div>
+          </div>
 
-            <div className="document-detail-section document-timeline-section">
-              <h4><History size={14} /> Timeline</h4>
-              <div className="timeline-compact">
-                {timeline.length ? timeline.map((event) => (
-                  <div key={event.id || `${event.timestamp}-${event.label}`} className="timeline-compact-item">
-                    <span className="timeline-compact-dot"></span>
-                    <div>
-                      <strong>{event.label}</strong>
-                      <p>{event.details}</p>
-                      <small>
-                        {formatDateTime(event.timestamp)}
-                        {event.userId ? ` - ${getUserFullName(event.userId)}` : ''}
-                        {event.officeId ? ` - ${getOfficeName(event.officeId)}` : ''}
-                      </small>
-                    </div>
+          {sendHistory.length > 0 && (
+            <div className="document-detail-section" style={{ marginTop: '1rem' }}>
+              <h4><History size={14} /> Send History (chronological)</h4>
+              <div className="timeline-list">
+                {sendHistory.map((event) => (
+                  <div key={event.id} className="timeline-item">
+                    <strong>
+                      {getOfficeName(event.fromOfficeId)} → {getOfficeName(event.toOfficeId)}
+                    </strong>
+                    <span>{formatDateTime(event.sentAt)}</span>
+                    <span>by {getUserFullName(event.sentBy)}</span>
                   </div>
-                )) : (
-                  <p className="detail-empty">No timeline events yet.</p>
-                )}
+                ))}
               </div>
             </div>
+          )}
+
+          <div className="document-detail-section" style={{ marginTop: '1rem' }}>
+            <h4><History size={14} /> Timeline</h4>
+            {timeline.length ? (
+              <div className="timeline-list">
+                {timeline.map((event) => (
+                  <div key={event.id || `${event.timestamp}-${event.label}`} className="timeline-item">
+                    <strong>{event.label || event.action}</strong>
+                    <span>{formatDateTime(event.timestamp)}</span>
+                    {event.details && <span>{event.details}</span>}
+                    {event.officeId && <span>{getOfficeName(event.officeId)}</span>}
+                    {event.userId && <span>{getUserFullName(event.userId)}</span>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="detail-empty">No timeline events yet</p>
+            )}
           </div>
         </div>
       </div>

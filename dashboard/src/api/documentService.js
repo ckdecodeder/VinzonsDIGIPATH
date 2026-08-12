@@ -239,6 +239,20 @@ export const documentService = {
     });
   },
 
+  send(id, toOfficeIds = []) {
+    return apiRequest(`/documents/${id}/send`, {
+      method: 'POST',
+      body: JSON.stringify({ toOfficeIds }),
+    });
+  },
+
+  returnToSender(id, note = '') {
+    return apiRequest(`/documents/${id}/return-to-sender`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    });
+  },
+
   async search(query) {
     const q = query.toLowerCase();
     const all = await this.getAll();

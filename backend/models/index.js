@@ -87,6 +87,8 @@ const DocumentModel = sequelize
       scannedText:                  { type: DataTypes.TEXT },
       scannedImageUrl:              { type: DataTypes.TEXT },
       scannedFiles:                 { type: DataTypes.JSONB, defaultValue: [] },
+      sendHistory:                  { type: DataTypes.JSONB, defaultValue: [] },
+      sendQueue:                    { type: DataTypes.JSONB, defaultValue: [] },
       timeline:                     { type: DataTypes.JSONB, defaultValue: [] },
       createdAt:                    { type: DataTypes.TEXT },
       updatedAt:                    { type: DataTypes.TEXT },
@@ -194,17 +196,23 @@ const NotificationModel = sequelize
 
 const SenderNotificationModel = sequelize
   ? sequelize.define('SenderNotification', {
-      id:          { type: DataTypes.STRING, primaryKey: true },
-      documentId:  { type: DataTypes.STRING },
-      channel:     { type: DataTypes.TEXT },
-      recipient:   { type: DataTypes.STRING },
-      subject:     { type: DataTypes.TEXT },
-      message:     { type: DataTypes.TEXT },
-      status:      { type: DataTypes.STRING, defaultValue: 'pending' },
-      error:       { type: DataTypes.TEXT },
-      metadata:    { type: DataTypes.JSONB, defaultValue: {} },
-      createdAt:   { type: DataTypes.STRING },
-      sentAt:      { type: DataTypes.TEXT },
+      id:             { type: DataTypes.STRING, primaryKey: true },
+      documentId:     { type: DataTypes.STRING },
+      trackingNumber: { type: DataTypes.TEXT },
+      eventType:      { type: DataTypes.TEXT },
+      channel:        { type: DataTypes.TEXT },
+      recipient:      { type: DataTypes.STRING },
+      recipientName:  { type: DataTypes.TEXT },
+      subject:        { type: DataTypes.TEXT },
+      message:        { type: DataTypes.TEXT },
+      status:         { type: DataTypes.STRING, defaultValue: 'pending' },
+      provider:       { type: DataTypes.TEXT },
+      error:          { type: DataTypes.TEXT },
+      errorMessage:   { type: DataTypes.TEXT },
+      metadata:       { type: DataTypes.JSONB, defaultValue: {} },
+      createdAt:      { type: DataTypes.STRING },
+      createdBy:      { type: DataTypes.TEXT },
+      sentAt:         { type: DataTypes.TEXT },
     }, { tableName: 'sender_notifications', timestamps: false })
   : null;
 
@@ -246,10 +254,50 @@ const migrateDeviceBridgeUrl = async () => {
   `);
 };
 
+const migrateDocumentSendFields = async () => {
+  await sequelize.query(`
+    ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS "sendHistory" JSONB DEFAULT '[]'::jsonb;
+  `);
+  await sequelize.query(`
+    ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS "sendQueue" JSONB DEFAULT '[]'::jsonb;
+  `);
+};
+
+const migrateSenderNotificationFields = async () => {
+  await sequelize.query(`
+    ALTER TABLE sender_notifications
+    ADD COLUMN IF NOT EXISTS "trackingNumber" TEXT;
+  `);
+  await sequelize.query(`
+    ALTER TABLE sender_notifications
+    ADD COLUMN IF NOT EXISTS "eventType" TEXT;
+  `);
+  await sequelize.query(`
+    ALTER TABLE sender_notifications
+    ADD COLUMN IF NOT EXISTS "recipientName" TEXT;
+  `);
+  await sequelize.query(`
+    ALTER TABLE sender_notifications
+    ADD COLUMN IF NOT EXISTS "provider" TEXT;
+  `);
+  await sequelize.query(`
+    ALTER TABLE sender_notifications
+    ADD COLUMN IF NOT EXISTS "errorMessage" TEXT;
+  `);
+  await sequelize.query(`
+    ALTER TABLE sender_notifications
+    ADD COLUMN IF NOT EXISTS "createdBy" TEXT;
+  `);
+};
+
 const syncModels = async () => {
   if (!sequelize) return;
   await migrateDocumentTypeCategory();
   await migrateDeviceBridgeUrl();
+  await migrateDocumentSendFields();
+  await migrateSenderNotificationFields();
   // Use sync() without alter — tables were already created correctly by migrate-pg.js
   // alter:true would try to downgrade TEXT → VARCHAR(255), breaking existing data
   await sequelize.sync();

@@ -16,7 +16,6 @@ import {
 import LoginPage from './pages/LoginPage';
 import AdminDashboard from './pages/DashboardHome';
 import DocumentList from './pages/DocumentList';
-import TransmissionList from './pages/TransmissionList';
 import ArchiveList from './pages/ArchiveList';
 import OfficeList from './pages/OfficeList';
 import UserList from './pages/UserList';
@@ -47,9 +46,9 @@ import { realtimeClient } from './ws/realtimeClient';
 const PAGE_STORAGE_KEY = 'dp_currentPage';
 
 const ROLE_PAGES = {
-  admin: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents', 'profile-settings'],
-  mayor: ['dashboard', 'documents', 'add-document', 'transmissions', 'archives', 'reports', 'logs', 'profile-settings'],
-  office: ['dashboard', 'documents', 'add-document', 'transmissions', 'reports', 'logs', 'profile-settings'],
+  admin: ['dashboard', 'documents', 'add-document', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents', 'profile-settings'],
+  mayor: ['dashboard', 'documents', 'add-document', 'archives', 'reports', 'logs', 'profile-settings'],
+  office: ['dashboard', 'documents', 'add-document', 'reports', 'logs', 'profile-settings'],
   receptionist: ['dashboard', 'scan-documents', 'documents', 'reports', 'logs', 'profile-settings'],
 };
 
@@ -483,14 +482,34 @@ function App() {
   };
 
   const handleRouteDocument = async (transmission) => {
-    const savedTransmission = await runMutation(() => transmissionService.create({
-      ...transmission,
-      transmissionDate: transmission.transmissionDate || new Date().toISOString().split('T')[0],
-    }));
-    upsertTransmission(savedTransmission);
-    showActionToast('saved', 'Routed successfully');
+    // Legacy route handler kept for compatibility — prefer handleSendDocument.
+    const toOfficeId = transmission?.toOfficeId;
+    const documentId = transmission?.documentId;
+    if (!documentId || !toOfficeId) return null;
+    return handleSendDocument(documentId, [toOfficeId]);
+  };
+
+  const handleSendDocument = async (documentId, toOfficeIds = []) => {
+    const savedDoc = await runMutation(() => documentService.send(documentId, toOfficeIds));
+    upsertDocument(savedDoc);
+    showActionToast('saved', 'Document sent successfully');
     refreshAfterMutation();
-    return savedTransmission;
+    return savedDoc;
+  };
+
+  const handleReturnToSender = async (documentId, note = '') => {
+    const confirmed = await confirmUser({
+      type: 'warning',
+      title: 'Return to sender?',
+      message: 'This marks the rejected external document as returned to the citizen sender.',
+      confirmLabel: 'Return to sender',
+    });
+    if (!confirmed) return null;
+    const savedDoc = await runMutation(() => documentService.returnToSender(documentId, note));
+    upsertDocument(savedDoc);
+    showActionToast('saved', 'Returned to sender');
+    refreshAfterMutation();
+    return savedDoc;
   };
 
   const handleUpdateTransmission = async (id, updates) => {
@@ -578,10 +597,12 @@ function App() {
       document: {
         ...newDoc,
         scannedText: text,
-        originOfficeId: newDoc.originOfficeId || newTransmission.fromOfficeId || getUserOfficeId(),
-        currentOfficeId: newDoc.currentOfficeId || getUserOfficeId(),
-        destinationOfficeId: newDoc.destinationOfficeId || newTransmission.toOfficeId || newDoc.currentOfficeId || '',
-        intakeStatus: 'Pending Review',
+        originOfficeId: newDoc.originOfficeId || newTransmission?.fromOfficeId || getUserOfficeId(),
+        currentOfficeId: newDoc.currentOfficeId || newDoc.destinationOfficeId || getUserOfficeId(),
+        destinationOfficeId: newDoc.destinationOfficeId || newTransmission?.toOfficeId || newDoc.currentOfficeId || '',
+        intakeStatus: 'Approved',
+        senderEmail: '',
+        priorityLevel: 'normal',
       },
       attachment,
     }));
@@ -932,7 +953,8 @@ function App() {
                 onAdd={handleAddDocument}
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
-                onRouteDocument={handleRouteDocument}
+                onSendDocument={handleSendDocument}
+                onReturnToSender={handleReturnToSender}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
                 onVerifyDocument={handleVerifyDocument}
@@ -949,14 +971,26 @@ function App() {
             );
           case 'transmissions':
             return (
-              <TransmissionList
-                transmissions={visibleTransmissions}
+              <DocumentList
+                key={"documents-fallback-{documentFocusKey}"}
                 documents={visibleDocuments}
+                transmissions={[]}
                 offices={offices}
                 users={users}
+                documentTypes={documentTypes}
+                senderNotifications={senderNotifications}
                 currentUser={currentUser}
-                onAdd={handleAddTransmission}
-                onUpdate={handleUpdateTransmission}
+                currentRole={currentRole}
+                onDelete={handleDeleteDocument}
+                onEdit={handleEditDocument}
+                onAdd={handleAddDocument}
+                onSendDocument={handleSendDocument}
+                onReturnToSender={handleReturnToSender}
+                onVerifyDocument={handleVerifyDocument}
+                onResubmitDocument={handleResubmitDocument}
+                onProcessDocument={handleProcessDocument}
+                onArchiveDocument={handleArchiveDocument}
+                onResendSenderNotification={handleResendSenderNotification}
                 onNotify={notifyUser}
               />
             );
@@ -1047,7 +1081,8 @@ function App() {
                 onAdd={handleAddDocument}
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
-                onRouteDocument={handleRouteDocument}
+                onSendDocument={handleSendDocument}
+                onReturnToSender={handleReturnToSender}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
                 onVerifyDocument={handleVerifyDocument}
@@ -1064,14 +1099,26 @@ function App() {
             );
           case 'transmissions':
             return (
-              <TransmissionList
-                transmissions={visibleTransmissions}
+              <DocumentList
+                key={"documents-fallback-{documentFocusKey}"}
                 documents={visibleDocuments}
+                transmissions={[]}
                 offices={offices}
                 users={users}
+                documentTypes={documentTypes}
+                senderNotifications={senderNotifications}
                 currentUser={currentUser}
-                onAdd={handleAddTransmission}
-                onUpdate={handleUpdateTransmission}
+                currentRole={currentRole}
+                onDelete={handleDeleteDocument}
+                onEdit={handleEditDocument}
+                onAdd={handleAddDocument}
+                onSendDocument={handleSendDocument}
+                onReturnToSender={handleReturnToSender}
+                onVerifyDocument={handleVerifyDocument}
+                onResubmitDocument={handleResubmitDocument}
+                onProcessDocument={handleProcessDocument}
+                onArchiveDocument={handleArchiveDocument}
+                onResendSenderNotification={handleResendSenderNotification}
                 onNotify={notifyUser}
               />
             );
@@ -1140,7 +1187,8 @@ function App() {
                 onAdd={handleAddDocument}
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
-                onRouteDocument={handleRouteDocument}
+                onSendDocument={handleSendDocument}
+                onReturnToSender={handleReturnToSender}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
                 onVerifyDocument={handleVerifyDocument}
@@ -1157,14 +1205,26 @@ function App() {
             );
           case 'transmissions':
             return (
-              <TransmissionList
-                transmissions={visibleTransmissions}
+              <DocumentList
+                key={"documents-fallback-{documentFocusKey}"}
                 documents={visibleDocuments}
+                transmissions={[]}
                 offices={offices}
                 users={users}
+                documentTypes={documentTypes}
+                senderNotifications={senderNotifications}
                 currentUser={currentUser}
-                onAdd={handleAddTransmission}
-                onUpdate={handleUpdateTransmission}
+                currentRole={currentRole}
+                onDelete={handleDeleteDocument}
+                onEdit={handleEditDocument}
+                onAdd={handleAddDocument}
+                onSendDocument={handleSendDocument}
+                onReturnToSender={handleReturnToSender}
+                onVerifyDocument={handleVerifyDocument}
+                onResubmitDocument={handleResubmitDocument}
+                onProcessDocument={handleProcessDocument}
+                onArchiveDocument={handleArchiveDocument}
+                onResendSenderNotification={handleResendSenderNotification}
                 onNotify={notifyUser}
               />
             );
@@ -1198,8 +1258,7 @@ function App() {
                 documentTypes={documentTypes}
                 currentUser={currentUser}
                 onAddDocument={handleAddDocument}
-                onAddTransmission={handleRouteDocument}
-                onReceiveTransmission={handleUpdateTransmission}
+                onReturnToSender={handleReturnToSender}
                 onNavigate={handleNavigate}
                 onOpenDocument={handleOpenDocument}
                 onNotify={notifyUser}
@@ -1220,9 +1279,8 @@ function App() {
                 onAdd={handleAddDocument}
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
-                onRouteDocument={handleRouteDocument}
-                onReceiveTransmission={handleUpdateTransmission}
-                onSetDocumentStatus={handleSetDocumentStatus}
+                onSendDocument={handleSendDocument}
+                onReturnToSender={handleReturnToSender}
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
                 onProcessDocument={handleProcessDocument}
@@ -1234,31 +1292,16 @@ function App() {
                 onNotify={notifyUser}
               />
             );
-          case 'transmissions':
-            return (
-              <TransmissionList
-                transmissions={visibleTransmissions}
-                documents={visibleDocuments}
-                offices={offices}
-                users={users}
-                currentUser={currentUser}
-                onAdd={handleAddTransmission}
-                onUpdate={handleUpdateTransmission}
-                onNotify={notifyUser}
-              />
-            );
           default:
             return (
               <ReceptionistDashboard
                 documents={visibleDocuments}
-                transmissions={visibleTransmissions}
                 offices={offices}
                 users={users}
                 documentTypes={documentTypes}
                 currentUser={currentUser}
                 onAddDocument={handleAddDocument}
-                onAddTransmission={handleRouteDocument}
-                onReceiveTransmission={handleUpdateTransmission}
+                onReturnToSender={handleReturnToSender}
                 onNavigate={handleNavigate}
                 onOpenDocument={handleOpenDocument}
                 onNotify={notifyUser}

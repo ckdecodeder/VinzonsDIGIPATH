@@ -705,15 +705,14 @@ const ReportsPage = ({
               })}
             </div>
 
-            {/* Priority Breakdown */}
+            {/* FIFO note instead of priority */}
             <div className="card">
               <div className="card-header">
-                <h3 className="card-title">Priority Breakdown</h3>
+                <h3 className="card-title">Processing Order</h3>
               </div>
-              {Object.entries(priorityCounts).map(([p, count]) => {
-                const info = getPriorityInfo(p);
-                return <HorizontalBar key={p} label={info.label} value={count} max={filteredDocs.length} color={info.color} />;
-              })}
+              <p className="field-hint" style={{ padding: '0.75rem 1rem' }}>
+                Documents are processed first-come-first-served by registration date (oldest first). Priority levels have been removed.
+              </p>
             </div>
 
             {/* Direction Split */}

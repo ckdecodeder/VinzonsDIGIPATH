@@ -7,12 +7,12 @@ export const getWorkflowStatus = (value) => {
 
 const ROUTING_STEP = { id: 'routed', label: 'Sent to Office' };
 
-export const hasUsedOfficeRouting = (doc, { hasPendingTransmission = false } = {}) => {
-  if (hasPendingTransmission) return true;
+export const hasUsedOfficeRouting = (doc) => {
   if (getWorkflowStatus(doc) === 'In Transit') return true;
   if (doc?.lastRoutedAt) return true;
+  if (Array.isArray(doc?.sendHistory) && doc.sendHistory.length) return true;
   return (doc?.timeline || []).some((event) => (
-    /routed|transit|transmission/i.test(`${event.label || ''} ${event.details || ''}`)
+    /routed|transit|transmission|sent to office|document_sent/i.test(`${event.label || ''} ${event.details || ''} ${event.action || ''}`)
   ));
 };
 
@@ -33,8 +33,9 @@ export const getDocumentActionLabel = (doc, options = {}) => {
   const intakeStatus = doc?.intakeStatus || 'Approved';
   const status = getWorkflowStatus(doc);
 
-  if (intakeStatus === 'Pending Review') return 'Pending Review';
+  if (intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') return 'Returned to Sender';
   if (intakeStatus === 'Rejected') return 'Rejected';
+  if (intakeStatus === 'Pending Review') return 'At Mayor';
 
   if (status === 'In Transit' || options.hasPendingTransmission) {
     return 'Sent to Office';
@@ -58,48 +59,56 @@ export const getDocumentActionLabel = (doc, options = {}) => {
   return actionLabels[status] || status;
 };
 
-// Custody flow: sender → receptionist → mayor → receptionist → sender
-// Optional office routing when the file is sent to another office.
+// External: sender → receptionist → mayor → (reject) receptionist → sender
+// Internal: office → send to other offices (chronological)
 const WORKFLOW_FLOWS = {
   signing: [
     { id: 'submitted', label: 'Submitted' },
-    { id: 'pending_review', label: 'Pending Review' },
-    { id: 'approved', label: 'Approved' },
-    { id: 'received', label: 'Received' },
+    { id: 'at_mayor', label: "Mayor's Office" },
     { id: 'for_signing', label: 'Signing' },
     { id: 'signed', label: 'Signed' },
     { id: 'acknowledged', label: 'Released' },
   ],
   filing: [
     { id: 'submitted', label: 'Submitted' },
-    { id: 'pending_review', label: 'Pending Review' },
-    { id: 'approved', label: 'Approved' },
+    { id: 'at_mayor', label: "Mayor's Office" },
     { id: 'for_filing', label: 'Filing' },
     { id: 'acknowledged', label: 'Released' },
   ],
   acknowledge_only: [
     { id: 'submitted', label: 'Submitted' },
-    { id: 'pending_review', label: 'Pending Review' },
-    { id: 'approved', label: 'Approved' },
+    { id: 'at_mayor', label: "Mayor's Office" },
     { id: 'received', label: 'Received' },
     { id: 'acknowledged', label: 'Released' },
   ],
   rejected: [
     { id: 'submitted', label: 'Submitted' },
-    { id: 'pending_review', label: 'Pending Review' },
+    { id: 'at_mayor', label: "Mayor's Office" },
     { id: 'rejected', label: 'Rejected' },
+    { id: 'returned', label: 'Returned to Sender' },
+  ],
+  internal: [
+    { id: 'submitted', label: 'Registered' },
+    { id: 'received', label: 'At Office' },
+    { id: 'routed', label: 'Sent to Office' },
+    { id: 'acknowledged', label: 'Completed' },
   ],
 };
 
 const ROUTING_ANCHORS = {
-  signing: 'received',
+  signing: 'at_mayor',
   acknowledge_only: 'received',
-  filing: 'approved',
+  filing: 'at_mayor',
+  internal: 'received',
 };
 
 const getWorkflowFlowKey = (doc, status) => {
   const intakeStatus = doc?.intakeStatus || 'Approved';
-  if (intakeStatus === 'Rejected') return 'rejected';
+  if (intakeStatus === 'Rejected' || intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') {
+    return 'rejected';
+  }
+
+  if (doc?.documentDirection === 'Outgoing') return 'internal';
 
   const effectiveStatus = status === 'Archived'
     ? getWorkflowStatus(doc?.statusBeforeArchive || 'Received')
@@ -115,11 +124,7 @@ const getWorkflowFlowKey = (doc, status) => {
   if (effectiveStatus === 'For Filing') return 'filing';
   if (['For Signing', 'Signed'].includes(effectiveStatus)) return 'signing';
 
-  const registrationStatus = getWorkflowStatus(doc);
-  if (registrationStatus === 'For Filing') return 'filing';
-  if (registrationStatus === 'For Signing') return 'signing';
-
-  return 'signing';
+  return 'acknowledge_only';
 };
 
 const buildFlowSteps = (flowKey, doc, options) => {
@@ -137,12 +142,14 @@ const getTerminalStepId = (flowKey, doc, status) => {
   if (before === 'For Filing') return 'for_filing';
   if (flowKey === 'filing') return 'for_filing';
   if (flowKey === 'acknowledge_only') return 'acknowledged';
+  if (flowKey === 'rejected') return 'returned';
   return 'signed';
 };
 
 const getActiveStepId = (doc, intakeStatus, status, options) => {
-  if (intakeStatus === 'Pending Review') return 'pending_review';
+  if (intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') return 'returned';
   if (intakeStatus === 'Rejected') return 'rejected';
+  if (intakeStatus === 'Pending Review') return 'at_mayor';
 
   if (status === 'In Transit' || options.hasPendingTransmission) return 'routed';
 
@@ -154,8 +161,11 @@ const getActiveStepId = (doc, intakeStatus, status, options) => {
   if (status === 'Signed') return 'signed';
   if (status === 'For Filing') return 'for_filing';
   if (status === 'For Signing') return 'for_signing';
-  if (status === 'Received' || status === 'Processing') return 'received';
-  if (intakeStatus === 'Approved') return 'approved';
+  if (status === 'Received' || status === 'Processing') {
+    if (doc?.documentDirection === 'Outgoing') return 'received';
+    return 'at_mayor';
+  }
+  if (intakeStatus === 'Approved') return 'at_mayor';
 
   return 'submitted';
 };
@@ -184,8 +194,8 @@ const markStepStates = (steps, activeStepId, intakeStatus, doc, status) => {
       return { ...step, state: 'skipped' };
     }
 
-    if (status === 'Archived') {
-      return { ...step, state: 'done' };
+    if (status === 'Archived' || intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') {
+      return { ...step, state: index <= activeIndex || activeIndex === -1 ? 'done' : 'upcoming' };
     }
 
     if (activeIndex === -1) {

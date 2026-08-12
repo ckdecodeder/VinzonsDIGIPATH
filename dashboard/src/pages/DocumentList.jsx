@@ -5,7 +5,7 @@ import ScannedPreviewModal from '../components/ScannedPreviewModal';
 import DocumentWorkflowPipeline from '../components/DocumentWorkflowPipeline';
 import {
   Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
-  Flag, User, Phone, Mail, MessageSquare, ChevronDown, ChevronUp,
+  User, Phone, MessageSquare, ChevronDown, ChevronUp,
   Paperclip, Upload, Download, MapPin, History, ArrowRightLeft,
   CheckCircle2, Archive, Clock, CalendarDays, AlertTriangle,
 } from 'lucide-react';
@@ -13,11 +13,12 @@ import {
   documentTypes as defaultDocumentTypes,
   offices as defaultOffices,
   users as defaultUsers,
-  priorityLevels,
-  getPriorityInfo,
 } from '../data/mockData';
-import { compareNewest } from '../utils/sorting';
+import { compareOldest } from '../utils/sorting';
 import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
+
+const getPriorityInfo = () => ({ id: 'normal', label: 'Normal', color: 'var(--text-muted)', bg: 'transparent' });
+const priorityLevels = [];
 
 const OTHER_OFFICE_VALUE = '__external_source__';
 
@@ -32,10 +33,12 @@ const DocumentList = ({
   onDelete,
   onEdit,
   onAdd,
+  onSendDocument,
   onRouteDocument,
   onReceiveTransmission,
   onVerifyDocument,
   onResubmitDocument,
+  onReturnToSender,
   onProcessDocument,
   onArchiveDocument,
   senderNotifications = [],
@@ -46,10 +49,19 @@ const DocumentList = ({
   onFocusDocumentConsumed,
   onNotify,
 }) => {
+  const sendDocument = onSendDocument || (async (documentId, toOfficeIds) => {
+    if (onRouteDocument && toOfficeIds?.[0]) {
+      return onRouteDocument({ documentId, toOfficeId: toOfficeIds[0], fromOfficeId: currentUser?.officeId });
+    }
+    return null;
+  });
+
   const getInitialForm = () => {
     const myOfficeId = currentUser?.officeId || offices[0]?.id || 'OFF-001';
     const defaultDestination = offices.find(o => o.id !== myOfficeId)?.id || '';
     const isOffice = currentRole === 'office' || currentUser?.role === 'Office';
+    const isReceptionist = currentRole === 'receptionist' || currentUser?.role === 'Receptionist';
+    const mayorsOfficeId = offices.find(o => o.name?.toLowerCase().includes('mayor'))?.id || 'OFF-001';
     return {
       subject: '',
       documentDirection: isOffice ? 'Outgoing' : 'Incoming',
@@ -60,17 +72,17 @@ const DocumentList = ({
       documentTypeOther: '',
       originOfficeId: myOfficeId,
       originOfficeOther: '',
-      currentOfficeId: myOfficeId,
-      destinationOfficeId: isOffice ? defaultDestination : '',
+      currentOfficeId: isReceptionist ? mayorsOfficeId : myOfficeId,
+      destinationOfficeId: isReceptionist ? mayorsOfficeId : (isOffice ? defaultDestination : ''),
       destinationOfficeOther: '',
       senderName: isOffice
         ? `${currentUser?.fname || ''} ${currentUser?.lname || ''}`.trim()
         : '',
       senderContact: '',
       senderEmail: '',
-      notifySender: true,
+      notifySender: !isOffice,
       senderNotificationConsent: true,
-      senderNotificationChannels: ['sms', 'email'],
+      senderNotificationChannels: ['sms'],
       remarks: '',
       scannedText: '',
     };
@@ -108,12 +120,7 @@ const DocumentList = ({
   const [processingError, setProcessingError] = useState('');
   const [documentFormErrors, setDocumentFormErrors] = useState({});
   const [documentFormErrorSummary, setDocumentFormErrorSummary] = useState('');
-  const [routeForm, setRouteForm] = useState({
-    fromOfficeId: currentUser?.officeId || offices[0]?.id || 'OFF-001',
-    toOfficeId: offices[1]?.id || offices[0]?.id || 'OFF-001',
-    transmissionDate: new Date().toISOString().split('T')[0],
-    transmissionType: 'Internal',
-  });
+  const [sendOfficeIds, setSendOfficeIds] = useState([]);
 
   useEffect(() => {
     if (!initialStatusFilter) return;
@@ -136,18 +143,18 @@ const DocumentList = ({
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterStatus, filterDirection, filterPriority, filterDate]);
+  }, [search, filterStatus, filterDirection, filterDate]);
 
   const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
   const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
   const transmittableStatuses = [...registrationStatuses, ...finalWorkflowStatuses];
-  const statuses = ['All', 'Received', 'In Transit', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
+  const statuses = ['All', 'Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived', 'Returned to Sender'];
   const directions = currentRole === 'receptionist'
     ? ['All', 'Incoming']
     : currentRole === 'office'
       ? ['All', 'Outgoing']
       : ['All', 'Incoming', 'Outgoing'];
-  const priorities = ['All', ...priorityLevels.map(p => p.id)];
+  const priorities = ['All'];
 
   const getWorkflowStatus = (value) => {
     const status = typeof value === 'string' ? value : value?.status;
@@ -160,8 +167,8 @@ const DocumentList = ({
 
   const getTableStatusDisplay = (doc) => {
     const intake = doc.intakeStatus || 'Approved';
-    if (intake === 'Pending Review') {
-      return { label: 'Pending Review', className: 'status-pending' };
+    if (intake === 'Returned to Sender') {
+      return { label: 'Returned to Sender', className: 'status-archived' };
     }
     if (intake === 'Rejected') {
       return { label: 'Rejected', className: 'status-archived' };
@@ -249,18 +256,14 @@ const DocumentList = ({
   };
 
   const getWorkflowExplanation = (doc) => {
-    const pending = getPendingTransmission(doc.id);
     const status = getWorkflowStatus(doc);
-    if (doc.intakeStatus === 'Pending Review') {
-      return 'Waiting for Admin or Mayor intake review before the document can be routed, signed, filed, or archived.';
+    if (doc.intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') {
+      return 'Returned to the external sender.';
     }
     if (doc.intakeStatus === 'Rejected') {
       return doc.rejectionReason
-        ? `Rejected for correction: ${doc.rejectionReason}`
-        : 'Rejected for correction. Resubmit after fixing the document details.';
-    }
-    if (pending) {
-      return `Waiting for ${getOfficeName(pending.toOfficeId)} to receive transmission ${pending.id}.`;
+        ? `Rejected by Mayor — return to sender: ${doc.rejectionReason}`
+        : 'Rejected by Mayor — Reception should return it to the sender.';
     }
     if (status === 'For Signing') {
       return 'Waiting for Mayor/Admin signing action.';
@@ -269,16 +272,18 @@ const DocumentList = ({
       return 'Waiting for Mayor/Admin acknowledgement.';
     }
     if (status === 'Signed') {
-      return 'Signed and ready to route back or archive.';
+      return 'Signed and ready to acknowledge or archive.';
     }
     if (status === 'Acknowledged') {
-      return 'Acknowledged and ready to route back or archive.';
+      return 'Released/acknowledged and ready to archive.';
     }
     if (status === 'Archived') {
-      return 'Archived as a final record. No routing or status actions are allowed.';
+      return 'Archived as a final record.';
     }
     if (status === 'Received' && isApprovedForWorkflow(doc)) {
-      return 'Approved and ready to acknowledge or route.';
+      return doc.documentDirection === 'Outgoing'
+        ? 'At current office — ready to send to other offices.'
+        : "At Mayor's Office (FIFO queue).";
     }
     return '';
   };
@@ -370,23 +375,25 @@ const DocumentList = ({
         getCurrentLocation(d).toLowerCase().includes(term);
       const matchStatus = filterStatus === 'All' || getWorkflowStatus(d) === filterStatus;
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
-      const matchPriority = filterPriority === 'All' || d.priorityLevel === filterPriority;
       const receivedDate = d.dateReceived || '';
       const matchDate = !filterDate || receivedDate === filterDate;
-      return matchSearch && matchStatus && matchDir && matchPriority && matchDate;
+      return matchSearch && matchStatus && matchDir && matchDate;
     })
     .sort((a, b) => {
-      const priorityOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
-      if (sortBy === 'priority') {
-        const diff = (priorityOrder[a.priorityLevel] || 2) - (priorityOrder[b.priorityLevel] || 2);
-        if (diff !== 0) return sortAsc ? -diff : diff;
-        return compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
+      // FIFO by default: oldest registration first
+      if (sortBy === 'dateReceived' || sortBy === 'createdAt') {
+        const fifo = compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']);
+        return sortAsc === false ? -fifo : fifo;
       }
-      if (sortBy === 'dateReceived') {
-        const diff = compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
-        return sortAsc ? -diff : diff;
+      if (sortBy === 'subject') {
+        const diff = (a.subject || '').localeCompare(b.subject || '');
+        return sortAsc ? diff : -diff;
       }
-      return compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']);
+      if (sortBy === 'status') {
+        const diff = getWorkflowStatus(a).localeCompare(getWorkflowStatus(b));
+        return sortAsc ? diff : -diff;
+      }
+      return compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']);
     });
 
   const totalPages = Math.max(1, Math.ceil(filteredDocs.length / pageSize));
@@ -569,62 +576,57 @@ const DocumentList = ({
           scannedImageUrl: nextScannedFiles[0]?.dataUrl || nextScannedFiles[0]?.url || '',
         };
 
-    setShowForm(false);
-    setEditDoc(null);
-    setAttachmentFile(null);
-    setFormScannedFiles([]);
-
-    if (editingDoc) {
-      await onEdit(payload);
-      return;
-    }
-
-    const saved = await onAdd(payload);
-    // Office staff: register then route directly to the chosen destination.
-    if (isOfficeStaff && saved?.id && normalizedFormData.destinationOfficeId) {
-      await onRouteDocument({
-        documentId: saved.id,
-        fromOfficeId: myOfficeId,
-        toOfficeId: normalizedFormData.destinationOfficeId,
-        transmissionDate: normalizedFormData.dateReceived,
-        transmissionType: 'Internal',
-      });
+    try {
+      if (editingDoc) {
+        await onEdit(payload);
+      } else {
+        const saved = await onAdd(payload);
+        if (isOfficeStaff && saved?.id && normalizedFormData.destinationOfficeId) {
+          await sendDocument(saved.id, [normalizedFormData.destinationOfficeId]);
+        }
+      }
+      setShowForm(false);
+      setEditDoc(null);
+      setAttachmentFile(null);
+      setFormScannedFiles([]);
+    } catch {
+      // Keep form open; shared handler shows the API error.
     }
   };
 
   const openRouteModal = (doc) => {
     const fromOfficeId = doc.currentOfficeId || currentUser?.officeId || offices[0]?.id || 'OFF-001';
+    const queued = Array.isArray(doc.sendQueue) ? doc.sendQueue : [];
     setRouteDoc(doc);
-    setRouteForm({
-      fromOfficeId,
-      toOfficeId: doc.destinationOfficeId && doc.destinationOfficeId !== fromOfficeId
-        ? doc.destinationOfficeId
-        : offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId,
-      transmissionDate: new Date().toISOString().split('T')[0],
-      transmissionType: 'Internal',
-    });
+    setSendOfficeIds(
+      queued.length
+        ? queued
+        : [offices.find(o => o.id !== fromOfficeId)?.id].filter(Boolean),
+    );
   };
 
   const handleRouteSubmit = async (e) => {
     e.preventDefault();
     if (!routeDoc) return;
-    if (routeForm.fromOfficeId === routeForm.toOfficeId) {
-      notify('Choose a different destination office before routing.');
+    const destinations = sendOfficeIds.filter(Boolean);
+    if (!destinations.length) {
+      notify('Select at least one destination office.');
+      return;
+    }
+    if (destinations.includes(routeDoc.currentOfficeId)) {
+      notify('Cannot send a document to its current office.');
       return;
     }
 
     const routingDoc = routeDoc;
     setRouteDoc(null);
-
-    await onRouteDocument({
-      documentId: routingDoc.id,
-      ...routeForm,
-    });
+    setSendOfficeIds([]);
+    await sendDocument(routingDoc.id, destinations);
   };
 
   const handleReceive = async (doc) => {
     const pending = getPendingTransmission(doc.id);
-    if (!pending) return;
+    if (!pending || !onReceiveTransmission) return;
 
     try {
       await onReceiveTransmission(pending.id, {
@@ -860,12 +862,15 @@ const DocumentList = ({
   const canCreate = currentRole === 'admin' || currentRole === 'receptionist' || isOfficeUser;
   const canEdit = currentRole === 'admin' || currentRole === 'receptionist';
   const canManageAttachments = canEdit || isOfficeUser;
-  const canRoute = isApprovalUser || currentRole === 'receptionist' || isOfficeUser;
+  const canRoute = isApprovalUser || isOfficeUser;
   const canVerify = isApprovalUser;
   const isApprovedForWorkflow = (doc) => (doc.intakeStatus || 'Approved') === 'Approved';
-  const canResubmitDocument = (doc) => doc.intakeStatus === 'Rejected' && registrationStatuses.includes(getWorkflowStatus(doc)) && (
-    currentRole === 'admin' || doc.currentOfficeId === currentUser?.officeId
+  const canReturnToSender = (doc) => (
+    doc.intakeStatus === 'Rejected'
+    && (currentRole === 'admin' || currentRole === 'receptionist')
+    && (currentRole === 'admin' || doc.currentOfficeId === currentUser?.officeId)
   );
+  const canResubmitDocument = () => false;
   const canRouteDocument = (doc) => {
     const status = getWorkflowStatus(doc);
     const finalStatus = finalWorkflowStatuses.includes(status);
@@ -873,16 +878,19 @@ const DocumentList = ({
       isApprovalUser || (!finalStatus && doc.currentOfficeId === currentUser?.officeId)
     );
   };
-  const canReceiveTransmission = (transmission) => Boolean(transmission) && !transmission.receivedBy && (
-    transmission.toOfficeId === currentUser?.officeId
-  );
+  const canReceiveTransmission = () => false;
   const canTakeDocumentAction = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && ['Received', 'For Signing', 'For Filing', ...finalWorkflowStatuses].includes(getWorkflowStatus(doc));
   const canArchiveDocument = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && finalWorkflowStatuses.includes(getWorkflowStatus(doc));
+  const canRejectDocument = (doc) => (
+    canVerify
+    && ['Approved', 'Pending Review'].includes(doc.intakeStatus || 'Approved')
+    && registrationStatuses.includes(getWorkflowStatus(doc))
+  );
   const pageTitle = isOfficeUser ? 'My Documents' : 'Documents';
   const pageSubtitle = isOfficeUser
-    ? 'Send documents to reception or other offices and track their progress'
-    : 'Scan, route, acknowledge, sign, file, and archive official documents';
-  const createButtonLabel = isOfficeUser ? 'Send Document' : 'New Document';
+    ? 'Send documents to other offices in chronological order and track progress'
+    : 'Register external documents, mayor actions, and office-to-office sending';
+  const createButtonLabel = isOfficeUser ? 'Send Document' : (currentRole === 'receptionist' ? 'Register Document' : 'New Document');
   const destinationOffices = offices.filter(o => o.id !== (currentUser?.officeId || formData.currentOfficeId));
 
   const renderDocumentActions = (doc, pendingTransmission) => {
@@ -890,28 +898,23 @@ const DocumentList = ({
     return (
       <div className="workflow-actions">
         {canVerify && doc.intakeStatus === 'Pending Review' && (
-          <>
-            <button className="btn btn-sm btn-success" onClick={() => onVerifyDocument?.(doc.id, 'Approved')}>
-              <CheckCircle2 size={14} /> Approve
-            </button>
-            <button className="btn btn-sm btn-danger" onClick={() => handleRejectDocument(doc)}>
-              <X size={14} /> Reject
-            </button>
-          </>
+          <button className="btn btn-sm btn-success" onClick={() => onVerifyDocument?.(doc.id, 'Approved')}>
+            <CheckCircle2 size={14} /> Approve
+          </button>
         )}
-        {canResubmitDocument(doc) && (
-          <button className="btn btn-sm btn-secondary" onClick={() => onResubmitDocument?.(doc.id)}>
-            <Clock size={14} /> Resubmit
+        {canRejectDocument(doc) && (
+          <button className="btn btn-sm btn-danger" onClick={() => handleRejectDocument(doc)}>
+            <X size={14} /> Reject
+          </button>
+        )}
+        {canReturnToSender(doc) && (
+          <button className="btn btn-sm btn-secondary" onClick={() => onReturnToSender?.(doc.id)}>
+            <Inbox size={14} /> Return to Sender
           </button>
         )}
         {canRouteDocument(doc) && (
           <button className="btn btn-sm btn-primary" onClick={() => openRouteModal(doc)}>
-            <Send size={14} /> Route
-          </button>
-        )}
-        {canReceiveTransmission(pendingTransmission) && (
-          <button className="btn btn-sm btn-success" onClick={() => handleReceive(doc)}>
-            <CheckCircle2 size={14} /> Receive
+            <Send size={14} /> Send
           </button>
         )}
         {canTakeDocumentAction(doc) && (
@@ -919,12 +922,12 @@ const DocumentList = ({
             <MessageSquare size={14} /> Add Action
           </button>
         )}
-        {canTakeDocumentAction(doc) && status === 'For Signing' && (
+        {canTakeDocumentAction(doc) && ['Received', 'For Signing'].includes(status) && (
           <button className="btn btn-sm btn-success" onClick={() => openProcessingAction(doc, 'sign_document')}>
             <CheckCircle2 size={14} /> Signed
           </button>
         )}
-        {canTakeDocumentAction(doc) && ['Received', 'For Filing'].includes(status) && (
+        {canTakeDocumentAction(doc) && ['Received', 'For Filing', 'For Signing', 'Signed'].includes(status) && (
           <button className="btn btn-sm btn-success" onClick={() => openProcessingAction(doc, 'acknowledge_document')}>
             <CheckCircle2 size={14} /> Acknowledge
           </button>
@@ -934,7 +937,7 @@ const DocumentList = ({
             <Archive size={14} /> Archive
           </button>
         )}
-        {!canVerify && !canResubmitDocument(doc) && !canRouteDocument(doc) && !canReceiveTransmission(pendingTransmission) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
+        {!canVerify && !canReturnToSender(doc) && !canRouteDocument(doc) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
           <p className="detail-empty">No actions are currently available for your role and this document status.</p>
         )}
       </div>
@@ -1004,20 +1007,6 @@ const DocumentList = ({
                   ))}
                 </select>
               </div>
-
-              <div className="filter-dropdown">
-                <label>Priority</label>
-                <select className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
-                  {priorities.map(priority => {
-                    const pInfo = priority === 'All' ? null : getPriorityInfo(priority);
-                    return (
-                      <option key={priority} value={priority}>
-                        {priority === 'All' ? 'All Priority' : pInfo?.label}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
             </div>
           </div>
         }
@@ -1029,8 +1018,8 @@ const DocumentList = ({
             <tr>
               <th className="documents-col-tracking">Tracking #</th>
               <th className="documents-col-subject">Subject</th>
-              <th className="documents-col-priority" style={{ cursor: 'pointer' }} onClick={() => handleSort('priority')}>
-                Priority <SortIcon field="priority" />
+              <th className="documents-col-priority">
+                Sender
               </th>
               <th className="documents-col-type">Type</th>
               <th className="documents-col-location">Location</th>
@@ -1045,7 +1034,6 @@ const DocumentList = ({
           </thead>
           <tbody>
             {paginatedDocs.length > 0 ? paginatedDocs.map(doc => {
-              const pInfo = getPriorityInfo(doc.priorityLevel);
               const isExpanded = expandedRow === doc.id;
               const pendingTransmission = getPendingTransmission(doc.id);
               const files = getDocumentFiles(doc);
@@ -1064,18 +1052,8 @@ const DocumentList = ({
                       <span className="td-mono documents-tracking-code">{doc.trackingNumber}</span>
                     </td>
                     <td className="td-primary documents-col-subject" title={doc.subject}>{doc.subject}</td>
-                    <td className="documents-col-priority">
-                      <span
-                        className="documents-priority-badge"
-                        style={{
-                          background: pInfo.bg,
-                          color: pInfo.color,
-                          border: `1px solid ${pInfo.color}22`,
-                        }}
-                      >
-                        <Flag size={9} />
-                        {pInfo.label}
-                      </span>
+                    <td className="documents-col-priority" title={doc.senderName || '-'}>
+                      {doc.senderName || '-'}
                     </td>
                     <td className="documents-col-type" title={getDocumentTypeLabel(doc)}>{getDocumentTypeLabel(doc)}</td>
                     <td className="documents-col-location" title={getCurrentLocation(doc)}>
@@ -1316,7 +1294,7 @@ const DocumentList = ({
                     <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
                     {currentRole !== 'receptionist' && (
                       <>
-                        <div className="detail-pair"><span>RFID Tag</span><strong>{doc.rfidTag || '-'}</strong></div>
+                        <div className="detail-pair"><span>From Organization</span><strong>{doc.originOfficeOther || '-'}</strong></div>
                         <div className="detail-pair"><span>Last Detected</span><strong>{doc.lastDetectedOfficeId ? `${getOfficeName(doc.lastDetectedOfficeId)} - ${formatDateTime(doc.lastDetectedAt)}` : '-'}</strong></div>
                       </>
                     )}
@@ -1326,8 +1304,8 @@ const DocumentList = ({
                     <h4><User size={14} /> Sender</h4>
                     <div className="detail-pair"><span>Name</span><strong>{doc.senderName || '-'}</strong></div>
                     <div className="detail-pair"><span>Contact</span><strong>{doc.senderContact || '-'}</strong></div>
-                    <div className="detail-pair"><span>Email</span><strong>{doc.senderEmail || '-'}</strong></div>
-                    <div className="detail-pair"><span>Priority</span><strong>{getPriorityInfo(doc.priorityLevel).label}</strong></div>
+                    <div className="detail-pair"><span>From Organization</span><strong>{doc.originOfficeOther || '-'}</strong></div>
+                    <div className="detail-pair"><span>Contact</span><strong>{doc.senderContact || '-'}</strong></div>
                     <div className="detail-pair"><span>Updates</span><strong>{doc.notifySender === false ? 'Disabled' : (doc.senderNotificationChannels || []).join(', ').toUpperCase() || 'Enabled'}</strong></div>
                   </div>
 
@@ -1469,39 +1447,40 @@ const DocumentList = ({
                   <p className="field-hint">Shortly describe the document so staff can recognize it in lists, reports, and tracking.</p>
                 </div>
                 <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">Document Type</label>
-                    <select
-                      className="form-select"
-                      value={formData.documentTypeId}
-                      onChange={e => setFormData({ ...formData, documentTypeId: e.target.value })}
-                    >
-                      {documentTypes.map(dt => (
-                        <option key={dt.id} value={dt.id}>{dt.category}</option>
-                      ))}
-                    </select>
-                    <p className="field-hint">Classifies the record for filtering and official reports.</p>
-                    {isOtherDocumentType(formData.documentTypeId) && (
-                      <>
-                        <input
-                          className={`form-input${documentFormErrors.documentTypeOther ? ' is-invalid' : ''}`}
-                          type="text"
-                          value={formData.documentTypeOther}
-                          onChange={e => {
-                            setFormData({ ...formData, documentTypeOther: e.target.value });
-                            setDocumentFormErrors(prev => clearFieldError(prev, 'documentTypeOther'));
-                            if (documentFormErrorSummary) setDocumentFormErrorSummary('');
-                          }}
-                          placeholder="Specify document type"
-                          style={{ marginTop: '0.5rem' }}
-                        />
-                        {documentFormErrors.documentTypeOther && (
-                          <p className="form-field-error">{documentFormErrors.documentTypeOther}</p>
-                        )}
-                        <p className="field-hint">Names the custom document type when it is not in the list.</p>
-                      </>
-                    )}
-                  </div>
+                  {!isOfficeUser && (
+                    <div className="form-group">
+                      <label className="form-label">Document Type</label>
+                      <select
+                        className="form-select"
+                        value={formData.documentTypeId}
+                        onChange={e => setFormData({ ...formData, documentTypeId: e.target.value })}
+                      >
+                        {documentTypes.map(dt => (
+                          <option key={dt.id} value={dt.id}>{dt.category}</option>
+                        ))}
+                      </select>
+                      <p className="field-hint">For external/citizen documents only.</p>
+                      {isOtherDocumentType(formData.documentTypeId) && (
+                        <>
+                          <input
+                            className={`form-input${documentFormErrors.documentTypeOther ? ' is-invalid' : ''}`}
+                            type="text"
+                            value={formData.documentTypeOther}
+                            onChange={e => {
+                              setFormData({ ...formData, documentTypeOther: e.target.value });
+                              setDocumentFormErrors(prev => clearFieldError(prev, 'documentTypeOther'));
+                              if (documentFormErrorSummary) setDocumentFormErrorSummary('');
+                            }}
+                            placeholder="Specify document type"
+                            style={{ marginTop: '0.5rem' }}
+                          />
+                          {documentFormErrors.documentTypeOther && (
+                            <p className="form-field-error">{documentFormErrors.documentTypeOther}</p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                   <div className="form-group">
                     <label className="form-label">Direction</label>
                     <select
@@ -1515,50 +1494,9 @@ const DocumentList = ({
                     </select>
                     <p className="field-hint">
                       {isOfficeUser
-                        ? 'Office staff send outgoing documents to reception or other offices.'
-                        : 'Incoming means received from a sender; outgoing means created by the office.'}
+                        ? 'Office staff send outgoing documents to other offices.'
+                        : 'Incoming means received from an external sender.'}
                     </p>
-                  </div>
-                </div>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">
-                      <Flag size={12} style={{ marginRight: '0.25rem' }} />
-                      Priority Level
-                    </label>
-                    <div
-                      className="priority-select-wrap"
-                      style={{
-                        '--priority-color': getPriorityInfo(formData.priorityLevel).color,
-                        '--priority-bg': getPriorityInfo(formData.priorityLevel).bg,
-                      }}
-                    >
-                      <span className="priority-color-preview"></span>
-                      <select
-                        className="form-select priority-select"
-                        value={formData.priorityLevel}
-                        onChange={e => setFormData({ ...formData, priorityLevel: e.target.value })}
-                      >
-                        {priorityLevels.map(p => (
-                          <option key={p.id} value={p.id} style={{ color: p.color, backgroundColor: p.bg }}>{p.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <p className="field-hint">Controls queue urgency and highlights items that need faster attention.</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Pending Workflow Status</label>
-                    <select
-                      className="form-select"
-                      value={formData.status}
-                      onChange={e => setFormData({ ...formData, status: e.target.value })}
-                      disabled={Boolean(editDoc) || (currentRole !== 'receptionist' && currentRole !== 'admin') || isOfficeUser}
-                    >
-                      {registrationStatuses.map(status => (
-                        <option key={status} value={status}>{status}</option>
-                      ))}
-                    </select>
-                    <p className="field-hint">Set the starting workflow status. Mayor actions finish it after approval.</p>
                   </div>
                 </div>
                 <div className="form-grid">
@@ -1571,7 +1509,7 @@ const DocumentList = ({
                       disabled
                       required
                     />
-                    <p className="field-hint">Locked to the registration date.</p>
+                    <p className="field-hint">Locked to the registration date. Processing follows FIFO (oldest first).</p>
                   </div>
                   {isOfficeUser ? (
                     <div className="form-group">
@@ -1596,48 +1534,27 @@ const DocumentList = ({
                       )}
                       <p className="field-hint">Document is registered from your office, then sent to this destination.</p>
                     </div>
+                  ) : currentRole === 'receptionist' ? (
+                    <div className="form-group">
+                      <label className="form-label">Destination</label>
+                      <input className="form-input" value="Mayor's Office" disabled />
+                      <p className="field-hint">External documents are automatically forwarded to the Mayor's Office.</p>
+                    </div>
                   ) : (
                     <div className="form-group">
-                      <label className="form-label">Incoming Office</label>
-                      <select
-                        className="form-select"
-                        value={formData.originOfficeId}
-                        onChange={e => setFormData({
-                          ...formData,
-                          originOfficeId: e.target.value,
-                        })}
+                      <label className="form-label">From Organization (Optional)</label>
+                      <input
+                        className="form-input"
+                        type="text"
+                        value={formData.originOfficeOther}
+                        onChange={e => setFormData({ ...formData, originOfficeOther: e.target.value })}
+                        placeholder="School, agency, barangay, or organization"
                         disabled={Boolean(editDoc)}
-                      >
-                        {(Boolean(editDoc)
-                          ? offices.filter(o => o.id === formData.originOfficeId)
-                          : offices
-                        ).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                      </select>
-                      <p className="field-hint">Where the document came from within the municipal office list.</p>
+                      />
+                      <p className="field-hint">Optional external source for outsider documents.</p>
                     </div>
                   )}
                 </div>
-                {!isOfficeUser && (
-                  <div className="form-group">
-                    <label className="form-label">Receiving Office</label>
-                    <select
-                      className="form-select"
-                      value={formData.currentOfficeId}
-                      onChange={e => setFormData({
-                        ...formData,
-                        currentOfficeId: e.target.value,
-                        destinationOfficeId: e.target.value,
-                      })}
-                      disabled={Boolean(editDoc)}
-                    >
-                      {(Boolean(editDoc)
-                        ? offices.filter(o => o.id === formData.currentOfficeId)
-                        : offices
-                      ).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    <p className="field-hint">The office currently responsible for the document after registration.</p>
-                  </div>
-                )}
                 {isOfficeUser && (
                   <div className="form-group">
                     <label className="form-label">From Office</label>
@@ -1652,7 +1569,7 @@ const DocumentList = ({
 
                 {!isOfficeUser && (
                 <div className="form-group">
-                  <label className="form-label">External / Other Source Office</label>
+                  <label className="form-label">From Office / Organization (Optional)</label>
                   <input
                     className="form-input"
                     type="text"
@@ -1660,7 +1577,7 @@ const DocumentList = ({
                     onChange={e => setFormData({ ...formData, originOfficeOther: e.target.value })}
                     placeholder="School, agency, municipality, barangay, or other sender office"
                   />
-                  <p className="field-hint">Use this when the document came from outside the municipal office list.</p>
+                  <p className="field-hint">Optional external source for outsider documents.</p>
                 </div>
                 )}
 
@@ -1699,47 +1616,21 @@ const DocumentList = ({
                       <input className="form-input" type="tel" value={formData.senderContact}
                         onChange={e => setFormData({ ...formData, senderContact: e.target.value })}
                         placeholder="09XX-XXX-XXXX" />
-                      <p className="field-hint">Used for SMS tracking updates when sender notifications are enabled.</p>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">
-                        <Mail size={12} style={{ marginRight: '0.25rem' }} />Email
-                      </label>
-                      <input className="form-input" type="email" value={formData.senderEmail}
-                        onChange={e => setFormData({ ...formData, senderEmail: e.target.value })}
-                        placeholder="email@example.com" />
-                      <p className="field-hint">Used for email tracking updates and status notices.</p>
+                      <p className="field-hint">Optional SMS tracking updates for external senders.</p>
                     </div>
                   </div>
-                  <div className="sender-notification-options">
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={formData.notifySender}
-                        onChange={e => setFormData({ ...formData, notifySender: e.target.checked })}
-                      />
-                      Send tracking number and status updates to sender
-                    </label>
-                    <div className="sender-channel-options">
-                      <label className="checkbox-chip">
+                  {!isOfficeUser && (
+                    <div className="sender-notification-options">
+                      <label className="checkbox-row">
                         <input
                           type="checkbox"
-                          checked={(formData.senderNotificationChannels || []).includes('sms')}
-                          onChange={() => toggleSenderChannel('sms')}
+                          checked={formData.notifySender}
+                          onChange={e => setFormData({ ...formData, notifySender: e.target.checked })}
                         />
-                        SMS
-                      </label>
-                      <label className="checkbox-chip">
-                        <input
-                          type="checkbox"
-                          checked={(formData.senderNotificationChannels || []).includes('email')}
-                          onChange={() => toggleSenderChannel('email')}
-                        />
-                        Email
+                        Send SMS tracking updates when a contact number is provided
                       </label>
                     </div>
-                    <p className="field-hint">Choose how the sender receives the tracking number and workflow updates.</p>
-                  </div>
+                  )}
                   <div className="form-group">
                     <label className="form-label">
                       <MessageSquare size={12} style={{ marginRight: '0.25rem' }} />Remarks
@@ -1948,63 +1839,59 @@ const DocumentList = ({
       )}
 
       {routeDoc && (
-        <ModalOverlay onClose={() => setRouteDoc(null)}>
+        <ModalOverlay onClose={() => { setRouteDoc(null); setSendOfficeIds([]); }}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Route Document</h2>
-              <button className="btn-icon" onClick={() => setRouteDoc(null)}><X size={18} /></button>
+              <h2>Send Document</h2>
+              <button className="btn-icon" onClick={() => { setRouteDoc(null); setSendOfficeIds([]); }}><X size={18} /></button>
             </div>
             <form onSubmit={handleRouteSubmit}>
               <div className="modal-body">
                 <div className="form-group">
                   <label className="form-label">Document</label>
                   <input className="form-input" value={`${routeDoc.trackingNumber} - ${routeDoc.subject}`} readOnly />
-                  <p className="field-hint">The selected document that will be transmitted to another office.</p>
                 </div>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">From Office</label>
-                    <select
-                      className="form-select"
-                      value={routeForm.fromOfficeId}
-                      onChange={e => setRouteForm({ ...routeForm, fromOfficeId: e.target.value })}
-                      disabled={!isApprovalUser}
-                    >
-                      {(isApprovalUser ? offices : offices.filter(o => o.id === routeForm.fromOfficeId))
-                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    <p className="field-hint">The office currently holding and sending the document.</p>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">To Office</label>
-                    <select className="form-select" value={routeForm.toOfficeId}
-                      onChange={e => setRouteForm({ ...routeForm, toOfficeId: e.target.value })}>
-                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    <p className="field-hint">The destination office that must receive the transmission.</p>
-                  </div>
+                <div className="form-group">
+                  <label className="form-label">Current Office</label>
+                  <input className="form-input" value={getOfficeName(routeDoc.currentOfficeId)} readOnly />
                 </div>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">Transmission Type</label>
-                    <select className="form-select" value={routeForm.transmissionType}
-                      onChange={e => setRouteForm({ ...routeForm, transmissionType: e.target.value })}>
-                      <option>Internal</option>
-                      <option>External</option>
-                    </select>
-                    <p className="field-hint">Marks whether the route stays inside the municipality or goes outside.</p>
+                <div className="form-group">
+                  <label className="form-label">Destination Offices (chronological order)</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '220px', overflow: 'auto' }}>
+                    {offices
+                      .filter((office) => office.id !== routeDoc.currentOfficeId)
+                      .map((office) => {
+                        const checked = sendOfficeIds.includes(office.id);
+                        const order = sendOfficeIds.indexOf(office.id) + 1;
+                        return (
+                          <label key={office.id} className="checkbox-row" style={{ justifyContent: 'space-between' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => {
+                                  setSendOfficeIds((prev) => (
+                                    checked
+                                      ? prev.filter((id) => id !== office.id)
+                                      : [...prev, office.id]
+                                  ));
+                                }}
+                              />
+                              {office.name}
+                            </span>
+                            {checked && <span className="field-hint" style={{ margin: 0 }}>#{order}</span>}
+                          </label>
+                        );
+                      })}
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Date</label>
-                    <input className="form-input" type="date" value={routeForm.transmissionDate}
-                      onChange={e => setRouteForm({ ...routeForm, transmissionDate: e.target.value })} required />
-                    <p className="field-hint">The official sending date recorded in the transmission history.</p>
-                  </div>
+                  <p className="field-hint">
+                    Select one or more offices. Custody moves to the first selected office; remaining destinations stay in the chronological send queue.
+                  </p>
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setRouteDoc(null)}>Cancel</button>
-                <button type="submit" className="btn btn-primary"><Send size={16} /> Route Document</button>
+                <button type="button" className="btn btn-secondary" onClick={() => { setRouteDoc(null); setSendOfficeIds([]); }}>Cancel</button>
+                <button type="submit" className="btn btn-primary"><Send size={16} /> Send Document</button>
               </div>
             </form>
           </div>

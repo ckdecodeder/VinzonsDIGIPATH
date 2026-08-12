@@ -209,12 +209,14 @@ const deliverSenderNotification = async (notification) => {
 
     return updateSenderDelivery(notification, {
       status: 'Sent',
+      error: '',
       errorMessage: '',
       sentAt: new Date().toISOString(),
     });
   } catch (err) {
     return updateSenderDelivery(notification, {
       status: 'Failed',
+      error: err.message,
       errorMessage: err.message,
       sentAt: '',
     });
@@ -222,48 +224,56 @@ const deliverSenderNotification = async (notification) => {
 };
 
 const queueSenderNotifications = async (req, rawDoc, eventType, context = {}) => {
-  const { SenderNotification } = require('../models');
-  const doc = rawDoc?.toObject ? rawDoc.toObject() : rawDoc;
-  if (!doc?.id || doc.notifySender === false || doc.senderNotificationConsent === false) return [];
+  try {
+    const { SenderNotification } = require('../models');
+    const doc = rawDoc?.toObject ? rawDoc.toObject() : rawDoc;
+    if (!doc?.id || doc.notifySender === false || doc.senderNotificationConsent === false) return [];
 
-  const channels = normalizeSenderNotificationChannels(doc.senderNotificationChannels, doc);
-  const recipients = {
-    sms: normalizeText(doc.senderContact),
-    email: normalizeText(doc.senderEmail),
-  };
-  const now = new Date().toISOString();
-  const provider = process.env.SENDER_NOTIFICATION_PROVIDER || 'outbox';
-  const created = [];
+    const channels = normalizeSenderNotificationChannels(doc.senderNotificationChannels, doc)
+      .filter((channel) => channel !== 'email'); // Outsider email notifications removed
+    const recipients = {
+      sms: normalizeText(doc.senderContact),
+      email: '',
+    };
+    const now = new Date().toISOString();
+    const provider = process.env.SENDER_NOTIFICATION_PROVIDER || 'outbox';
+    const created = [];
 
-  for (const channel of channels) {
-    const recipient = recipients[channel];
-    if (!recipient) continue;
-    const content = buildSenderNotificationContent(req, doc, eventType, context, channel);
-    const senderNotification = new SenderNotification({
-      id: generateId('SNOTIF'),
-      documentId: doc.id,
-      trackingNumber: doc.trackingNumber,
-      eventType,
-      channel,
-      recipient,
-      recipientName: doc.senderName,
-      subject: content.subject,
-      message: content.message,
-      status: 'Queued',
-      provider,
-      createdAt: now,
-      createdBy: req.user?.id || 'system',
-      metadata: {
-        ...(context.metadata || {}),
-        outboxMode: provider === 'outbox',
-      },
-    });
-    await senderNotification.save();
-    const delivered = await deliverSenderNotification(senderNotification);
-    created.push(delivered || senderNotification);
+    for (const channel of channels) {
+      const recipient = recipients[channel];
+      if (!recipient) continue;
+      const content = buildSenderNotificationContent(req, doc, eventType, context, channel);
+      const senderNotification = new SenderNotification({
+        id: generateId('SNOTIF'),
+        documentId: doc.id,
+        trackingNumber: doc.trackingNumber,
+        eventType,
+        channel,
+        recipient,
+        recipientName: doc.senderName,
+        subject: content.subject,
+        message: content.message,
+        status: 'Queued',
+        provider,
+        error: '',
+        errorMessage: '',
+        createdAt: now,
+        createdBy: req.user?.id || 'system',
+        metadata: {
+          ...(context.metadata || {}),
+          outboxMode: provider === 'outbox',
+        },
+      });
+      await senderNotification.save();
+      const delivered = await deliverSenderNotification(senderNotification);
+      created.push(delivered || senderNotification);
+    }
+
+    return created;
+  } catch (err) {
+    console.error('queueSenderNotifications failed (non-fatal):', err.message);
+    return [];
   }
-
-  return created;
 };
 
 module.exports = {

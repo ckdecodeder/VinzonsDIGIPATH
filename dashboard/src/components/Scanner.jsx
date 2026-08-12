@@ -242,12 +242,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const staleReloadAtRef = useRef(0);
   const streamStaleRef = useRef(false);
   const realtime = useOptionalRealtime();
-  const canChooseSourceOffice =
-    currentUser?.role === 'Admin' || currentUser?.role === 'Receptionist';
-  const canChooseDirection = currentUser?.role === 'Admin';
-  const canSetInitialStatus = currentUser?.role === 'Receptionist' || currentUser?.role === 'Admin';
+  const canChooseSourceOffice = false;
+  const canChooseDirection = false;
+  const canSetInitialStatus = false;
   const defaultSourceOfficeId = currentUser?.officeId || offices[0]?.id || MAYORS_OFFICE_ID;
   const receptionOfficeId = currentUser?.officeId || MAYORS_OFFICE_ID;
+  const mayorsOfficeId = offices.find(o => o.name?.toLowerCase().includes('mayor'))?.id || MAYORS_OFFICE_ID;
   const getNextOfficeId = (fromOfficeId) => offices.find(o => o.id !== fromOfficeId)?.id || fromOfficeId;
   const isOtherDocumentType = (typeId) => {
     const docType = documentTypes.find(item => item.id === typeId);
@@ -285,24 +285,25 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [formData, setFormData] = useState({
     subject: '',
     documentDirection: 'Incoming',
-    documentTypeId: 'DT-001',
+    documentTypeId: documentTypes[0]?.id || 'DT-001',
     documentTypeOther: '',
     status: 'Received',
     priorityLevel: 'normal',
     fromOfficeId: defaultSourceOfficeId,
     originOfficeOther: '',
-    toOfficeId: receptionOfficeId,
+    toOfficeId: mayorsOfficeId,
     dateReceived: new Date().toISOString().split('T')[0],
     senderName: '',
     senderContact: '',
     senderEmail: '',
     notifySender: true,
     senderNotificationConsent: true,
-    senderNotificationChannels: ['sms', 'email'],
+    senderNotificationChannels: ['sms'],
     remarks: '',
   });
   const [formErrors, setFormErrors] = useState({});
   const [formErrorSummary, setFormErrorSummary] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -320,18 +321,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const validateScannerDetails = () => validateRequiredFields([
     { key: 'subject', label: 'Document subject', value: formData.subject },
     { key: 'senderName', label: 'Sender name', value: formData.senderName },
-    { key: 'toOfficeId', label: 'To office', value: formData.toOfficeId },
     {
       key: 'documentTypeOther',
       label: 'Document type',
       value: formData.documentTypeOther,
       when: isOtherDocumentType(formData.documentTypeId),
-    },
-    {
-      key: 'originOfficeOther',
-      label: 'External office name',
-      value: formData.originOfficeOther,
-      when: formData.fromOfficeId === OTHER_OFFICE_VALUE,
     },
   ]);
 
@@ -1117,77 +1111,79 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
     setFormErrors({});
     setFormErrorSummary('');
+    setIsSubmitting(true);
 
-    if (hardwareScannedDoc?.id) {
-      const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? null : formData.fromOfficeId;
-      const destinationOfficeId = formData.toOfficeId || receptionOfficeId;
-      const scanOfficeId = hardwareScannedDoc.currentOfficeId
-        || hardwareScannedDoc.originOfficeId
-        || receptionOfficeId;
-      await onEditDocument?.({
-        ...hardwareScannedDoc,
+    try {
+      if (hardwareScannedDoc?.id) {
+        const scanOfficeId = hardwareScannedDoc.currentOfficeId
+          || hardwareScannedDoc.originOfficeId
+          || receptionOfficeId;
+        await onEditDocument?.({
+          ...hardwareScannedDoc,
+          subject: formData.subject,
+          documentDirection: 'Incoming',
+          documentTypeId: formData.documentTypeId,
+          documentTypeOther: formData.documentTypeOther,
+          priorityLevel: 'normal',
+          status: 'Received',
+          dateReceived: formData.dateReceived,
+          originOfficeId: receptionOfficeId || scanOfficeId,
+          originOfficeOther: formData.originOfficeOther.trim(),
+          currentOfficeId: mayorsOfficeId,
+          destinationOfficeId: mayorsOfficeId,
+          senderName: formData.senderName,
+          senderContact: formData.senderContact,
+          senderEmail: '',
+          notifySender: formData.notifySender,
+          senderNotificationConsent: formData.senderNotificationConsent,
+          senderNotificationChannels: formData.senderContact ? ['sms'] : [],
+          remarks: formData.remarks,
+          scannedText: extractedText,
+          intakeStatus: 'Approved',
+        });
+        setStep(4);
+        return;
+      }
+
+      const newDoc = {
         subject: formData.subject,
-        documentDirection: canChooseDirection ? formData.documentDirection : 'Incoming',
+        documentDirection: 'Incoming',
         documentTypeId: formData.documentTypeId,
-        documentTypeOther: formData.documentTypeOther,
-        priorityLevel: formData.priorityLevel,
-        status: canSetInitialStatus ? formData.status : 'Received',
+        documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
+        priorityLevel: 'normal',
+        status: 'Received',
         dateReceived: formData.dateReceived,
-        originOfficeId: sourceOfficeId || scanOfficeId,
-        originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
-        // Keep physical location at the scanning office; To Office is the destined office.
-        currentOfficeId: scanOfficeId,
-        destinationOfficeId,
+        originOfficeId: receptionOfficeId,
+        originOfficeOther: formData.originOfficeOther.trim(),
+        currentOfficeId: mayorsOfficeId,
+        destinationOfficeId: mayorsOfficeId,
         senderName: formData.senderName,
         senderContact: formData.senderContact,
-        senderEmail: formData.senderEmail,
+        senderEmail: '',
         notifySender: formData.notifySender,
         senderNotificationConsent: formData.senderNotificationConsent,
-        senderNotificationChannels: formData.senderNotificationChannels,
+        senderNotificationChannels: formData.senderContact ? ['sms'] : [],
         remarks: formData.remarks,
         scannedText: extractedText,
-      });
+        scannedImageUrl: capturedImage,
+        scannedFiles: [],
+        intakeStatus: 'Approved',
+      };
+
+      const newTransmission = {
+        fromOfficeId: receptionOfficeId,
+        toOfficeId: mayorsOfficeId,
+        transmissionDate: formData.dateReceived,
+        transmissionType: 'External',
+      };
+
+      await onCapture?.(capturedImage, extractedText, newDoc, newTransmission);
       setStep(4);
-      return;
+    } catch {
+      // Shared save handler already shows the API error; stay on review step.
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const sourceOfficeId = formData.fromOfficeId === OTHER_OFFICE_VALUE ? null : formData.fromOfficeId;
-    const destinationOfficeId = formData.toOfficeId || receptionOfficeId;
-    const intakeOfficeId = receptionOfficeId || destinationOfficeId;
-    const newDoc = {
-      subject: formData.subject,
-      documentDirection: canChooseDirection ? formData.documentDirection : 'Incoming',
-      documentTypeId: formData.documentTypeId,
-      documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
-      priorityLevel: formData.priorityLevel,
-      status: canSetInitialStatus ? formData.status : 'Received',
-      dateReceived: formData.dateReceived,
-      originOfficeId: sourceOfficeId || intakeOfficeId,
-      originOfficeOther: formData.fromOfficeId === OTHER_OFFICE_VALUE ? formData.originOfficeOther.trim() : '',
-      currentOfficeId: intakeOfficeId,
-      destinationOfficeId,
-      senderName: formData.senderName,
-      senderContact: formData.senderContact,
-      senderEmail: formData.senderEmail,
-      notifySender: formData.notifySender,
-      senderNotificationConsent: formData.senderNotificationConsent,
-      senderNotificationChannels: formData.senderNotificationChannels,
-      remarks: formData.remarks,
-      scannedText: extractedText,
-      scannedImageUrl: capturedImage,
-      scannedFiles: [],
-      intakeStatus: 'Pending Review',
-    };
-
-    const newTransmission = {
-      fromOfficeId: sourceOfficeId || intakeOfficeId,
-      toOfficeId: destinationOfficeId,
-      transmissionDate: formData.dateReceived,
-      transmissionType: formData.fromOfficeId === formData.toOfficeId ? 'Internal' : 'External',
-    };
-
-    onCapture(capturedImage, extractedText, newDoc, newTransmission);
-    setStep(4);
   };
 
   const handleRescan = () => {
@@ -1253,7 +1249,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     if (dt?.category === 'Others' && formData.documentTypeOther) return formData.documentTypeOther;
     return dt ? dt.category : 'Unknown';
   };
-  const selectedPriority = getPriorityInfo(formData.priorityLevel);
+  const selectedPriority = { color: 'var(--text-muted)', bg: 'transparent' };
 
   const stepLabels = [
     { num: 1, label: 'Scan Document' },
@@ -1619,33 +1615,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     )}
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Direction</label>
-                    <select className="form-select" value={formData.documentDirection}
-                      onChange={e => handleFormChange('documentDirection', e.target.value)}
-                      disabled={!canChooseDirection}>
-                      <option>Incoming</option>
-                      {canChooseDirection && <option>Outgoing</option>}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label className="form-label">
-                      <Flag size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                      Priority Level
-                    </label>
-                    <div className="priority-select-wrap" style={{ '--priority-color': selectedPriority.color, '--priority-bg': selectedPriority.bg }}>
-                      <span className="priority-color-preview"></span>
-                      <select className="form-select priority-select" value={formData.priorityLevel}
-                        onChange={e => handleFormChange('priorityLevel', e.target.value)}>
-                        {priorityLevels.map(p => (
-                          <option key={p.id} value={p.id} style={{ color: p.color, backgroundColor: p.bg }}>{p.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="form-group">
                     <label className="form-label">Date Received</label>
                     <input className="form-input" type="date" value={formData.dateReceived}
                       disabled required />
@@ -1653,18 +1622,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Pending Workflow Status</label>
-                  <select
-                    className="form-select"
-                    value={formData.status}
-                    onChange={e => handleFormChange('status', e.target.value)}
-                    disabled={!canSetInitialStatus}
-                  >
-                    <option>Received</option>
-                    <option>For Signing</option>
-                    <option>For Filing</option>
-                  </select>
-                  <p className="field-hint">Set the initial pending status before Mayor review.</p>
+                  <label className="form-label">Destination</label>
+                  <input className="form-input" type="text" value="Mayor's Office" disabled />
+                  <p className="field-hint">External documents are automatically forwarded to the Mayor's Office.</p>
                 </div>
 
                 {/* Sender Information */}
@@ -1675,7 +1635,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 }}>
                   <p style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
                     <User size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                    Sender Information
+                    External Sender
                   </p>
                   <div className="form-group">
                     <label className="form-label">Sender Name <span className="required-mark">*</span></label>
@@ -1691,108 +1651,33 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                       <p className="form-field-error">{formErrors.senderName}</p>
                     )}
                   </div>
-                  <div className="form-grid">
-                    <div className="form-group">
-                      <label className="form-label">
-                        <Phone size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                        Contact Number
-                      </label>
-                      <input className="form-input" type="tel" value={formData.senderContact}
-                        onChange={e => handleFormChange('senderContact', e.target.value)}
-                        placeholder="09XX-XXX-XXXX" />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">
-                        <Mail size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                        Email
-                      </label>
-                      <input className="form-input" type="email" value={formData.senderEmail}
-                        onChange={e => handleFormChange('senderEmail', e.target.value)}
-                        placeholder="email@example.com" />
-                    </div>
-                  </div>
-                  <div className="sender-notification-options">
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={formData.notifySender}
-                        onChange={e => setFormData({ ...formData, notifySender: e.target.checked })}
-                      />
-                      Send tracking number and status updates to sender
-                    </label>
-                    <div className="sender-channel-options">
-                      <label className="checkbox-chip">
-                        <input
-                          type="checkbox"
-                          checked={(formData.senderNotificationChannels || []).includes('sms')}
-                          onChange={() => toggleSenderChannel('sms')}
-                        />
-                        SMS
-                      </label>
-                      <label className="checkbox-chip">
-                        <input
-                          type="checkbox"
-                          checked={(formData.senderNotificationChannels || []).includes('email')}
-                          onChange={() => toggleSenderChannel('email')}
-                        />
-                        Email
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Routing */}
-                <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">
-                      <Building2 size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                      From Office <span className="required-mark">*</span>
+                      <Phone size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                      Contact Number (Optional)
                     </label>
-                    <select
-                      className="form-select"
-                      value={formData.fromOfficeId}
-                      onChange={e => {
-                        const nextOfficeId = e.target.value;
-                        handleFormChange('fromOfficeId', nextOfficeId);
-                        if (nextOfficeId !== OTHER_OFFICE_VALUE) {
-                          setFormErrors(prev => clearFieldError(prev, 'originOfficeOther'));
-                        }
-                        if (formData.toOfficeId === nextOfficeId) {
-                          handleFormChange('toOfficeId', getNextOfficeId(nextOfficeId));
-                        }
-                      }}
-                    >
-                      <option value={OTHER_OFFICE_VALUE}>External / Other Office</option>
-                      {(canChooseSourceOffice ? offices : offices.filter(o => o.id === defaultSourceOfficeId))
-                        .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
-                    {formData.fromOfficeId === OTHER_OFFICE_VALUE && (
-                      <div className="form-group" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
-                        <label className="form-label">External Office Name <span className="required-mark">*</span></label>
-                        <input
-                          className={`form-input${formErrors.originOfficeOther ? ' is-invalid' : ''}`}
-                          type="text"
-                          value={formData.originOfficeOther}
-                          onChange={e => handleFormChange('originOfficeOther', e.target.value)}
-                          placeholder="Name of school, agency, municipality, or external office"
-                          aria-required="true"
-                        />
-                        {formErrors.originOfficeOther && (
-                          <p className="form-field-error">{formErrors.originOfficeOther}</p>
-                        )}
-                      </div>
-                    )}
+                    <input className="form-input" type="tel" value={formData.senderContact}
+                      onChange={e => handleFormChange('senderContact', e.target.value)}
+                      placeholder="09XX-XXX-XXXX" />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">
-                      <Building2 size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
-                      To Office <span className="required-mark">*</span>
-                    </label>
-                    <select className="form-select" value={formData.toOfficeId}
-                      onChange={e => handleFormChange('toOfficeId', e.target.value)}>
-                      {offices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                    </select>
+                    <label className="form-label">From Office / Organization (Optional)</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={formData.originOfficeOther}
+                      onChange={e => handleFormChange('originOfficeOther', e.target.value)}
+                      placeholder="School, agency, barangay, or organization"
+                    />
                   </div>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={formData.notifySender}
+                      onChange={e => setFormData({ ...formData, notifySender: e.target.checked })}
+                    />
+                    Send SMS tracking updates when a contact number is provided
+                  </label>
                 </div>
 
                 <div className="form-group">
@@ -1854,15 +1739,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               {[
                 { label: 'Subject', value: formData.subject },
                 { label: 'Type', value: getDocTypeName(formData.documentTypeId) },
-                { label: 'Direction', value: formData.documentDirection },
-                { label: 'Pending Status', value: formData.status },
-                { label: 'Priority', value: getPriorityInfo(formData.priorityLevel).label, color: getPriorityInfo(formData.priorityLevel).color },
                 { label: 'Date Received', value: formData.dateReceived },
-                { label: 'From Office', value: getOfficeName(formData.fromOfficeId) },
+                { label: 'Destination', value: "Mayor's Office" },
                 { label: 'Sender', value: formData.senderName },
                 { label: 'Contact', value: formData.senderContact || '—' },
-                { label: 'Email', value: formData.senderEmail || '—' },
-                { label: 'Sender Updates', value: formData.notifySender ? (formData.senderNotificationChannels || []).join(', ').toUpperCase() || 'Enabled' : 'Disabled' },
+                { label: 'From Org', value: formData.originOfficeOther || '—' },
                 { label: 'Remarks', value: formData.remarks || '—' },
               ].map((item, i) => (
                 <div key={i} style={{
@@ -1890,7 +1771,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             marginBottom: '1.5rem',
           }}>
             <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
-              Route Preview
+              Forward Path
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'center' }}>
               <span style={{
@@ -1898,7 +1779,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 background: 'var(--primary-glow)', color: 'var(--primary-light)',
                 fontSize: '0.8rem', fontWeight: 600,
               }}>
-                {getOfficeName(formData.fromOfficeId)}
+                External Sender
               </span>
               <ArrowRight size={18} style={{ color: 'var(--primary-light)' }} />
               <span style={{
@@ -1906,7 +1787,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 background: 'var(--success-bg)', color: 'var(--success)',
                 fontSize: '0.8rem', fontWeight: 600,
               }}>
-                {getOfficeName(formData.toOfficeId)}
+                Mayor's Office
               </span>
             </div>
           </div>
@@ -1915,8 +1796,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             <button className="btn btn-secondary" onClick={() => setStep(2)}>
               <ArrowLeft size={16} /> Edit Details
             </button>
-            <button className="btn btn-primary" onClick={handleConfirmSubmit} style={{ padding: '0.75rem 2rem' }}>
-              <Send size={16} /> Confirm & Submit
+            <button className="btn btn-primary" onClick={handleConfirmSubmit} disabled={isSubmitting} style={{ padding: '0.75rem 2rem' }}>
+              <Send size={16} /> {isSubmitting ? 'Saving…' : 'Confirm & Register'}
             </button>
           </div>
         </div>
@@ -1934,10 +1815,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           </div>
 
           <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem', color: 'var(--text-main)' }}>
-            Document Submitted for Review
+            Document Registered
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-            The scan was saved in the database and is waiting for intake approval before routing.
+            The scan was saved and forwarded to the Mayor's Office (FIFO queue).
           </p>
 
           <div style={{
@@ -1947,10 +1828,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           }}>
             {[
               { label: 'Subject', value: formData.subject },
-              { label: 'Pending Status', value: formData.status },
-              { label: 'Priority', value: getPriorityInfo(formData.priorityLevel).label },
               { label: 'Sender', value: formData.senderName },
-              { label: 'Planned Route', value: `${getOfficeName(formData.fromOfficeId)} -> ${getOfficeName(formData.toOfficeId)}` },
+              { label: 'Destination', value: "Mayor's Office" },
             ].map((item, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: i < 3 ? '0.5rem' : 0, fontSize: '0.8rem' }}>
                 <span style={{ color: 'var(--text-muted)' }}>{item.label}</span>

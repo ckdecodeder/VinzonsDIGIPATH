@@ -192,7 +192,6 @@ const Layout = ({
     ]},
     { group: 'Document Management', items: [
       { id: 'documents', label: 'All Documents', icon: <FileText size={18} /> },
-      { id: 'transmissions', label: 'Transmissions', icon: <ArrowRightLeft size={18} />, badge: pendingTransmissions },
       { id: 'archives', label: 'Archives', icon: <Archive size={18} /> },
     ]},
     { group: 'Administration', items: [
@@ -214,7 +213,6 @@ const Layout = ({
     ]},
     { group: 'Document Approval', items: [
       { id: 'documents', label: 'All Documents', icon: <FileText size={18} /> },
-      { id: 'transmissions', label: 'Transmissions', icon: <ArrowRightLeft size={18} />, badge: pendingTransmissions },
       { id: 'archives', label: 'Archives', icon: <Archive size={18} /> },
     ]},
     { group: 'Monitoring', items: [
@@ -245,7 +243,6 @@ const Layout = ({
     ]},
     { group: 'Send & Track', items: [
       { id: 'documents', label: 'My Documents', icon: <FileText size={18} /> },
-      { id: 'transmissions', label: 'Sent / Received', icon: <ArrowRightLeft size={18} />, badge: pendingTransmissions },
     ]},
     { group: 'Monitoring', items: [
       { id: 'reports', label: 'Reports', icon: <BarChart3 size={18} /> },

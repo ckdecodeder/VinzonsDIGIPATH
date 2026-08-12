@@ -11,20 +11,16 @@ import {
   X,
   AlertCircle,
   ScanLine,
-  Flag,
   User,
   Phone,
-  Mail,
   MessageSquare,
   Upload,
 } from 'lucide-react';
 import {
-  getPriorityInfo,
   offices as defaultOffices,
   documentTypes as defaultDocumentTypes,
-  priorityLevels,
 } from '../data/mockData';
-import { compareNewest } from '../utils/sorting';
+import { compareOldest } from '../utils/sorting';
 import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
 
 const ReceptionistDashboard = ({
@@ -36,23 +32,25 @@ const ReceptionistDashboard = ({
   onNavigate,
   onOpenDocument,
   onNotify,
+  onReturnToSender,
 }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [showReceiveForm, setShowReceiveForm] = useState(false);
   const [attachmentFile, setAttachmentFile] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const mayorsOfficeId = offices.find(o => o.name.toLowerCase().includes('mayor'))?.id || 'OFF-001';
 
-  const [receiveForm, setReceiveForm] = useState({
+  const getEmptyReceiveForm = () => ({
     subject: '',
     documentDirection: 'Incoming',
-    documentTypeId: 'DT-001',
+    documentTypeId: documentTypes[0]?.id || 'DT-001',
     documentTypeOther: '',
     status: 'Received',
     priorityLevel: 'normal',
     dateReceived: new Date().toISOString().split('T')[0],
     originOfficeId: currentUser?.officeId || 'OFF-001',
-    currentOfficeId: currentUser?.officeId || 'OFF-001',
+    currentOfficeId: mayorsOfficeId,
     destinationOfficeId: mayorsOfficeId,
     originOfficeOther: '',
     senderName: '',
@@ -65,10 +63,12 @@ const ReceptionistDashboard = ({
     scannedText: '',
   });
 
+  const [receiveForm, setReceiveForm] = useState(getEmptyReceiveForm);
+
   const [receiveFormErrors, setReceiveFormErrors] = useState({});
   const [receiveFormErrorSummary, setReceiveFormErrorSummary] = useState('');
 
-  const finishedStatuses = ['Signed', 'Acknowledged', 'Archived'];
+  const finishedStatuses = ['Signed', 'Acknowledged', 'Archived', 'Returned to Sender'];
   const getWorkflowStatus = (doc) => {
     if (doc?.status === 'For Signature') return 'For Signing';
     if (doc?.status === 'Acknoweledged') return 'Acknowledged';
@@ -81,8 +81,9 @@ const ReceptionistDashboard = ({
   });
   const forwardedToMayorDocs = documents.filter(d => d.destinationOfficeId === mayorsOfficeId || d.currentOfficeId === mayorsOfficeId);
   const pendingDocuments = [...documents]
-    .filter(doc => !finishedStatuses.includes(getWorkflowStatus(doc)))
-    .sort((a, b) => compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']));
+    .filter(doc => !finishedStatuses.includes(getWorkflowStatus(doc)) && doc.intakeStatus !== 'Returned to Sender')
+    .sort((a, b) => compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']));
+  const rejectedDocs = documents.filter(d => d.intakeStatus === 'Rejected');
 
   const statCards = [
     {
@@ -138,18 +139,17 @@ const ReceptionistDashboard = ({
   };
   const isApprovedForWorkflow = (doc) => (doc?.intakeStatus || 'Approved') === 'Approved';
   const getDocumentPendingReason = (doc) => {
-    if ((doc.intakeStatus || 'Approved') === 'Pending Review') {
-      return 'Waiting for Admin or Mayor approval before routing.';
+    if (doc.intakeStatus === 'Returned to Sender') {
+      return 'Returned to the external sender.';
     }
     if (doc.intakeStatus === 'Rejected') {
-      return doc.rejectionReason ? `Rejected for correction: ${doc.rejectionReason}` : 'Rejected for correction and needs resubmission.';
+      return doc.rejectionReason
+        ? `Rejected by Mayor — return to sender: ${doc.rejectionReason}`
+        : 'Rejected by Mayor — return to sender.';
     }
     const status = getWorkflowStatus(doc);
     if (status === 'Received' && isApprovedForWorkflow(doc)) {
-      return 'Forwarded to Mayor\'s Office.';
-    }
-    if (status === 'In Transit') {
-      return 'Waiting for Mayor\'s office to receive it.';
+      return "At Mayor's Office (FIFO queue).";
     }
     if (status === 'For Signing') {
       return 'Waiting for Mayor signing action.';
@@ -202,55 +202,41 @@ const ReceptionistDashboard = ({
     }
     setReceiveFormErrors({});
     setReceiveFormErrorSummary('');
+    setIsSubmitting(true);
 
-    const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
-    const newDoc = {
-      ...receiveForm,
-      documentDirection: 'Incoming',
-      documentTypeOther: isOtherDocumentType(receiveForm.documentTypeId) ? receiveForm.documentTypeOther.trim() : '',
-      originOfficeOther: receiveForm.originOfficeOther.trim(),
-      status: 'Received',
-      priorityLevel: 'normal',
-      originOfficeId: currentUser?.officeId || 'OFF-001',
-      currentOfficeId: currentUser?.officeId || 'OFF-001',
-      destinationOfficeId: mayorsOfficeId,
-      scannedFiles: newFiles,
-      scannedImageUrl: newFiles[0]?.dataUrl || '',
-    };
-    setShowReceiveForm(false);
-    setAttachmentFile(null);
-    setReceiveForm({
-      subject: '',
-      documentDirection: 'Incoming',
-      documentTypeId: 'DT-001',
-      documentTypeOther: '',
-      status: 'Received',
-      priorityLevel: 'normal',
-      dateReceived: new Date().toISOString().split('T')[0],
-      originOfficeId: currentUser?.officeId || 'OFF-001',
-      currentOfficeId: currentUser?.officeId || 'OFF-001',
-      destinationOfficeId: mayorsOfficeId,
-      originOfficeOther: '',
-      senderName: '',
-      senderContact: '',
-      senderEmail: '',
-      notifySender: true,
-      senderNotificationConsent: true,
-      senderNotificationChannels: ['sms'],
-      remarks: '',
-      scannedText: '',
-    });
     try {
+      const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
+      const newDoc = {
+        ...receiveForm,
+        documentDirection: 'Incoming',
+        documentTypeOther: isOtherDocumentType(receiveForm.documentTypeId) ? receiveForm.documentTypeOther.trim() : '',
+        originOfficeOther: receiveForm.originOfficeOther.trim(),
+        status: 'Received',
+        priorityLevel: 'normal',
+        originOfficeId: currentUser?.officeId || 'OFF-001',
+        currentOfficeId: mayorsOfficeId,
+        destinationOfficeId: mayorsOfficeId,
+        senderEmail: '',
+        senderNotificationChannels: receiveForm.senderContact ? ['sms'] : [],
+        scannedFiles: newFiles,
+        scannedImageUrl: newFiles[0]?.dataUrl || '',
+        intakeStatus: 'Approved',
+      };
       await onAddDocument(newDoc);
+      setShowReceiveForm(false);
+      setAttachmentFile(null);
+      setReceiveForm(getEmptyReceiveForm());
     } catch {
-      // The shared save handler already shows the API error.
+      // Shared save handler already shows the API error; keep the form open.
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  // Recent incoming docs
+  // FIFO external queue
   const recentIncoming = [...documents]
     .filter(d => d.documentDirection === 'Incoming')
-    .sort((a, b) => compareNewest(a, b, ['createdAt', 'updatedAt', 'dateReceived']))
+    .sort((a, b) => compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']))
     .slice(0, 4);
 
   return (
@@ -460,6 +446,7 @@ const ReceptionistDashboard = ({
                 <th>Current Status</th>
                 <th>Pending For</th>
                 <th>Date Received</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -485,12 +472,23 @@ const ReceptionistDashboard = ({
                     </td>
                     <td><span className="workflow-explanation">{getDocumentPendingReason(doc)}</span></td>
                     <td style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      {doc.intakeStatus === 'Rejected' && onReturnToSender && (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => onReturnToSender(doc.id)}
+                        >
+                          Return to Sender
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
               {!pendingDocuments.length && (
                 <tr>
-                  <td colSpan="5">
+                  <td colSpan="6">
                     <div className="empty-state">
                       <CheckCircle2 size={24} />
                       <h3>No pending documents</h3>
@@ -621,7 +619,7 @@ const ReceptionistDashboard = ({
                       onChange={e => setReceiveForm({ ...receiveForm, originOfficeOther: e.target.value })}
                       placeholder="School, agency, barangay, or organization"
                     />
-                    <p className="field-hint">Optional: Name of external office, company, or barangay sending the document.</p>
+                    <p className="field-hint">Optional: school, agency, barangay, or organization (from office).</p>
                   </div>
                   <div className="form-group">
                     <label className="form-label"><MessageSquare size={12} style={{ marginRight: '0.25rem' }} />Remarks</label>
@@ -674,8 +672,10 @@ const ReceptionistDashboard = ({
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowReceiveForm(false)}>Cancel</button>
-                <button type="submit" className="btn btn-success"><Inbox size={16} /> Register Document</button>
+                <button type="button" className="btn btn-secondary" onClick={() => setShowReceiveForm(false)} disabled={isSubmitting}>Cancel</button>
+                <button type="submit" className="btn btn-success" disabled={isSubmitting}>
+                  <Inbox size={16} /> {isSubmitting ? 'Registering…' : 'Register Document'}
+                </button>
               </div>
             </form>
           </div>
