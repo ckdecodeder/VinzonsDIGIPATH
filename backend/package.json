@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "seed": "node scripts/seed.js",
     "migrate": "node scripts/migrate-pg.js",
+    "export-db": "node scripts/export-pg-to-json.js",
     "smoke": "node scripts/workflow-smoke.js",
     "audit:roles": "node scripts/role-audit.js",
     "test": "echo \"Error: no test specified\" && exit 1"

@@ -1,72 +1,56 @@
-[{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d70"
+[
+  {
+    "id": "DT-001",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Memorandum"
   },
-  "id": "DT-001",
-  "__v": 0,
-  "category": "Memorandum"
-},
-{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d71"
+  {
+    "id": "DT-002",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Executive Order"
   },
-  "id": "DT-002",
-  "__v": 0,
-  "category": "Executive Order"
-},
-{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d72"
+  {
+    "id": "DT-003",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Communication Letter"
   },
-  "id": "DT-003",
-  "__v": 0,
-  "category": "Communication Letter"
-},
-{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d73"
+  {
+    "id": "DT-004",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Proposal"
   },
-  "id": "DT-004",
-  "__v": 0,
-  "category": "Proposal"
-},
-{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d74"
+  {
+    "id": "DT-005",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Resolution"
   },
-  "id": "DT-005",
-  "__v": 0,
-  "category": "Resolution"
-},
-{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d75"
+  {
+    "id": "DT-006",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Ordinance"
   },
-  "id": "DT-006",
-  "__v": 0,
-  "category": "Ordinance"
-},
-{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d76"
+  {
+    "id": "DT-007",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Report"
   },
-  "id": "DT-007",
-  "__v": 0,
-  "category": "Report"
-},
-{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d77"
+  {
+    "id": "DT-008",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Request"
   },
-  "id": "DT-008",
-  "__v": 0,
-  "category": "Request"
-},
-{
-  "_id": {
-    "$oid": "69f9e97d0fb1bf500fd58d9c"
-  },
-  "id": "DT-009",
-  "__v": 0,
-  "category": "Others"
-}]
+  {
+    "id": "DT-009",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Others"
+  }
+]

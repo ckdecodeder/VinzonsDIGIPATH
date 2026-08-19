@@ -1,212 +1,182 @@
-[{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0af"
+[
+  {
+    "id": "USR-007",
+    "username": "ramos",
+    "password": "$2b$10$ODkxexN7.gp6SJixZ5xTxOFjnqvjJeRYscrl0/qldKth8AZI9z2gW",
+    "fname": "Lucia",
+    "lname": "Ramos",
+    "mname": "A.",
+    "role": "Office",
+    "officeId": "OFF-006",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-001",
-  "username": "admin",
-  "password": "$2b$10$.n56gOgjA4y5aubLsgsxhed5m9Dzsynt9jSdabQoiHw7vqMry4kjC",
-  "fname": "Maria",
-  "lname": "Santos",
-  "mname": "C.",
-  "role": "Admin",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0b0"
+  {
+    "id": "USR-001",
+    "username": "santos",
+    "password": "$2b$10$YbLxj/fJpby9So0M8ujBku0/0G7inJ6zcSWvDMeLVqbaF0sEDI0Hi",
+    "fname": "Maria",
+    "lname": "Santos",
+    "mname": "C",
+    "role": "Admin",
+    "officeId": "OFF-001",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-002",
-  "username": "receptionist",
-  "password": "$2b$10$Ajvft47.t4mPwxpq7bRtH.20i9Xr.XEJqrek/.5FMSePigokqgi8q",
-  "fname": "Juan",
-  "lname": "Reyes",
-  "mname": "D.",
-  "role": "Receptionist",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0b1"
+  {
+    "id": "USR-350184-809",
+    "username": "sean",
+    "password": "$2b$10$DmpWkm4HqqnYitqSDvaXh.GA1s/W1tzOisKbK68dCPWqv7gTYTM.q",
+    "fname": "Sean",
+    "lname": "Vargas",
+    "mname": "",
+    "role": "Mayor",
+    "officeId": "OFF-001",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-003",
-  "username": "mayor",
-  "password": "$2b$10$fobi4etRbus.uO6I1PEVSusQmsiWIVVJo.7tx/Hzgi19fM4bFSiPe",
-  "fname": "Ana",
-  "lname": "Cruz",
-  "mname": "B.",
-  "role": "Mayor",
-  "officeId": "OFF-002",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0b2"
+  {
+    "id": "USR-005",
+    "username": "torres",
+    "password": "$2b$10$lh/FMerefaNqiGi966zDcudaEKZFl3TeDHoppxHmIawQ3u1UrIHf6",
+    "fname": "Elena",
+    "lname": "Torres",
+    "mname": "R.",
+    "role": "Office",
+    "officeId": "OFF-004",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-004",
-  "username": "mayor2",
-  "password": "$2b$10$GAxYrg.ND/Amal2DaNNR8.ZiJFAj6cjBHK2OqpSF3VZJ6tuqJ2p.m",
-  "fname": "Pedro",
-  "lname": "Garcia",
-  "mname": "M.",
-  "role": "Admin",
-  "officeId": "OFF-003",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0b3"
+  {
+    "id": "USR-433333-488",
+    "username": "unc",
+    "password": "$2b$10$pvOJ10i42IzEpbsaKChj6.Ogrp9fXsz088UnnRhAd5SaaiDIwFYHK",
+    "fname": "Simon",
+    "lname": "Unc",
+    "mname": "",
+    "role": "Office",
+    "officeId": "OFF-005",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-005",
-  "username": "mayor3",
-  "password": "$2b$10$kzbUo5fKdLvky6CSW63EsewJgEy24wMUlyHKP2C4xKEEOEcysYasS",
-  "fname": "Elena",
-  "lname": "Torres",
-  "mname": "R.",
-  "role": "Admin",
-  "officeId": "OFF-004",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0b4"
+  {
+    "id": "USR-484217-648",
+    "username": "wick",
+    "password": "$2b$10$ErhwopW2i9NWWjDjCp1xbuWUs1UQutitKKga2CxLqNO/DKIP7CIQm",
+    "fname": "John",
+    "lname": "Wick",
+    "mname": "",
+    "role": "Office",
+    "officeId": "OFF-010716-463",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-006",
-  "username": "receptionist2",
-  "password": "$2b$10$Zez28ZXPpYJpQ1EtZ00fyODTspW6QktnfXOOjVQoDfCqlsBNXKBki",
-  "fname": "Carlos",
-  "lname": "Mendoza",
-  "mname": "L.",
-  "role": "Receptionist",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0b5"
+  {
+    "id": "USR-SIMON-001",
+    "username": "simon",
+    "password": "$2b$10$OYveRmqGoSq3dLNdOJkqMeE.PYgkihZyJerWaZ.pKEci7HyfKDfqO",
+    "fname": "Simon",
+    "lname": "Unc",
+    "mname": null,
+    "role": "Office",
+    "officeId": "OFF-001",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-007",
-  "username": "mayor4",
-  "password": "$2b$10$HurTFr/FLUlhmOuhLzHKAe.35i9.SVvU3tww23N88maFmprQ.YyPO",
-  "fname": "Lucia",
-  "lname": "Ramos",
-  "mname": "A.",
-  "role": "Admin",
-  "officeId": "OFF-006",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fa80a851bad22c3864d0b6"
+  {
+    "id": "USR-716",
+    "username": "adi",
+    "password": "$2b$10$SiZFBGnQybMwo7BPbCA5N.WS53gzD2mf5iWmf8HGn8RDDL08OcvjG",
+    "fname": "Aedrian",
+    "lname": "Alto",
+    "mname": "",
+    "role": "Office",
+    "officeId": "OFF-009",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-008",
-  "username": "receptionist3",
-  "password": "$2b$10$HkCMXB94k3UPZczdHFGYweGSa9UBEArjfHYo4bnFfHjDK589m/5nm",
-  "fname": "Marco",
-  "lname": "Bautista",
-  "mname": "S.",
-  "role": "Receptionist",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fb33e821d9e0ac89725cb4"
+  {
+    "id": "USR-008",
+    "username": "bautista",
+    "password": "$2b$10$WK4TT5HZGIS7BOcrQJSs1OfeZUI8GBgVsrUGk8EdhmB0EIG1zszuq",
+    "fname": "Marco",
+    "lname": "Bautista",
+    "mname": "S.",
+    "role": "Office",
+    "officeId": "OFF-007",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-716",
-  "username": "adi",
-  "password": "$2b$10$r5w.o7rDmQmdc2QGG2qrMe3FwEkNwokFA6z6LNmzxxjsMPdfYWD/m",
-  "fname": "Aedrian",
-  "lname": "Alto",
-  "mname": "",
-  "role": "Receptionist",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fb6c6031e39d8701191ada"
+  {
+    "id": "USR-006",
+    "username": "carlos",
+    "password": "$2b$10$AZzj/9MHoGy5Yqvj/1S69.5uYWtDHQ/x875CN5qrcMGBNqIV6hHW6",
+    "fname": "Carlos",
+    "lname": "Mendoza",
+    "mname": "L.",
+    "role": "Receptionist",
+    "officeId": "OFF-001",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-960806-655",
-  "username": "ian",
-  "password": "$2b$10$ZuFk1h6IGogPw.tywzGPveyawEcwsup6RiKwFzF4J67/BPcU1.TFa",
-  "fname": "Adrian",
-  "lname": "Alto",
-  "mname": "",
-  "role": "Receptionist",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69fd49b2d9b7ebd01a96658f"
+  {
+    "id": "USR-003",
+    "username": "cruz",
+    "password": "$2b$10$qOu88MXbKVP7tyubZmmsKOrsLCwTQHVCJl64QLRG4EviybWlcLavC",
+    "fname": "Ana",
+    "lname": "Cruz",
+    "mname": "B.",
+    "role": "Office",
+    "officeId": "OFF-002",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-154229-304",
-  "username": "iann",
-  "password": "$2b$10$.U2czxhMSZY6CntNy486N.reaq9m/js8WRCwpqlJ7eSNMFUpIKKh2",
-  "fname": "Adrian",
-  "lname": "Alto",
-  "mname": "Zamudio",
-  "role": "Admin",
-  "officeId": "OFF-004",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69ffe66ea0bd143881f07731"
+  {
+    "id": "USR-440173-464",
+    "username": "elsa",
+    "password": "$2b$10$R7/vhWwAMnndDmfiq8bXj.j/BLKgIDuiW/PHX1EZd3AQv4w8RoJZe",
+    "fname": "Elsa",
+    "lname": "Lego",
+    "mname": "",
+    "role": "Office",
+    "officeId": "OFF-010",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-350184-809",
-  "username": "sean",
-  "password": "$2b$10$/c2SM8UkRG5UgCTZW9F/d.SUic/r9ZfcFrBWfzKXnLon1RA4heP0e",
-  "fname": "Sean",
-  "lname": "Vargas",
-  "mname": "",
-  "role": "Mayor",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69ffe68aa0bd143881f07733"
+  {
+    "id": "USR-004",
+    "username": "garcia",
+    "password": "$2b$10$4IwZaUIm5oekugbIk6iiKuzMcSzgi8pfM4jhESTXyTrnXMNcYTIou",
+    "fname": "Pedro",
+    "lname": "Garcia",
+    "mname": "M.",
+    "role": "Office",
+    "officeId": "OFF-003",
+    "contact": null,
+    "email": null
   },
-  "id": "USR-378837-524",
-  "username": "kyle",
-  "password": "$2b$10$lXhSCVIMgxzThyLYrgRvXO5I5yd0w46KCE8hJ8c1QuyETiuRGrB7i",
-  "fname": "Kyle",
-  "lname": "Tibar",
-  "mname": "",
-  "role": "Admin",
-  "officeId": "OFF-001",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "69ffe717a0bd143881f07736"
+  {
+    "id": "USR-626727-39",
+    "username": "jane",
+    "password": "$2b$10$AzpVxQ0AZZoUW9F7oonc2.xQ7G1H1/ZZT8bhMH2vdYG8SNbMM2O7i",
+    "fname": "Jane",
+    "lname": "Quierra",
+    "mname": "Marco",
+    "role": "Office",
+    "officeId": "OFF-006",
+    "contact": "09123456789",
+    "email": "adrianzalto3721@gmail.com"
   },
-  "id": "USR-519121-789",
-  "username": "janero",
-  "password": "$2b$10$rks.jEl3Y.TXwxkvgNJUduqU61.QL4MdKRtAw6xbjKJ7ovxX6J7jK",
-  "fname": "Janero",
-  "lname": "Marco",
-  "mname": "",
-  "role": "Receptionist",
-  "officeId": "OFF-008",
-  "__v": 0
-},
-{
-  "_id": {
-    "$oid": "6a334bc2b7435cb95918f95d"
-  },
-  "id": "USR-626727-39",
-  "username": "janeromarco",
-  "password": "$2b$10$TurMipHnpaGEhHaFgRHZhutpOBbk/7c6umAyQB/QOnG4ja4vM91D2",
-  "fname": "Janero",
-  "lname": "Quierra",
-  "mname": "Marco",
-  "role": "Office",
-  "officeId": "OFF-006",
-  "contact": "09123456789",
-  "email": "adrianzalto3721@gmail.com",
-  "__v": 0
-}]
+  {
+    "id": "USR-378837-524",
+    "username": "kyle",
+    "password": "$2b$10$o9UivA1XV5ICqa938HPGfuQUHA1sGH1U1ZrPXSSMBSxpMkROSioGS",
+    "fname": "Kyle",
+    "lname": "Tibar",
+    "mname": "",
+    "role": "Office",
+    "officeId": "OFF-008",
+    "contact": null,
+    "email": null
+  }
+]

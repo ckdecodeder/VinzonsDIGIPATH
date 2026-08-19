@@ -1,19 +1,20 @@
-[{
-  "_id": {
-    "$oid": "69ef67920fb1bf500fd58d9b"
-  },
-  "id": "DEV-001",
-  "__v": 0,
-  "assignedTo": "OFF-001",
-  "firmware": "bridge-1.2",
-  "ip": "::1",
-  "lastActive": "2026-05-11T01:32:13.897Z",
-  "location": "Reception Area",
-  "model": "Raspberry Pi Scanner Bridge",
-  "name": "Physical Document Scanner",
-  "resolution": "3280x2464",
-  "scanCount": 1249,
-  "serialNumber": "PolarBear-A315",
-  "status": "Online",
-  "type": "Scanner"
-}]
+[
+  {
+    "id": "DEV-001",
+    "name": "probe",
+    "model": "Raspberry Pi WS Scanner",
+    "type": "Scanner",
+    "status": "Online",
+    "ip": "127.0.0.1",
+    "location": "",
+    "lastActive": "2026-07-14T05:33:46.706Z",
+    "firmware": "bridge-1.8",
+    "serialNumber": "Digipath",
+    "resolution": "3280x2464",
+    "assignedTo": "OFF-001",
+    "scanCount": 1379,
+    "createdAt": null,
+    "updatedAt": null,
+    "bridgeUrl": "http://192.168.254.132:8080"
+  }
+]

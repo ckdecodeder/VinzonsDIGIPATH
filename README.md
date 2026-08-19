@@ -1,13 +1,16 @@
 # Vinzons DigiPath
 
-Municipal document tracking dashboard with a React frontend, Express backend, and MongoDB database.
+Municipal document tracking dashboard with a React frontend, Express backend, and PostgreSQL database.
+
+> **Full setup guide (database, ports, dev tunnel):** see [docs/SETUP_AT_DATABASE_GUIDE.md](docs/SETUP_AT_DATABASE_GUIDE.md)
 
 ## Project Structure
 
 ```text
-backend/    Express API and MongoDB models
+backend/    Express API and PostgreSQL (Sequelize)
 dashboard/  React + Vite dashboard
-docs/       ERD, DFD, and database setup notes
+dbcollections/  JSON database seed/export (used by npm run migrate)
+docs/       ERD, DFD, and setup guides
 pi_scanner_bridge.py  Raspberry Pi physical scanner bridge
 ```
 
