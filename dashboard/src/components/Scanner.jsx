@@ -257,6 +257,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [step, setStep] = useState(1);
   const [cameraSource] = useState(PHYSICAL_CAMERA_VALUE);
   const [paperGuideId, setPaperGuideId] = useState('letter-landscape');
+  const captureFrameCount = 3;
+  const [requiredCaptureCount, setRequiredCaptureCount] = useState(5);
   const [showPaperGuide, setShowPaperGuide] = useState(false);
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [previewMode, setPreviewMode] = useState('ws');
@@ -278,6 +280,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   // Scan results
   const [capturedImage, setCapturedImage] = useState(null);
   const [capturedFileType, setCapturedFileType] = useState('');
+  const [capturedImages, setCapturedImages] = useState([]);
+  const capturedImagesRef = useRef([]);
   const [extractedText, setExtractedText] = useState('');
   const [hardwareScannedDoc, setHardwareScannedDoc] = useState(null);
 
@@ -413,6 +417,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     : (device?.payload?.streamIs2K === true || is2kResolution(deviceStreamResolution || {}));
   const adaptiveStreamFps = Number(device?.payload?.adaptiveStreamFps || device?.payload?.previewFps || 0);
   const isCapturedPdf = isPdfMedia(capturedImage, capturedFileType);
+  const renderCapturedImageGallery = (alt) => (
+    <div className="scanner-captured-gallery">
+      {capturedImages.map((file, index) => (
+        <div className="scanner-captured-gallery-item" key={file.id || `${file.url}-${index}`}>
+          {renderScannedDocumentPreview(file.previewUrl || file.url, {
+            alt: `${alt} ${index + 1}`,
+            isPdf: isPdfMedia(file.previewUrl || file.url, file.type),
+          })}
+          <span>Capture {index + 1}</span>
+        </div>
+      ))}
+    </div>
+  );
   const deviceId = device?.id || 'DEV-001';
   const streamChannel = `scanner:${deviceId}:stream`;
   const streamOnline = device?.connected || device?.streamWsConnected === true;
@@ -936,6 +953,18 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           || null,
         );
         const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : 'image/jpeg');
+        const captureNumber = capturedImagesRef.current.length + 1;
+        const captureFile = {
+          ...(scannedFile || {}),
+          id: scannedFile?.id || `${commandId || 'capture'}-${captureNumber}`,
+          name: scannedFile?.name || `scan-${captureNumber}.jpg`,
+          type: scannedType,
+          url: scannedFile?.url || scannedUrl,
+          previewUrl: scannedUrl,
+          source: scannedFile?.source || 'camera',
+        };
+        capturedImagesRef.current = [...capturedImagesRef.current, captureFile];
+        setCapturedImages(capturedImagesRef.current);
         const autoSubject = resolveAutoSubject(doc);
         const autoSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
         const autoDate = normalizeDateForInput(doc.dateReceived);
@@ -946,35 +975,41 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           documentTypeId: doc.documentTypeId || '',
           dateReceived: autoDate,
         };
-        setCapturedImage(scannedUrl);
+        if (captureNumber === 1) setCapturedImage(scannedUrl);
         setCapturedFileType(scannedType);
-        setExtractedText(doc.scannedText || '');
-        setFormData(prev => ({
-          ...prev,
-          subject: autoSubject,
-          documentDirection: doc.documentDirection || prev.documentDirection,
-          documentTypeId: doc.documentTypeId || prev.documentTypeId,
-          documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
-          status: doc.status || prev.status,
-          priorityLevel: doc.priorityLevel || prev.priorityLevel,
-          fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
-          originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
-          toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
-          dateReceived: autoDate || doc.dateReceived || prev.dateReceived,
-          senderName: autoSender,
-          senderContact: doc.senderContact || prev.senderContact,
-          senderEmail: doc.senderEmail || prev.senderEmail,
-          notifySender: doc.notifySender ?? prev.notifySender,
-          senderNotificationConsent: doc.senderNotificationConsent ?? prev.senderNotificationConsent,
-          senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
-          remarks: doc.remarks || prev.remarks,
-        }));
+        if (captureNumber === 1) {
+          setExtractedText(doc.scannedText || '');
+          setFormData(prev => ({
+            ...prev,
+            subject: autoSubject,
+            documentDirection: doc.documentDirection || prev.documentDirection,
+            documentTypeId: doc.documentTypeId || prev.documentTypeId,
+            documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
+            status: doc.status || prev.status,
+            priorityLevel: doc.priorityLevel || prev.priorityLevel,
+            fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
+            originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
+            toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
+            dateReceived: autoDate || doc.dateReceived || prev.dateReceived,
+            senderName: autoSender,
+            senderContact: doc.senderContact || prev.senderContact,
+            senderEmail: doc.senderEmail || prev.senderEmail,
+            notifySender: doc.notifySender ?? prev.notifySender,
+            senderNotificationConsent: doc.senderNotificationConsent ?? prev.senderNotificationConsent,
+            senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
+            remarks: doc.remarks || prev.remarks,
+          }));
+        }
         // AI extraction may still be running on the Pi. Poll only when the Pi flagged it.
-        if (commandId) startEnrichmentPolling(commandId, Boolean(result?.payload?.aiExtractPending));
+        if (captureNumber === 1 && commandId) startEnrichmentPolling(commandId, Boolean(result?.payload?.aiExtractPending));
       }
       setIsDeviceScanning(false);
-      setDeviceScanStatus('');
-      setStep(2);
+      if (capturedImagesRef.current.length >= requiredCaptureCount) {
+        setDeviceScanStatus(`${requiredCaptureCount} capture${requiredCaptureCount === 1 ? '' : 's'} complete. Review the captured images below.`);
+        setStep(2);
+      } else {
+        setDeviceScanStatus(`Capture ${capturedImagesRef.current.length} of ${requiredCaptureCount} complete. Press Capture Document again.`);
+      }
       return true;
     }
 
@@ -1032,6 +1067,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         paperGuideId: selectedPaperGuide.id,
         scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
         scanHeight: streamDims.height > 0 ? streamDims.height : (deviceStreamResolution?.height || 1080),
+        captureFrameCount,
       });
       setDeviceScanStatus('Waiting for the physical scanner to capture and upload the document...');
 
@@ -1139,6 +1175,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           senderNotificationChannels: formData.senderContact ? ['sms'] : [],
           remarks: formData.remarks,
           scannedText: extractedText,
+          scannedFiles: capturedImages,
           intakeStatus: 'Approved',
         });
         setStep(4);
@@ -1165,8 +1202,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         senderNotificationChannels: formData.senderContact ? ['sms'] : [],
         remarks: formData.remarks,
         scannedText: extractedText,
-        scannedImageUrl: capturedImage,
-        scannedFiles: [],
+          scannedImageUrl: capturedImages[0]?.url || capturedImage,
+          scannedFiles: capturedImages,
         intakeStatus: 'Approved',
       };
 
@@ -1196,6 +1233,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setDeviceScanStatus('');
     setFormErrors({});
     setFormErrorSummary('');
+    capturedImagesRef.current = [];
+    setCapturedImages([]);
+    setCapturedImage(null);
+    setCapturedFileType('');
+    setExtractedText('');
+    setHardwareScannedDoc(null);
     setStep(1);
   };
 
@@ -1210,6 +1253,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setStep(1);
     setCapturedImage(null);
     setCapturedFileType('');
+    capturedImagesRef.current = [];
+    setCapturedImages([]);
     setExtractedText('');
     setHardwareScannedDoc(null);
     setDeviceScanStatus('');
@@ -1309,6 +1354,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     ))}
                   </select>
                 </div>
+                <div className="scanner-preview-toolbar-group">
+                  <label className="form-label" htmlFor="required-capture-count">Pages to capture</label>
+                  <input
+                    id="required-capture-count"
+                    className="form-input"
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={requiredCaptureCount}
+                    onChange={(e) => setRequiredCaptureCount(Math.min(100, Math.max(1, Number(e.target.value) || 1)))}
+                    disabled={isDeviceScanning || isExtracting || capturedImages.length > 0}
+                  />
+                </div>
                 <label className="scanner-toggle-row scanner-toggle-row--inline">
                   <input
                     type="checkbox"
@@ -1393,7 +1451,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   {streamResolutionLabel && (
                     <>
                       <span className="scanner-stream-stats-sep">·</span>
-                      <span>{streamResolutionLabel}{streamIs2k ? '' : ' (upscaled)'}</span>
+                      <span>{streamResolutionLabel}</span>
                     </>
                   )}
                   <span className="scanner-stream-stats-sep">·</span>
@@ -1476,7 +1534,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   className="btn btn-primary scanner-capture-btn scanner-capture-btn--block"
                 >
                   {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
-                  {isExtracting ? 'Processing...' : 'Capture Document'}
+                  {isExtracting
+                    ? 'Processing...'
+                    : `Capture ${Math.min(capturedImages.length + 1, requiredCaptureCount)} of ${requiredCaptureCount}`}
                 </button>
                 {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
                   <button
@@ -1513,11 +1573,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   Scanned Document
                 </h3>
               </div>
-              {capturedImage ? (
-                renderScannedDocumentPreview(capturedImage, {
-                  alt: 'Scanned document',
-                  isPdf: isCapturedPdf,
-                })
+              {capturedImages.length ? (
+                renderCapturedImageGallery('Scanned document')
               ) : (
                 <div className="scanner-preview-empty" style={{ minHeight: '220px' }}>
                   <Image size={28} />
@@ -1726,11 +1783,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           <div className="grid-2" style={{ gap: '1.25rem', marginBottom: '1.5rem' }}>
             {/* Scanned Preview */}
             <div>
-              {capturedImage ? (
-                renderScannedDocumentPreview(capturedImage, {
-                  alt: 'Scanned document review',
-                  isPdf: isCapturedPdf,
-                })
+              {capturedImages.length ? (
+                renderCapturedImageGallery('Scanned document review')
               ) : null}
             </div>
 

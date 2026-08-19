@@ -516,7 +516,8 @@ class RealtimeHub {
     const lastSent = this.streamThrottle.get(deviceId) || 0;
     if (minIntervalMs > 0 && now - lastSent < minIntervalMs) {
       state.flushScheduled = true;
-      setImmediate(() => this.flushStreamRelay(deviceId));
+      const waitMs = Math.max(1, minIntervalMs - (now - lastSent));
+      setTimeout(() => this.flushStreamRelay(deviceId), waitMs);
       return;
     }
     this.streamThrottle.set(deviceId, now);
@@ -549,10 +550,6 @@ class RealtimeHub {
 
     this.maybeSendStreamHint(deviceId, { sent, skipped: anySkipped ? 1 : 0, subscribers, maxBuffered });
 
-    if (anySkipped && !state.flushScheduled) {
-      state.flushScheduled = true;
-      setTimeout(() => this.flushStreamRelay(deviceId), 2);
-    }
   }
 
   relayWebRtcToDevice(userId, deviceId, payload) {

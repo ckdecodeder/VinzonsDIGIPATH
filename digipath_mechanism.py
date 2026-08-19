@@ -132,6 +132,7 @@ class DigipathMechanism:
         self.sort_deposit_steps = max(
             0, _env_int("DIGIPATH_SORT_DEPOSIT_STEPS", self.move_steps)
         )
+        self.sort_forward = _env_bool("DIGIPATH_SORT_FORWARD", "1")
         self.open_loop_capture_steps = self.move_steps
         self.open_loop_main_steps = _env_int(
             "DIGIPATH_OPEN_LOOP_MAIN_STEPS",
@@ -203,10 +204,11 @@ class DigipathMechanism:
                 print(f"[Mech] Hall init failed — forcing open-loop: {err}")
 
         if self.open_loop:
+            return_steps = self.move_steps * self.capture_down_count
             print(
                 f"[Mech] ENABLED — Capture: {self.capture_down_count}× DOWN "
                 f"{self.move_steps} → photo → SORT {self.sort_deposit_steps} → UP "
-                f"{self.move_steps} (sensors OFF)"
+                f"{return_steps} (sensors OFF)"
             )
         else:
             print(
@@ -687,9 +689,10 @@ class DigipathMechanism:
             self._status.last_sort_layer = _clamp_layer(sort_layer)
             self._status.last_error = ""
 
+        return_steps = steps * self.capture_down_count
         print(
-            f"[Mech] UPLOAD_DONE → SORT {sort_steps} then UP {steps} "
-            f"(layer tag={_clamp_layer(sort_layer)})"
+            f"[Mech] UPLOAD_DONE → SORT {sort_steps} then UP {return_steps} "
+            f"({self.capture_down_count}× capture distance, layer tag={_clamp_layer(sort_layer)})"
         )
         try:
             if self.motor_settle_secs > 0:
@@ -698,6 +701,7 @@ class DigipathMechanism:
                 self._enable_sort_only("post-upload sort rotate")
                 deposited = self._sort.step_sort(
                     sort_steps,
+                    forward=self.sort_forward,
                     step_delay_us=self.step_delay_us,
                     stop_event=self._stop,
                 )
@@ -707,7 +711,7 @@ class DigipathMechanism:
             if self.motor_settle_secs > 0:
                 self._motor_pause("before lift up")
             self._enable_lift_only("post-upload return up")
-            moved = self._move_lift_open_loop("up", steps, "post-upload-up")
+            moved = self._move_lift_open_loop("up", return_steps, "post-upload-up")
             print(f"[Mech] UP done ({moved} steps) — back toward top")
             self.homed = True
             with self._lock:
@@ -800,6 +804,7 @@ class DigipathMechanism:
                 self._enable_sort_only("deposit rotate")
                 deposited = self._sort.step_sort(
                     self.sort_deposit_steps,
+                    forward=self.sort_forward,
                     step_delay_us=self.step_delay_us,
                     stop_event=self._stop,
                 )

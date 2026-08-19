@@ -194,7 +194,7 @@ class LiftAxis(Tb6600Axis):
 
 
 class SortAxis(Tb6600Axis):
-    """Single-direction sort carousel — DIR fixed forward only."""
+    """Sort carousel with configurable direction."""
 
-    def step_sort(self, steps: int, **kwargs) -> int:
-        return self.step(steps, forward=True, **kwargs)
+    def step_sort(self, steps: int, *, forward: bool = True, **kwargs) -> int:
+        return self.step(steps, forward=forward, **kwargs)

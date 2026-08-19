@@ -16,7 +16,7 @@ function Read-EnvValue([string]$file, [string]$key) {
   return ''
 }
 
-function Upsert-EnvValue([string]$file, [string]$key, [string]$value) {
+function Set-EnvValue([string]$file, [string]$key, [string]$value) {
   $pattern = "^\s*$key=.*$"
   $line = "$key=$value"
   $content = if (Test-Path $file) { Get-Content $file -Raw } else { '' }
@@ -48,7 +48,7 @@ if (-not (Test-Path $dt)) {
   throw 'devtunnel CLI not found. Run: winget install Microsoft.devtunnel'
 }
 
-$user = & $dt user show 2>&1
+& $dt user show 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
   & $dt user login -w -e
 }
@@ -58,7 +58,7 @@ if (-not $token) {
   throw "Could not read token for tunnel $tunnelId"
 }
 
-Upsert-EnvValue $networkEnv 'DIGIPATH_DEVTUNNEL_TOKEN' $token
+Set-EnvValue $networkEnv 'DIGIPATH_DEVTUNNEL_TOKEN' $token
 Write-Host "Updated DIGIPATH_DEVTUNNEL_TOKEN in network.env"
 
 Push-Location $root

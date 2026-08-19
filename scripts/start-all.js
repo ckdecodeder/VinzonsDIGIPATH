@@ -32,6 +32,13 @@ const parseEnvFile = (filePath) => {
   return values;
 };
 
+const buildTunnelArgs = (tunnelId = '') => {
+  const normalizedId = (tunnelId || '').trim();
+  return normalizedId
+    ? ['host', normalizedId, '-p', '5000', '--allow-anonymous']
+    : ['host', '-p', '5000', '--allow-anonymous'];
+};
+
 const networkEnv = parseEnvFile(path.join(root, 'network.env'));
 const autoOpenBrowser = (process.env.DIGIPATH_AUTO_OPEN_BROWSER
   ?? networkEnv.DIGIPATH_AUTO_OPEN_BROWSER
@@ -105,13 +112,26 @@ const startService = (name, args) => {
   return child;
 };
 
-const maybeStartTunnel = () => {
-  if (!autoTunnel) return;
-  const tunnelId = (networkEnv.DIGIPATH_TUNNEL_ID || '').trim();
-  const args = tunnelId
-    ? ['host', tunnelId, '-p', '5000', '--allow-anonymous']
-    : ['host', '-p', '5000', '--allow-anonymous'];
-  const tunnel = spawn('devtunnel', args, {
+const maybeStartTunnel = (opts = {}) => {
+  const {
+    autoTunnelEnabled = autoTunnel,
+    env = networkEnv,
+    spawnFn = spawn,
+    logger = console,
+    childList = children,
+  } = opts;
+
+  if (!autoTunnelEnabled) return null;
+
+  const tunnelId = (env.DIGIPATH_TUNNEL_ID || '').trim();
+  if (tunnelId) {
+    logger.warn('[DigiPath] Existing dev tunnel ID detected; skipping automatic host launch to avoid the "host token" panic.');
+    logger.warn('         Keep the public URL in DIGIPATH_PUBLIC_BACKEND_URL, or run: devtunnel host <tunnel-id> -p 5000 --allow-anonymous');
+    return null;
+  }
+
+  const args = buildTunnelArgs();
+  const tunnel = spawnFn('devtunnel', args, {
     cwd: root,
     shell: true,
     stdio: ['inherit', 'pipe', 'pipe'],
@@ -119,58 +139,79 @@ const maybeStartTunnel = () => {
   tunnel.stdout.on('data', (chunk) => process.stdout.write(`[tunnel] ${chunk}`));
   tunnel.stderr.on('data', (chunk) => process.stderr.write(`[tunnel] ${chunk}`));
   tunnel.on('error', () => {
-    console.warn('[DigiPath] devtunnel not found — skip auto tunnel or install: https://aka.ms/devtunnels/cli');
+    logger.warn('[DigiPath] devtunnel not found — skip auto tunnel or install: https://aka.ms/devtunnels/cli');
   });
-  children.push(tunnel);
+  tunnel.on('exit', (code) => {
+    if (code && code !== 0) {
+      logger.warn('[DigiPath] devtunnel exited without a host token; continuing without the auto tunnel.');
+      logger.warn('         If the tunnel is already public, keep DIGIPATH_AUTO_TUNNEL=0 and use the public URL in network.env.');
+    }
+  });
+  childList.push(tunnel);
+  return tunnel;
 };
 
-console.log('');
-console.log('========================================');
-console.log('  VinzonsDIGIPATH — starting all services');
-console.log('========================================');
-console.log('');
-
-console.log('[DigiPath] Step 1/3 — sync network.env ...');
-const sync = spawnSync('node', ['scripts/sync-network-config.js'], { cwd: root, stdio: 'inherit' });
-if (sync.status !== 0) {
-  console.warn('[DigiPath] network:sync had warnings — continuing anyway');
-}
-
-const publicUrl = networkEnv.DIGIPATH_PUBLIC_BACKEND_URL || '';
-if (publicUrl.includes('devtunnels.ms') && !autoTunnel) {
+const main = () => {
   console.log('');
-  console.log('[DigiPath] Tip: Public URL uses dev tunnel. Keep VS Code port 5000 tunnel PUBLIC,');
-  console.log('         or set DIGIPATH_AUTO_TUNNEL=1 in network.env if devtunnel CLI is installed.');
+  console.log('========================================');
+  console.log('  VinzonsDIGIPATH — starting all services');
+  console.log('========================================');
   console.log('');
-}
 
-console.log('[DigiPath] Step 2/3 — start backend + dashboard ...');
-maybeStartTunnel();
-startService('backend', ['--prefix', 'backend', 'run', 'dev']);
-startService('dashboard', ['--prefix', 'dashboard', 'run', 'dev']);
-
-process.on('SIGINT', () => shutdown(0));
-process.on('SIGTERM', () => shutdown(0));
-
-(async () => {
-  try {
-    console.log('[DigiPath] Waiting for backend ...');
-    await waitForUrl(backendHealthUrl).catch(async () => {
-      await waitForUrl('http://127.0.0.1:5000/');
-    });
-    console.log('[DigiPath] Waiting for dashboard ...');
-    await waitForUrl(dashboardUrl);
-    console.log('');
-    console.log('[DigiPath] Step 3/3 — ready!');
-    console.log(`  Dashboard: ${dashboardUrl}`);
-    console.log('  Backend:   http://127.0.0.1:5000');
-    if (publicUrl) console.log(`  Public:    ${publicUrl}`);
-    console.log('');
-    openBrowser(dashboardUrl);
-    console.log('[DigiPath] Press Ctrl+C to stop all services.');
-    console.log('');
-  } catch (err) {
-    console.warn(`[DigiPath] ${err.message}`);
-    console.warn('[DigiPath] Services are still starting — check terminal output above.');
+  console.log('[DigiPath] Step 1/3 — sync network.env ...');
+  const sync = spawnSync('node', ['scripts/sync-network-config.js'], { cwd: root, stdio: 'inherit' });
+  if (sync.status !== 0) {
+    console.warn('[DigiPath] network:sync had warnings — continuing anyway');
   }
-})();
+
+  const publicUrl = networkEnv.DIGIPATH_PUBLIC_BACKEND_URL || '';
+  if (publicUrl.includes('devtunnels.ms') && !autoTunnel) {
+    console.log('');
+    console.log('[DigiPath] Tip: Public URL uses dev tunnel. Keep VS Code port 5000 tunnel PUBLIC,');
+    console.log('         or set DIGIPATH_AUTO_TUNNEL=1 in network.env if devtunnel CLI is installed.');
+    console.log('');
+  }
+
+  console.log('[DigiPath] Step 2/3 — start backend + dashboard ...');
+  maybeStartTunnel();
+  startService('backend', ['--prefix', 'backend', 'run', 'dev']);
+  startService('dashboard', ['--prefix', 'dashboard', 'run', 'dev']);
+
+  process.on('SIGINT', () => shutdown(0));
+  process.on('SIGTERM', () => shutdown(0));
+
+  (async () => {
+    try {
+      console.log('[DigiPath] Waiting for backend ...');
+      await waitForUrl(backendHealthUrl).catch(async () => {
+        await waitForUrl('http://127.0.0.1:5000/');
+      });
+      console.log('[DigiPath] Waiting for dashboard ...');
+      await waitForUrl(dashboardUrl);
+      console.log('');
+      console.log('[DigiPath] Step 3/3 — ready!');
+      console.log(`  Dashboard: ${dashboardUrl}`);
+      console.log('  Backend:   http://127.0.0.1:5000');
+      if (publicUrl) console.log(`  Public:    ${publicUrl}`);
+      console.log('');
+      openBrowser(dashboardUrl);
+      console.log('[DigiPath] Press Ctrl+C to stop all services.');
+      console.log('');
+    } catch (err) {
+      console.warn(`[DigiPath] ${err.message}`);
+      console.warn('[DigiPath] Services are still starting — check terminal output above.');
+    }
+  })();
+};
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  parseEnvFile,
+  buildTunnelArgs,
+  maybeStartTunnel,
+  waitForUrl,
+  openBrowser,
+};

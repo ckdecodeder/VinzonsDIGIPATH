@@ -185,10 +185,15 @@ writeFile(bridgeEnvPath, bridgeEnv);
 
 const syncPiWsEnv = (filePath) => {
   if (!fs.existsSync(filePath)) return;
+  const isExample = filePath.endsWith('.example');
   let piEnv = fs.readFileSync(filePath, 'utf8');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_BACKEND_BASE_URL', apiBase);
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_DEVICE_API_KEY', deviceKey);
-  piEnv = upsertOrComment(piEnv, 'DIGIPATH_DEVTUNNEL_TOKEN', devtunnelToken);
+  piEnv = upsertEnvLine(
+    piEnv,
+    'DIGIPATH_DEVICE_API_KEY',
+    isExample ? 'dev-device-key-change-me' : deviceKey,
+  );
+  piEnv = upsertOrComment(piEnv, 'DIGIPATH_DEVTUNNEL_TOKEN', isExample ? '' : devtunnelToken);
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_FPS', cfg.DIGIPATH_STREAM_FPS || '20');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_WIDTH', cfg.DIGIPATH_STREAM_WIDTH || '2560');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_HEIGHT', cfg.DIGIPATH_STREAM_HEIGHT || '1440');
@@ -226,8 +231,12 @@ const syncPiWsEnv = (filePath) => {
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_HTTP_UPLOAD', cfg.DIGIPATH_STREAM_HTTP_UPLOAD || 'auto');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_WS_PING_INTERVAL', cfg.DIGIPATH_WS_PING_INTERVAL || '0');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_WS_STALE_SECS', cfg.DIGIPATH_WS_STALE_SECS || '90');
-  piEnv = upsertOrComment(piEnv, 'DIGIPATH_GROQ_API_KEY', groqApiKey);
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_AI_EXTRACT', groqApiKey ? (cfg.DIGIPATH_AI_EXTRACT || '1') : '0');
+  piEnv = upsertOrComment(piEnv, 'DIGIPATH_GROQ_API_KEY', isExample ? '' : groqApiKey);
+  piEnv = upsertEnvLine(
+    piEnv,
+    'DIGIPATH_AI_EXTRACT',
+    !isExample && groqApiKey ? (cfg.DIGIPATH_AI_EXTRACT || '1') : '0',
+  );
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_AI_USE_VISION', cfg.DIGIPATH_AI_USE_VISION || '1');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_AI_BACKGROUND', cfg.DIGIPATH_AI_BACKGROUND || '1');
   piEnv = upsertEnvLine(piEnv, 'DIGIPATH_AI_EXTRACT_MAX_TOKENS', cfg.DIGIPATH_AI_EXTRACT_MAX_TOKENS || '4096');

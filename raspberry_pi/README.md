@@ -15,7 +15,7 @@
 | Pi `.env` | `DIGIPATH_DEVICE_API_KEY` | **same** as `DEVICE_API_KEY` |
 
 Synced from root `network.env` via `npm run network:sync`.
-Current pair: tunnel `46hdfmgm-5000.asse.devtunnels.ms` + key `dev-device-key-change-me`.
+Current pair: tunnel `5s7bbf2l-5000.asse.devtunnels.ms` + key `dev-device-key-change-me`.
 
 
 ```bash

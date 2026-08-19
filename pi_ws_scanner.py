@@ -29,10 +29,7 @@ import websocket
 from digipath_mechanism import (
     get_mechanism,
     mechanism_home_on_startup,
-    mechanism_prepare_for_capture,
     mechanism_start_door_monitor,
-    mechanism_start_sort_async,
-    resolve_sort_layer,
 )
 
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
@@ -86,7 +83,15 @@ STREAM_SEND_INTERVAL = (1.0 / WS_MAX_FPS) if WS_MAX_FPS > 0 else 0.05
 STREAM_BUFFER_FRAMES = max(1, int(os.environ.get("DIGIPATH_STREAM_BUFFER_FRAMES", "1")))
 STREAM_DRIVER_DRAIN = max(1, int(os.environ.get("DIGIPATH_STREAM_DRIVER_DRAIN", "3")))
 CAMERA_READ_TIMEOUT_MS = max(500, int(os.environ.get("DIGIPATH_CAMERA_READ_TIMEOUT_MS", "4000")))
-CAMERA_READ_RETRIES = max(1, int(os.environ.get("DIGIPATH_CAMERA_READ_RETRIES", "4")))
+CAMERA_READ_RETRIES = max(1, int(os.environ.get("DIGIPATH_CAMERA_READ_RETRIES", "2")))
+AUTO_CROP_PAPER = os.environ.get("DIGIPATH_AUTO_CROP_PAPER", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+AUTO_CROP_MIN_AREA = max(0.2, min(0.8, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_AREA", "0.3"))))
+AUTO_CROP_DETECT_EVERY = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_DETECT_EVERY", "5")))
 CAMERA_RECOVER_AFTER_MISSES = max(3, int(os.environ.get("DIGIPATH_CAMERA_RECOVER_AFTER_MISSES", "12")))
 CAMERA_REOPEN_AFTER_MISSES = max(
     CAMERA_RECOVER_AFTER_MISSES + 1,
@@ -201,9 +206,15 @@ STREAM_HTTP_WS_PRIORITY = STREAM_HTTP_UPLOAD_RAW in ("auto", "ws", "1", "true", 
 _last_http_frame_upload_at = 0.0
 _http_frame_upload_boot = 0
 _http_upload_session = None
+_http_upload_lock = threading.Lock()
+_http_upload_inflight = False
+_http_upload_pending: bytes | None = None
 _last_ws_frame_sent_at = 0.0
 _last_ws_jpeg_sent: bytes | None = None
 _last_ws_jpeg_lock = threading.Lock()
+_auto_crop_frame_count = 0
+_last_paper_quad = None
+_last_paper_shape = None
 _adaptive_lock = threading.Lock()
 _adaptive_fps = WS_MAX_FPS
 _adaptive_jpeg_quality = PREVIEW_JPEG_QUALITY
@@ -606,19 +617,83 @@ def _frame_pace_sleep(remaining_secs: float):
     time.sleep(min(max(remaining_secs, 0.0), 0.008 if _effective_stream_fps() >= 45 else 0.02))
 
 
+def _order_paper_points(points):
+    points = np.asarray(points, dtype=np.float32).reshape(4, 2)
+    total = points.sum(axis=1)
+    diff = np.diff(points, axis=1).reshape(4)
+    return np.array(
+        [points[np.argmin(total)], points[np.argmin(diff)], points[np.argmax(total)], points[np.argmax(diff)]],
+        dtype=np.float32,
+    )
+
+
+def _detect_paper_quad(frame):
+    if not AUTO_CROP_PAPER or frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    height, width = frame.shape[:2]
+    scale = min(1.0, 960.0 / max(height, width))
+    small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else frame
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 150)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8), iterations=2)
+    image_area = float(small.shape[0] * small.shape[1])
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_area = 0.0
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        area_ratio = area / image_area if image_area else 0.0
+        if area_ratio < AUTO_CROP_MIN_AREA or area_ratio > 0.97:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0:
+            continue
+        polygon = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+        if len(polygon) != 4 or not cv2.isContourConvex(polygon):
+            continue
+        x, y, box_width, box_height = cv2.boundingRect(polygon)
+        if box_width < 100 or box_height < 100 or area / max(1.0, box_width * box_height) < 0.55:
+            continue
+        if area > best_area:
+            best = polygon.reshape(4, 2).astype(np.float32)
+            best_area = area
+    return _order_paper_points(best / scale) if best is not None else None
+
+
+def _crop_paper(frame):
+    global _auto_crop_frame_count, _last_paper_quad, _last_paper_shape
+    shape = frame.shape[:2] if frame is not None else None
+    _auto_crop_frame_count += 1
+    if shape != _last_paper_shape or _auto_crop_frame_count % AUTO_CROP_DETECT_EVERY == 1:
+        _last_paper_quad = _detect_paper_quad(frame)
+        _last_paper_shape = shape
+    points = _last_paper_quad
+    if points is None:
+        return frame
+    top_left, top_right, bottom_right, bottom_left = points
+    target_width = int(max(np.linalg.norm(bottom_right - bottom_left), np.linalg.norm(top_right - top_left)))
+    target_height = int(max(np.linalg.norm(top_right - bottom_right), np.linalg.norm(top_left - bottom_left)))
+    if target_width < 100 or target_height < 100:
+        return frame
+    destination = np.array(
+        [[0, 0], [target_width - 1, 0], [target_width - 1, target_height - 1], [0, target_height - 1]],
+        dtype=np.float32,
+    )
+    matrix = cv2.getPerspectiveTransform(points, destination)
+    return cv2.warpPerspective(frame, matrix, (target_width, target_height), borderMode=cv2.BORDER_REPLICATE)
+
+
 def _prepare_preview_frame(frame):
-    oriented = _apply_preview_rotation(frame)
+    oriented = _apply_preview_rotation(_crop_paper(frame))
     if oriented is None:
         return frame
     height, width = oriented.shape[:2]
     if PREVIEW_WIDTH == width and PREVIEW_HEIGHT == height:
         return oriented
     downscale = PREVIEW_WIDTH < width or PREVIEW_HEIGHT < height
-    return cv2.resize(
-        oriented,
-        (PREVIEW_WIDTH, PREVIEW_HEIGHT),
-        interpolation=cv2.INTER_AREA if downscale else cv2.INTER_LINEAR,
-    )
+    if not downscale:
+        return oriented
+    return cv2.resize(oriented, (PREVIEW_WIDTH, PREVIEW_HEIGHT), interpolation=cv2.INTER_AREA)
 
 
 def configure_capture(cap, width: int, height: int):
@@ -1144,7 +1219,7 @@ def _finalize_scan_frame(frame, profile: dict | None = None) -> bytes | None:
     if frame is None:
         return None
     target_w, target_h = _scan_output_dims(profile)
-    oriented = frame
+    oriented = _crop_paper(frame)
     if oriented.shape[1] != target_w or oriented.shape[0] != target_h:
         upscaling = oriented.shape[1] < target_w or oriented.shape[0] < target_h
         oriented = cv2.resize(
@@ -1251,58 +1326,36 @@ def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
         )
         return _finalize_scan_frame(preview_frame, profile)
 
-    # Stream not ready yet — brief USB read attempt.
-    _scan_in_progress.set()
-    try:
-        cap = active_capture_cap
-        frame = None
-        preview_frame = None
-        with capture_cap_lock:
-            if cap is not None and cap.isOpened():
-                frame = _capture_still_frame(cap, for_preview=True)
-            if frame is not None:
-                preview_frame = _prepare_preview_frame(frame)
-                _store_camera_frames(frame, preview_frame)
-        if preview_frame is None:
-            print("[PiWS] Scan capture miss — no preview buffer and USB read failed")
-            return None
-        print(
-            f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
-            f"(USB fallback, cam {frame.shape[1]}x{frame.shape[0]})"
-        )
-        return _finalize_scan_frame(preview_frame, profile)
-    finally:
-        _scan_in_progress.clear()
+    # Stream not ready yet — briefly share the camera through the capture lock.
+    cap = active_capture_cap
+    frame = None
+    preview_frame = None
+    with capture_cap_lock:
+        if cap is not None and cap.isOpened():
+            frame = _capture_still_frame(cap, for_preview=True)
+        if frame is not None:
+            preview_frame = _prepare_preview_frame(frame)
+            _store_camera_frames(frame, preview_frame)
+    if preview_frame is None:
+        print("[PiWS] Scan capture miss — no preview buffer and USB read failed")
+        return None
+    print(
+        f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
+        f"(USB fallback, cam {frame.shape[1]}x{frame.shape[0]})"
+    )
+    return _finalize_scan_frame(preview_frame, profile)
 
 
 def _run_scan_command(cmd_id: str, payload: dict | None = None):
-    """Background scan — lift/sort mechanism, camera capture, upload, then sort."""
+    """Background scan — capture and upload only; mechanism actions are disabled."""
     profile = _scan_profile_from_payload(payload)
-    sort_layer = resolve_sort_layer(payload)
-    mech = get_mechanism()
     try:
         guide_label = f" ({profile['paperGuideId']})" if profile.get("paperGuideId") else ""
         print(
             f"[PiWS] Scan {cmd_id} capture "
             f"{profile['width']}x{profile['height']} {profile['orientation']}{guide_label} "
-            f"sort_layer={sort_layer}"
+            "mechanism=disabled"
         )
-        if mech.enabled:
-            try:
-                print(f"[PiWS] Scan {cmd_id} — starting NEMA prepare (same pins as test-motors)")
-                mechanism_prepare_for_capture()
-            except Exception as mech_err:
-                update_command_status(
-                    cmd_id,
-                    "Failed",
-                    f"Lift/hall prep failed: {mech_err}",
-                )
-                return
-        else:
-            print(
-                f"[PiWS] Scan {cmd_id} — *** NEMA SKIPPED (MECH_ENABLED=0) *** "
-                "Camera will still capture. Fix: DIGIPATH_MECH_ENABLED=1 + restart"
-            )
 
         snap = capture_scan_bytes(profile)
         if not snap:
@@ -1315,15 +1368,7 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
         update_command_status(cmd_id, "Executing")
         upload_scan(snap, cmd_id)
         update_command_status(cmd_id, "Executed")
-        print(f"[PiWS] Scan {cmd_id} uploaded — sending upload_done → sort")
-        if mech.enabled:
-            print(f"[PiWS] SIGNAL to mechanism: upload_done sort_layer={sort_layer}")
-            mechanism_start_sort_async(sort_layer)
-        else:
-            print(
-                "[PiWS] Mechanism OFF — no NEMA after upload. "
-                "Set DIGIPATH_MECH_ENABLED=1"
-            )
+        print(f"[PiWS] Scan {cmd_id} uploaded — mechanism remains disabled")
     except Exception as err:
         print(f"[PiWS] Scan {cmd_id} failed: {err}")
         update_command_status(cmd_id, "Failed", str(err))
@@ -1374,6 +1419,7 @@ def send_ws_frame(frame: bytes):
 def upload_stream_frame_http(jpeg: bytes):
     """HTTPS preview cache — skipped when WS is actively sending (avoids duplicate tunnel load)."""
     global _last_http_frame_upload_at, _http_frame_upload_boot, _last_http_upload_error_log_at
+    global _http_upload_inflight, _http_upload_pending
     if not STREAM_HTTP_UPLOAD or not jpeg or not BACKEND_BASE_URL:
         return
     if _scan_in_progress.is_set():
@@ -1389,33 +1435,47 @@ def upload_stream_frame_http(jpeg: bytes):
     _last_http_frame_upload_at = now
     _http_frame_upload_boot += 1
 
+    with _http_upload_lock:
+        _http_upload_pending = jpeg
+        if _http_upload_inflight:
+            return
+        _http_upload_inflight = True
+
     def _worker():
-        global _last_http_upload_error_log_at
-        try:
-            response = _http_upload_session_get().post(
-                f"{BACKEND_BASE_URL}/devices/stream/frame",
-                params={"deviceId": DEVICE_ID},
-                data=jpeg,
-                headers={"Content-Type": "image/jpeg"},
-                timeout=12,
-            )
-            if response.status_code >= 400:
+        global _last_http_upload_error_log_at, _http_upload_inflight, _http_upload_pending
+        while not stop_event.is_set():
+            with _http_upload_lock:
+                current = _http_upload_pending
+                _http_upload_pending = None
+            if not current:
+                with _http_upload_lock:
+                    _http_upload_inflight = False
+                return
+            try:
+                response = _http_upload_session_get().post(
+                    f"{BACKEND_BASE_URL}/devices/stream/frame",
+                    params={"deviceId": DEVICE_ID},
+                    data=current,
+                    headers={"Content-Type": "image/jpeg"},
+                    timeout=12,
+                )
+                if response.status_code >= 400:
+                    if time.monotonic() - _last_http_upload_error_log_at > 30:
+                        print(f"[PiWS] HTTP frame upload {response.status_code}: {response.text[:120]}")
+                        _last_http_upload_error_log_at = time.monotonic()
+                elif _http_frame_upload_boot <= 3:
+                    print(f"[PiWS] HTTP frame upload OK ({len(current)} bytes)")
+            except Exception as err:
                 if time.monotonic() - _last_http_upload_error_log_at > 30:
-                    print(f"[PiWS] HTTP frame upload {response.status_code}: {response.text[:120]}")
+                    err_text = str(err)
+                    if "name resolution" in err_text.lower() or "failed to resolve" in err_text.lower():
+                        print(
+                            "[PiWS] HTTP frame upload DNS fail (WS preview still works) — "
+                            "check Pi internet/DNS or set nameserver 8.8.8.8"
+                        )
+                    else:
+                        print(f"[PiWS] HTTP frame upload failed: {err_text[:160]}")
                     _last_http_upload_error_log_at = time.monotonic()
-            elif _http_frame_upload_boot <= 3:
-                print(f"[PiWS] HTTP frame upload OK ({len(jpeg)} bytes)")
-        except Exception as err:
-            if time.monotonic() - _last_http_upload_error_log_at > 30:
-                err_text = str(err)
-                if "name resolution" in err_text.lower() or "failed to resolve" in err_text.lower():
-                    print(
-                        "[PiWS] HTTP frame upload DNS fail (WS preview still works) — "
-                        "check Pi internet/DNS or set nameserver 8.8.8.8"
-                    )
-                else:
-                    print(f"[PiWS] HTTP frame upload failed: {err_text[:160]}")
-                _last_http_upload_error_log_at = time.monotonic()
 
     threading.Thread(target=_worker, daemon=True).start()
 
