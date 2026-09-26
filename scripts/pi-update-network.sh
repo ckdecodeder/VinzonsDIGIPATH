@@ -4,7 +4,7 @@
 
 set -eu
 
-BACKEND_URL="http://100.84.77.51:5000/api"
+BACKEND_URL="https://46hdfmgm-5000.asse.devtunnels.ms/api"
 DEVICE_KEY="dev-device-key-change-me"
 DEVTUNNEL_TOKEN=""
 
@@ -83,6 +83,6 @@ fi
 
 echo ""
 echo "Backend:       ${BACKEND_URL}"
-echo "WebSocket:     wss://5s7bbf2l-5000.asse.devtunnels.ms/ws/device"
+echo "WebSocket:     wss://46hdfmgm-5000.asse.devtunnels.ms/ws/device"
 echo "MJPEG HTTP:    disabled"
 echo "Check status:  curl http://127.0.0.1:8080/status"
