@@ -1772,7 +1772,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               <ul className="scanner-scan-tips">
                 <li>Align the document in the live preview, then press Capture</li>
                 <li>Capture saves the photo only — motors stay idle</li>
-                <li>After Confirm &amp; Register, the sorter moves to the tray (close the door first)</li>
+                <li>After Confirm &amp; Register, the sorter moves to the tray</li>
               </ul>
 
               <div className="scanner-scan-actions">

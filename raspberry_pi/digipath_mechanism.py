@@ -125,7 +125,7 @@ class DigipathMechanism:
         self.open_loop = _env_bool("DIGIPATH_MECH_OPEN_LOOP", "0")
         self.door_monitor_enabled = _env_bool("DIGIPATH_DOOR_MONITOR", "0")
         # Hall #1 door = safety gate before SORT (does NOT auto-move motors).
-        self.sort_require_door_closed = _env_bool("DIGIPATH_SORT_REQUIRE_DOOR_CLOSED", "1")
+        self.sort_require_door_closed = _env_bool("DIGIPATH_SORT_REQUIRE_DOOR_CLOSED", "0")
         self.home_on_start = _env_bool("DIGIPATH_MECH_HOME_ON_START", "0")
         # Power-on jog: lift DOWN then UP (same steps), sort one direction.
         self.startup_test = _env_bool("DIGIPATH_MECH_STARTUP_TEST", "1")
@@ -141,7 +141,7 @@ class DigipathMechanism:
             100,
             _env_int(
                 "DIGIPATH_STARTUP_TEST_STEP_DELAY_US",
-                _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 2500),
+                _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 1500),
             ),
         )
         self.signal_mode = "sink" if _env_bool("DIGIPATH_TB6600_SIGNAL_SINK", "0") else "source"
@@ -159,7 +159,7 @@ class DigipathMechanism:
         self.lift_up_max_steps = _env_int("DIGIPATH_LIFT_UP_MAX_STEPS", self.lift_travel_max_steps)
         self.sort_max_steps = _env_int("DIGIPATH_SORT_MAX_STEPS", 10000)
         self.sort_chunk_steps = max(1, _env_int("DIGIPATH_SORT_CHUNK_STEPS", 6))
-        self.step_delay_us = _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 2500)
+        self.step_delay_us = _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 1500)
 
         # One step size for: ikot/down / sort / up (tag 900)
         self.move_steps = max(
@@ -177,6 +177,11 @@ class DigipathMechanism:
         self.sort_deposit_steps = max(
             0, _env_int("DIGIPATH_SORT_DEPOSIT_STEPS", self.move_steps)
         )
+        # Seconds the sort motor runs CW per document; overrides DIGIPATH_SORT_DEPOSIT_STEPS when > 0.
+        try:
+            self.sort_deposit_secs = max(0.0, float(os.environ.get("DIGIPATH_SORT_DEPOSIT_SECS", "10")))
+        except ValueError:
+            self.sort_deposit_secs = 10.0
         self.sort_forward = _env_bool("DIGIPATH_SORT_FORWARD", "1")
         self.open_loop_capture_steps = self.move_steps
         self.open_loop_main_steps = _env_int(
@@ -434,6 +439,35 @@ class DigipathMechanism:
             fallback_dir=self.lift_to_layer_dir,
             on_sensor=on_sensor,
         )
+
+    def _run_sort_deposit(self, reason: str, *, steps: int | None = None) -> int:
+        """Turn the sort motor CW — for sort_deposit_secs when set, otherwise a fixed step count."""
+        self._enable_sort_only(reason)
+        try:
+            if self.sort_deposit_secs > 0:
+                print(f"[Mech] Sort CW for {self.sort_deposit_secs:g}s ({reason})")
+                deadline = time.monotonic() + self.sort_deposit_secs
+                deposited = 0
+                while time.monotonic() < deadline and not self._stop.is_set():
+                    deposited += self._sort.step_sort(
+                        50,
+                        forward=self.sort_forward,
+                        step_delay_us=self.step_delay_us,
+                        stop_event=self._stop,
+                    )
+            else:
+                count = self.sort_deposit_steps if steps is None else steps
+                print(f"[Mech] Sort CW {count} steps ({reason})")
+                deposited = self._sort.step_sort(
+                    count,
+                    forward=self.sort_forward,
+                    step_delay_us=self.step_delay_us,
+                    stop_event=self._stop,
+                )
+            print(f"[Mech] Sort done ({deposited} steps) — motor off")
+            return deposited
+        finally:
+            self._sort.set_enabled(False)
 
     def _sensors_beyond(self, target_sensor: int, direction: str) -> set[int]:
         """Lift halls past the target in the travel direction — hitting one means overshoot."""
@@ -855,16 +889,8 @@ class DigipathMechanism:
         try:
             if self.motor_settle_secs > 0:
                 self._motor_pause("before sort")
-            if sort_steps > 0:
-                self._enable_sort_only("post-upload sort rotate")
-                deposited = self._sort.step_sort(
-                    sort_steps,
-                    forward=self.sort_forward,
-                    step_delay_us=self.step_delay_us,
-                    stop_event=self._stop,
-                )
-                print(f"[Mech] SORT done ({deposited} steps)")
-                self._sort.set_enabled(False)
+            if self.sort_deposit_secs > 0 or sort_steps > 0:
+                self._run_sort_deposit("post-upload sort rotate", steps=sort_steps)
 
             if self.motor_settle_secs > 0:
                 self._motor_pause("before lift up")
@@ -962,17 +988,9 @@ class DigipathMechanism:
                 self._status.phase = "sorting"
                 self._status.passed_layers = list(passed_layers)
 
-            if self.sort_deposit_steps > 0:
-                print(f"[Mech] Sort deposit rotate ({self.sort_deposit_steps} steps)")
+            if self.sort_deposit_secs > 0 or self.sort_deposit_steps > 0:
                 self._motor_pause("before sort deposit")
-                self._enable_sort_only("deposit rotate")
-                deposited = self._sort.step_sort(
-                    self.sort_deposit_steps,
-                    forward=self.sort_forward,
-                    step_delay_us=self.step_delay_us,
-                    stop_event=self._stop,
-                )
-                print(f"[Mech] Sort deposit done ({deposited} steps)")
+                self._run_sort_deposit("deposit rotate")
                 self._motor_pause("after sort deposit")
 
             self.return_to_main()

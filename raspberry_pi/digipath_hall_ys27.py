@@ -1,8 +1,8 @@
 """
 YS-27 Hall sensor modules on Raspberry Pi GPIO.
 
-Physical placement (Vinzons — Hall #3 scanner/capture-height REMOVED):
-  hall 1 = door            GPIO 5
+Physical placement (Vinzons — Hall #1 door and Hall #3 scanner/capture-height REMOVED):
+  hall 1 = door            OFF (set DIGIPATH_HALL_DOOR_BCM to re-enable)
   hall 2 = main / layer 1  GPIO 6
   hall 4 = layer 2         GPIO 19
   hall 5 = layer 3         GPIO 12
@@ -238,7 +238,7 @@ def build_default_bank(simulate: bool = False) -> HallSensorBank:
 
     # Hall #3 (CAPTURE / scanner height) default OFF — use open-loop step capture height.
     pin_map = {
-        DOOR: _env_int("DIGIPATH_HALL_DOOR_BCM", 5),
+        DOOR: _env_int("DIGIPATH_HALL_DOOR_BCM", 0),
         MAIN: main_bcm,
         CAPTURE: _env_int("DIGIPATH_HALL_CAPTURE_BCM", 0),
         LAYER_1: layer1_bcm,
@@ -248,8 +248,5 @@ def build_default_bank(simulate: bool = False) -> HallSensorBank:
     pin_map = {sid: bcm for sid, bcm in pin_map.items() if int(bcm or 0) > 0}
     active_low = _env_bool("DIGIPATH_HALL_ACTIVE_LOW", "1")
     bank = HallSensorBank(pin_map, active_low=active_low, simulate=simulate)
-    print(
-        "[Hall] map: #1 door=5  #2 main/layer1=6  #3 scanner=OFF  "
-        "#4 layer2=19  #5 layer3=12"
-    )
+    print(f"[Hall] map (sensor id -> BCM): {pin_map}")
     return bank

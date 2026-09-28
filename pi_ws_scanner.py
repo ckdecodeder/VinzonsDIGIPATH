@@ -35,7 +35,7 @@ from digipath_mechanism import (
     resolve_sort_layer,
 )
 
-PI_CODE_VERSION = "2026-09-27-hall-fix"
+PI_CODE_VERSION = "2026-09-28-clear-feed-fast-motor"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -307,6 +307,8 @@ _ws_send_samples = 0
 _ws_send_slow = 0
 _last_adaptive_tick_at = 0.0
 _last_adaptive_log_at = 0.0
+_adaptive_hold_until = 0.0
+STREAM_POST_SCAN_HOLD_SECS = 10.0
 _last_http_upload_error_log_at = 0.0
 
 
@@ -624,45 +626,51 @@ def _adaptive_stream_tick():
         return
     _last_adaptive_tick_at = now
 
+    # The scan upload deliberately throttles the stream to 1 fps; judging the link
+    # during that window (or right after) would permanently blur the live feed.
+    if _scan_upload_busy.is_set() or _scan_in_progress.is_set() or now < _adaptive_hold_until:
+        with _adaptive_lock:
+            _ws_send_samples = 0
+            _ws_send_slow = 0
+        return
+
     with _adaptive_lock:
-        score = 0.0
+        # link_score: real transport trouble (slow WS sends, backend backlog, stalls).
+        link_score = 0.0
         if _ws_send_samples > 0:
             slow_ratio = _ws_send_slow / _ws_send_samples
-            score -= slow_ratio * 0.45
-        score -= _backend_pressure * 0.4
+            link_score -= slow_ratio * 0.45
+        link_score -= _backend_pressure * 0.4
+        if _last_ws_frame_sent_at > 0 and (now - _last_ws_frame_sent_at) > 2.5:
+            link_score -= 0.35
 
+        utilization = None
         target_fps = _adaptive_fps
         if _consumer_paint_fps > 0 and target_fps > 0:
             utilization = _consumer_paint_fps / target_fps
-            if utilization >= 0.9:
-                score += 0.22
-            elif utilization < 0.55:
-                score -= 0.28
-
-        if _last_ws_frame_sent_at > 0 and (now - _last_ws_frame_sent_at) > 2.5:
-            score -= 0.35
 
         prev_fps = _adaptive_fps
         prev_q = _adaptive_jpeg_quality
         prev_bytes = _adaptive_jpeg_max_bytes
 
-        if score > 0.12:
-            _adaptive_fps = min(STREAM_ADAPTIVE_MAX_FPS, _adaptive_fps + 1.0)
+        if link_score < -0.2:
+            _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 4)
+            _adaptive_jpeg_max_bytes = max(
+                max(60_000, int(STREAM_JPEG_MAX_BYTES * 0.6)),
+                int(_adaptive_jpeg_max_bytes * 0.85),
+            )
+        elif link_score >= -0.05:
             _adaptive_jpeg_quality = min(PREVIEW_JPEG_QUALITY, _adaptive_jpeg_quality + 2)
             _adaptive_jpeg_max_bytes = min(
                 STREAM_JPEG_MAX_BYTES,
                 int(_adaptive_jpeg_max_bytes * 1.06) + 8000,
             )
-        elif score < -0.12:
-            # Prefer smaller JPEG payloads over dropping below a usable live fps —
-            # tiny fps + fat frames = multi-second tunnel backlog delay.
-            _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 6)
-            _adaptive_jpeg_max_bytes = max(
-                max(60_000, int(STREAM_JPEG_MAX_BYTES * 0.35)),
-                int(_adaptive_jpeg_max_bytes * 0.78),
-            )
-            if score < -0.35:
-                _adaptive_fps = max(STREAM_ADAPTIVE_MIN_FPS, _adaptive_fps - 1.0)
+
+        # A slow viewer only costs fps, never sharpness.
+        if link_score < -0.35 or (utilization is not None and utilization < 0.55):
+            _adaptive_fps = max(STREAM_ADAPTIVE_MIN_FPS, _adaptive_fps - 1.0)
+        elif link_score >= -0.05 and (utilization is None or utilization >= 0.9):
+            _adaptive_fps = min(STREAM_ADAPTIVE_MAX_FPS, _adaptive_fps + 1.0)
 
         _ws_send_samples = 0
         _ws_send_slow = 0
@@ -2723,10 +2731,21 @@ def start_ai_enrich_async(document_id: str, command_id: str, image_bytes: bytes)
 
 def upload_scan(image_bytes: bytes, command_id: str):
     """Upload the captured JPEG — this exact file becomes the document attachment."""
+    global _adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes
+    global _ws_send_samples, _ws_send_slow, _adaptive_hold_until
+    with _adaptive_lock:
+        saved = (_adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes)
     _scan_upload_busy.set()
     try:
         return _upload_scan_body(image_bytes, command_id)
     finally:
+        with _adaptive_lock:
+            _adaptive_fps = max(_adaptive_fps, saved[0])
+            _adaptive_jpeg_quality = max(_adaptive_jpeg_quality, saved[1])
+            _adaptive_jpeg_max_bytes = max(_adaptive_jpeg_max_bytes, saved[2])
+            _ws_send_samples = 0
+            _ws_send_slow = 0
+            _adaptive_hold_until = time.monotonic() + STREAM_POST_SCAN_HOLD_SECS
         _scan_upload_busy.clear()
 
 
