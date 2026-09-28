@@ -35,7 +35,7 @@ from digipath_mechanism import (
     resolve_sort_layer,
 )
 
-PI_CODE_VERSION = "2026-09-28-clear-feed-fast-motor"
+PI_CODE_VERSION = "2026-09-28-motor-3x"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -275,7 +275,11 @@ WS_STALE_SECS = max(15.0, float(os.environ.get("DIGIPATH_WS_STALE_SECS", "60")))
 WS_RECONNECT_MAX_SECS = max(1.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_MAX_SECS", "5")))
 WS_RECONNECT_MIN_SECS = max(0.5, float(os.environ.get("DIGIPATH_WS_RECONNECT_MIN_SECS", "1")))
 WS_PING_INTERVAL = int(os.environ.get("DIGIPATH_WS_PING_INTERVAL", "20"))
-WS_PING_TIMEOUT = max(5, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "25")))
+WS_PING_TIMEOUT = max(5, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "10")))
+# websocket-client refuses to connect at all unless ping_interval > ping_timeout.
+if WS_PING_INTERVAL > 0 and WS_PING_TIMEOUT >= WS_PING_INTERVAL:
+    WS_PING_INTERVAL = max(WS_PING_INTERVAL, 12)
+    WS_PING_TIMEOUT = WS_PING_INTERVAL // 2
 WS_OFFLINE_KICK_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_OFFLINE_KICK_SECS", "15")))
 STREAM_HTTP_UPLOAD_RAW = os.environ.get("DIGIPATH_STREAM_HTTP_UPLOAD", "auto").strip().lower()
 STREAM_HTTP_UPLOAD = STREAM_HTTP_UPLOAD_RAW not in ("0", "false", "no", "off")
@@ -2442,7 +2446,9 @@ def _note_ws_issue(text: str):
 def _force_ws_reconnect(reason: str):
     global ws_connected, ws_authenticated, realtime_ws, _active_ws_app, _ws_last_reconnect_kick_at
     global _last_force_reconnect_at
-    _note_ws_issue(f"reconnect: {reason}")
+    # Keep the underlying connect error visible instead of the generic supervisor kick.
+    if not (reason.startswith("offline supervisor") and _ws_last_issue and "offline supervisor" not in _ws_last_issue):
+        _note_ws_issue(f"reconnect: {reason}")
     _last_force_reconnect_at = time.monotonic()
     ws_connected = False
     ws_authenticated = False
@@ -3385,6 +3391,7 @@ def realtime_worker():
                 run_kwargs["ping_timeout"] = WS_PING_TIMEOUT
             ws_app.run_forever(**run_kwargs)
         except Exception as err:
+            _note_ws_issue(f"connect loop error: {err}")
             print(f"[PiWS] Connection loop error: {err}")
 
         _active_ws_app = None

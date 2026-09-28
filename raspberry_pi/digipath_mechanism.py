@@ -141,7 +141,7 @@ class DigipathMechanism:
             100,
             _env_int(
                 "DIGIPATH_STARTUP_TEST_STEP_DELAY_US",
-                _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 1500),
+                _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 1000),
             ),
         )
         self.signal_mode = "sink" if _env_bool("DIGIPATH_TB6600_SIGNAL_SINK", "0") else "source"
@@ -159,7 +159,7 @@ class DigipathMechanism:
         self.lift_up_max_steps = _env_int("DIGIPATH_LIFT_UP_MAX_STEPS", self.lift_travel_max_steps)
         self.sort_max_steps = _env_int("DIGIPATH_SORT_MAX_STEPS", 10000)
         self.sort_chunk_steps = max(1, _env_int("DIGIPATH_SORT_CHUNK_STEPS", 6))
-        self.step_delay_us = _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 1500)
+        self.step_delay_us = _env_int("DIGIPATH_MOTOR_STEP_DELAY_US", 1000)
 
         # One step size for: ikot/down / sort / up (tag 900)
         self.move_steps = max(
