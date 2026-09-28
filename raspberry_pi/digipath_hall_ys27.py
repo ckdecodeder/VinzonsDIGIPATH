@@ -99,6 +99,12 @@ class HallSensorBank:
         self.simulate = simulate
         self._inputs_by_bcm: dict[int, object] = {}
         self._sim_state: dict[int, bool] = {sid: False for sid in self.pin_map}
+        self._filter_samples = max(1, _env_int("DIGIPATH_HALL_FILTER_SAMPLES", 5))
+        # One miss allowed: at the edge of the magnet's range the output flickers.
+        self._filter_required = max(1, min(self._filter_samples, _env_int(
+            "DIGIPATH_HALL_FILTER_REQUIRED", self._filter_samples - 1
+        )))
+        self._filter_spacing_secs = max(0, _env_int("DIGIPATH_HALL_FILTER_SPACING_US", 250)) / 1_000_000.0
 
         if simulate:
             return
@@ -135,7 +141,7 @@ class HallSensorBank:
             if pin == bcm:
                 self._sim_state[sid] = triggered
 
-    def is_triggered(self, sensor_id: int) -> bool:
+    def is_triggered(self, sensor_id: int, *, filtered: bool = True) -> bool:
         if sensor_id not in self.pin_map:
             return False
         bcm = int(self.pin_map[sensor_id])
@@ -146,6 +152,20 @@ class HallSensorBank:
         dev = self._inputs_by_bcm.get(bcm)
         if not dev:
             return False
+        if not self._raw_triggered(dev):
+            return False
+        if not filtered:
+            return True
+        # Touching the module/wires couples noise onto the weak internal pull-up and
+        # briefly pulls the pin low; a real magnet holds it steady across all samples.
+        hits = 1
+        for _ in range(self._filter_samples - 1):
+            time.sleep(self._filter_spacing_secs)
+            if self._raw_triggered(dev):
+                hits += 1
+        return hits >= self._filter_required
+
+    def _raw_triggered(self, dev) -> bool:
         # pull_up=True makes gpiozero report is_active when the pin is LOW, so derive the
         # physical level first — otherwise active-low gets inverted twice.
         pin_high = not bool(dev.is_active)
@@ -217,7 +237,10 @@ class HallSensorBank:
 
             hit_abort = False
             for sid in sorted(self.pin_map):
-                if not self.is_triggered(sid):
+                # Only sensors that stop/reverse the lift pay for the noise filter;
+                # the rest are just logged and must not stall the step train.
+                decisive = sid == stop_sensor or sid in abort
+                if not self.is_triggered(sid, filtered=decisive):
                     continue
                 if sid not in passed:
                     passed.add(sid)

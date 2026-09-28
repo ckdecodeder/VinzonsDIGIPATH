@@ -35,7 +35,7 @@ from digipath_mechanism import (
     resolve_sort_layer,
 )
 
-PI_CODE_VERSION = "2026-09-28-motor-3x"
+PI_CODE_VERSION = "2026-09-28-ws-stream-fix"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -597,11 +597,13 @@ def _effective_jpeg_max_bytes() -> int:
 
 
 _last_ws_send_ms = 0.0
+_last_ws_send_done_at = 0.0
 
 
 def _record_ws_send_sample(elapsed_ms: float):
-    global _ws_send_samples, _ws_send_slow, _last_ws_send_ms
+    global _ws_send_samples, _ws_send_slow, _last_ws_send_ms, _last_ws_send_done_at
     _last_ws_send_ms = elapsed_ms
+    _last_ws_send_done_at = time.monotonic()
     with _adaptive_lock:
         _ws_send_samples = min(_ws_send_samples + 1, 40)
         if elapsed_ms > 60.0:
@@ -2173,7 +2175,7 @@ def upload_stream_frame_http(jpeg: bytes):
         return
     if STREAM_HTTP_WS_PRIORITY and ws_authenticated:
         # WS is the live path — skip HTTPS preview cache while frames are flowing.
-        if _last_ws_frame_sent_at > 0 and (time.monotonic() - _last_ws_frame_sent_at) < 90.0:
+        if _last_ws_frame_sent_at > 0 and (time.monotonic() - _last_ws_frame_sent_at) < 3.0:
             return
     now = time.monotonic()
     min_gap = 1.0 / max(1.0, _effective_stream_fps())
@@ -2278,7 +2280,9 @@ def preview_encode_send_worker():
             continue
 
         # Tunnel congested — skip this encode tick so we only ship the newest frame later.
-        if _last_ws_send_ms > 120.0:
+        # Time-bounded: _last_ws_send_ms only refreshes after a new send, so an unbounded
+        # check would stop encoding forever after a single slow frame.
+        if _last_ws_send_ms > 120.0 and (time.monotonic() - _last_ws_send_done_at) < 0.35:
             time.sleep(0.02)
             continue
 
