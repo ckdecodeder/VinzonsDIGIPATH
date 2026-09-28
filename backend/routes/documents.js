@@ -90,9 +90,12 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
   const comparable = (value) => value === undefined || value === null ? '' : value;
 
   if (updates.dateReceived !== undefined && comparable(updates.dateReceived) !== comparable(existingDoc.dateReceived)) {
-    const err = new Error('Date received is locked after registration');
-    err.status = 400;
-    throw err;
+    // Allow correcting date while the hardware scan is still being registered.
+    if ((existingDoc.intakeStatus || 'Approved') !== 'Pending Review') {
+      const err = new Error('Date received is locked after registration');
+      err.status = 400;
+      throw err;
+    }
   }
 
   if (!isApprovalRole(req) && existingDoc.currentOfficeId !== getUserOfficeId(req)) {
@@ -101,10 +104,23 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
     throw err;
   }
 
+  // Hardware scans start as Pending Review. Confirm & Register (Receptionist/Admin)
+  // finalizes metadata and may set Approved — same outcome as creating a manual receive.
+  // Mayor/Admin reject/approve of already-registered docs still must use /verify.
   if (updates.intakeStatus && updates.intakeStatus !== existingDoc.intakeStatus) {
-    const err = new Error('Use the approval/rejection action to change intake review status');
-    err.status = isApprovalRole(req) ? 400 : 403;
-    throw err;
+    const role = req.user?.role || '';
+    const nextStatus = updates.status || existingDoc.status;
+    const completingScannerRegistration =
+      existingDoc.intakeStatus === 'Pending Review'
+      && updates.intakeStatus === 'Approved'
+      && ['Receptionist', 'Admin'].includes(role)
+      && registrationStatuses.includes(normalizeWorkflowStatus(nextStatus, nextStatus));
+
+    if (!completingScannerRegistration) {
+      const err = new Error('Use the approval/rejection action to change intake review status');
+      err.status = isApprovalRole(req) ? 400 : 403;
+      throw err;
+    }
   }
 
   const changedVerificationField = ['verifiedBy', 'verifiedAt', 'rejectionReason'].some(field =>
@@ -452,6 +468,22 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
       `document_${updates.status.toLowerCase().replace(/\s+/g, '_')}`,
       labels[updates.status] || `Marked as ${updates.status}`,
       `${existingDoc.subject} is now ${updates.status}`,
+      updates.currentOfficeId || existingDoc.currentOfficeId,
+      existingDoc.id,
+    ));
+  }
+  if (
+    updates.intakeStatus === 'Approved'
+    && existingDoc.intakeStatus === 'Pending Review'
+  ) {
+    const now = new Date().toISOString();
+    updates.verifiedBy = req.user?.id || updates.verifiedBy;
+    updates.verifiedAt = now;
+    timelineEvents.push(createTimelineEvent(
+      req,
+      'document_approved',
+      'Document registered',
+      `${existingDoc.subject || updates.subject || 'Document'} confirmed and registered`,
       updates.currentOfficeId || existingDoc.currentOfficeId,
       existingDoc.id,
     ));

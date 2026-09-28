@@ -25,6 +25,11 @@ pi_apt_install_missing PiWS \
   || pi_apt_install_missing PiWS --skip-update \
   python3 python3-venv python3-pip python3-numpy python3-opencv python3-gpiozero libgl1 rsync v4l-utils
 
+# gpiozero needs a real pin backend (lgpio on Pi 5 / Bookworm) or TB6600 pulses never leave the Pi.
+pi_apt_install_missing PiWS --skip-update python3-lgpio \
+  || pi_apt_install_missing PiWS python3-lgpio \
+  || echo "[PiWS] WARN: python3-lgpio not installed — motors may not move"
+
 pi_ensure_venv "$ROOT_DIR" "PiWS"
 
 if [[ -d "$ROOT_DIR/.venv/lib" ]]; then
@@ -36,6 +41,8 @@ pi_bootstrap_venv_pip "$VENV_PY" "PiWS"
 "$VENV_PY" -m pip install --upgrade websocket-client requests
 
 "$VENV_PY" -c "import cv2, websocket; print('[PiWS] OK opencv', cv2.__version__)"
+"$VENV_PY" -c "from gpiozero import Device, OutputDevice; d = OutputDevice(26); print('[PiWS] GPIO pin factory:', type(Device.pin_factory).__name__); d.close()" \
+  || echo "[PiWS] WARN: gpiozero cannot drive GPIO pins"
 
 if [[ -f "$ROOT_DIR/scripts/pi-install-usb-hook.sh" ]] && [[ ! -f /etc/udev/rules.d/99-digipath-usb-update.rules ]]; then
   echo "[PiWS] USB auto-update hook (optional, one-time)..."

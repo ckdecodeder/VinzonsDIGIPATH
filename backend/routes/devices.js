@@ -24,6 +24,7 @@ const { normalizeSenderNotificationChannels } = require('../utils/senderNotifica
 const {
   getDeviceSnapshot,
   recordHardwareDeviceEvent,
+  applyHardwareEvent,
   hardwarePresenceEvents,
 } = require('../services/devicePresence');
 const {
@@ -41,6 +42,9 @@ const scannerCommandRoles = allowRoles('Admin', 'Receptionist');
 const updateOptions = { new: true, runValidators: true };
 
 const scannerCommandStaleMs = Number(process.env.SCANNER_COMMAND_STALE_MS || 60000);
+// The Pi marks commands Executing right after it receives them, so a Pending one this old never arrived.
+const scannerCommandUnackedMs = Number(process.env.SCANNER_COMMAND_UNACKED_MS || 30000);
+const motorTestStaleMs = Number(process.env.MOTOR_TEST_STALE_MS || 90000);
 const bridgeSnapshotWsFallbackMaxAgeMs = Number(process.env.BRIDGE_SNAPSHOT_WS_FALLBACK_MAX_AGE_MS || 60000);
 
 const deviceUsesWsJpegStream = (device) => (
@@ -59,9 +63,24 @@ router.post('/devices/connect', deviceLimiter, requireDeviceApiKey, asyncHandler
 }));
 
 router.post('/devices/heartbeat', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
-  const result = await recordHardwareDeviceEvent(req, 'device_heartbeat');
-  broadcastDeviceUpdated(result.device);
-  res.status(201).json(result);
+  // Lightweight when WS is already alive — avoids Mongo write storms from dual keepalive.
+  // Full persist when WS is down so heartbeatFresh keeps the device Online.
+  const result = await applyHardwareEvent(
+    req.body,
+    'device_heartbeat',
+    { deviceId: req.body.deviceId || req.body.id, ip: req.ip },
+    { lightweight: true },
+  );
+  if (result?.device) {
+    broadcastDeviceUpdated(result.device);
+  }
+  // Backup delivery for commands queued while the Pi's WebSocket was down.
+  const heartbeatDeviceId = req.body.deviceId || req.body.id || 'DEV-001';
+  const pendingCommands = await Command.find({ deviceId: heartbeatDeviceId, status: 'Pending' })
+    .sort({ createdAt: 1 })
+    .limit(5)
+    .lean();
+  res.status(201).json({ ...result, pendingCommands });
 }));
 
 router.post('/devices/disconnect', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
@@ -726,11 +745,11 @@ router.post('/commands/cancel', scannerCommandRoles, asyncHandler(async (req, re
 router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['deviceId', 'command']);
   const commandName = req.body.command?.trim().toUpperCase();
-  if (!['SCAN', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
+  if (!['SCAN', 'SORT', 'MOTOR_TEST', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
     return res.status(400).json({ message: 'Invalid device command' });
   }
-  if (req.user.role !== 'Admin' && commandName !== 'SCAN') {
-    return res.status(403).json({ message: 'Receptionists can only request scan commands' });
+  if (req.user.role !== 'Admin' && !['SCAN', 'SORT', 'MOTOR_TEST'].includes(commandName)) {
+    return res.status(403).json({ message: 'Receptionists can only request scan/sort/motor test commands' });
   }
 
   const snapshot = await getDeviceSnapshot(req.body.deviceId);
@@ -738,28 +757,49 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
     return res.status(409).json({ message: 'Physical scanner is not connected. Wait for a hardware heartbeat before sending commands.' });
   }
 
-  const staleCommandCutoff = new Date(Date.now() - scannerCommandStaleMs).toISOString();
-  await Command.updateMany(
-    {
-      deviceId: req.body.deviceId,
+  const cutoff = (ms) => new Date(Date.now() - ms).toISOString();
+  const staleFilter = {
+    deviceId: req.body.deviceId,
+    $or: [
+      { status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(scannerCommandStaleMs) } },
+      { status: 'Pending', createdAt: { $lt: cutoff(scannerCommandUnackedMs) } },
+      { command: 'MOTOR_TEST', status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(motorTestStaleMs) } },
+    ],
+  };
+  if (commandName === 'MOTOR_TEST') {
+    // Test Motors is a diagnostic — it must not be blocked by a stuck scan/command.
+    // Only a SORT that is actually moving the motors (or another motor test) is kept.
+    staleFilter.$or.push({
       status: { $in: ['Pending', 'Executing'] },
-      createdAt: { $lt: staleCommandCutoff },
-    },
-    {
-      $set: {
-        status: 'Cancelled',
-        errorMessage: 'Cancelled stale scanner command before starting a new scan.',
-        executedAt: new Date().toISOString(),
-      },
-    },
-  );
+      command: { $ne: 'MOTOR_TEST' },
+      $nor: [{ command: 'SORT', status: 'Executing' }],
+    });
+  }
+  const staleCommands = await Command.find(staleFilter).lean();
+  if (staleCommands.length) {
+    const executedAt = new Date().toISOString();
+    const errorMessage = 'Cancelled stale scanner command before starting a new one.';
+    await Command.updateMany(
+      { id: { $in: staleCommands.map((c) => c.id) } },
+      { $set: { status: 'Cancelled', errorMessage, executedAt } },
+    );
+    for (const stale of staleCommands) {
+      broadcastCommandUpdated({ ...stale, status: 'Cancelled', errorMessage, executedAt });
+    }
+  }
 
   const pendingCommand = await Command.findOne({
     deviceId: req.body.deviceId,
     status: { $in: ['Pending', 'Executing'] },
   }).lean();
   if (pendingCommand) {
-    return res.status(409).json({ message: 'The scanner already has a pending command.' });
+    if (commandName === 'MOTOR_TEST' && pendingCommand.command === 'MOTOR_TEST') {
+      return res.status(200).json(pendingCommand);
+    }
+    return res.status(409).json({
+      message: `The scanner already has a pending ${pendingCommand.command} command.`,
+      pendingCommand: { id: pendingCommand.id, command: pendingCommand.command, status: pendingCommand.status },
+    });
   }
 
   const command = new Command({
@@ -776,8 +816,8 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   await createLogEntry(req, 'device_command_created', `Queued ${command.command} command for ${command.deviceId}`, command.id);
   const commandPayload = command.toObject?.() || command;
   broadcastCommandUpdated(commandPayload);
-  pushCommandToDevice(command.deviceId, commandPayload);
-  res.status(201).json(command);
+  const delivered = pushCommandToDevice(command.deviceId, commandPayload);
+  res.status(201).json({ ...commandPayload, delivered });
 }));
 
 // ─── DEVICE EVENTS ─────────────────────────────────────────────────────────────

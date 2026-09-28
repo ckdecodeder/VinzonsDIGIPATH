@@ -15,6 +15,7 @@ import socket
 import subprocess
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -30,8 +31,11 @@ from digipath_mechanism import (
     get_mechanism,
     mechanism_home_on_startup,
     mechanism_start_door_monitor,
+    mechanism_startup_self_test,
+    resolve_sort_layer,
 )
 
+PI_CODE_VERSION = "2026-09-27-hall-fix"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -65,15 +69,15 @@ JPEG_QUALITY = int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALITY", "92"))
 SCAN_JPEG_QUALITY = max(75, min(100, int(os.environ.get("DIGIPATH_SCAN_JPEG_QUALITY", "98"))))
 PREVIEW_JPEG_QUALITY = int(os.environ.get("DIGIPATH_PREVIEW_JPEG_QUALITY", "76"))
 STREAM_JPEG_MAX_BYTES = max(120_000, int(os.environ.get("DIGIPATH_STREAM_JPEG_MAX_BYTES", "650000")))
-STREAM_JPEG_MIN_QUALITY = max(55, int(os.environ.get("DIGIPATH_STREAM_JPEG_MIN_QUALITY", "68")))
-WS_MAX_FPS = min(120.0, max(1.0, float(os.environ.get("DIGIPATH_STREAM_WS_MAX_FPS", "20"))))
+STREAM_JPEG_MIN_QUALITY = max(35, int(os.environ.get("DIGIPATH_STREAM_JPEG_MIN_QUALITY", "40")))
+WS_MAX_FPS = min(120.0, max(1.0, float(os.environ.get("DIGIPATH_STREAM_WS_MAX_FPS", "12"))))
 STREAM_ADAPTIVE = os.environ.get("DIGIPATH_STREAM_ADAPTIVE", "1").strip().lower() not in (
     "0",
     "false",
     "no",
     "off",
 )
-STREAM_ADAPTIVE_MIN_FPS = max(4.0, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MIN_FPS", "8")))
+STREAM_ADAPTIVE_MIN_FPS = max(4.0, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MIN_FPS", "10")))
 STREAM_ADAPTIVE_MAX_FPS = min(
     120.0,
     max(STREAM_ADAPTIVE_MIN_FPS, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MAX_FPS", str(WS_MAX_FPS)))),
@@ -90,10 +94,48 @@ AUTO_CROP_PAPER = os.environ.get("DIGIPATH_AUTO_CROP_PAPER", "1").strip().lower(
     "no",
     "off",
 )
-AUTO_CROP_MIN_AREA = max(0.05, min(0.8, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_AREA", "0.08"))))
-AUTO_CROP_DETECT_EVERY = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_DETECT_EVERY", "2")))
-AUTO_CROP_SMOOTHING = max(0.1, min(1.0, float(os.environ.get("DIGIPATH_AUTO_CROP_SMOOTHING", "0.4"))))
-AUTO_CROP_MAX_MISSES = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_MAX_MISSES", "6")))
+AUTO_CROP_MIN_AREA = max(0.08, min(0.8, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_AREA", "0.12"))))
+# Reject near-full-frame boxes (walls/room) but allow large paper close to camera.
+AUTO_CROP_MAX_AREA = max(0.35, min(0.95, float(os.environ.get("DIGIPATH_AUTO_CROP_MAX_AREA", "0.88"))))
+AUTO_CROP_DETECT_EVERY = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_DETECT_EVERY", "3")))
+# Lower = smoother live crop (less jitter). 0.10–0.15 is usually best.
+AUTO_CROP_SMOOTHING = max(0.05, min(1.0, float(os.environ.get("DIGIPATH_AUTO_CROP_SMOOTHING", "0.12"))))
+AUTO_CROP_MAX_MISSES = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_MAX_MISSES", "3")))
+AUTO_CROP_LOCK_HITS = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_LOCK_HITS", "2")))
+AUTO_CROP_PAD_RATIO = max(0.0, min(0.08, float(os.environ.get("DIGIPATH_AUTO_CROP_PAD_RATIO", "0.008"))))
+AUTO_CROP_ASPECT_MIN = max(0.35, float(os.environ.get("DIGIPATH_AUTO_CROP_ASPECT_MIN", "0.55")))
+AUTO_CROP_ASPECT_MAX = min(2.2, float(os.environ.get("DIGIPATH_AUTO_CROP_ASPECT_MAX", "1.85")))
+AUTO_CROP_MIN_BRIGHTNESS = max(40.0, min(220.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_BRIGHTNESS", "70"))))
+AUTO_CROP_REQUIRE_BRIGHT = os.environ.get("DIGIPATH_AUTO_CROP_REQUIRE_BRIGHT", "0").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Soft preference — hard-reject only when paper is darker than background.
+AUTO_CROP_MIN_CONTRAST = max(0.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_CONTRAST", "8")))
+AUTO_CROP_MIN_SCORE = max(0.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_SCORE", "2.2")))
+AUTO_CROP_SIZE_LOCK = os.environ.get("DIGIPATH_AUTO_CROP_SIZE_LOCK", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+AUTO_CROP_SIZE_SMOOTHING = max(0.02, min(0.4, float(os.environ.get("DIGIPATH_AUTO_CROP_SIZE_SMOOTHING", "0.06"))))
+AUTO_CROP_REFINE = os.environ.get("DIGIPATH_AUTO_CROP_REFINE", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Reject tiny false locks (hand / UI tile) — document must cover enough of the camera.
+AUTO_CROP_MIN_FRAME_COVERAGE = max(0.10, min(0.9, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_FRAME_COVERAGE", "0.14"))))
+AUTO_CROP_MIN_EDGE_PX = max(200, int(os.environ.get("DIGIPATH_AUTO_CROP_MIN_EDGE_PX", "360")))
+# Live preview: crop = show the warped document (WYSIWYG). overlay = full cam + green box.
+# both = cropped view with a small border.
+AUTO_CROP_LIVE_MODE = os.environ.get("DIGIPATH_AUTO_CROP_LIVE_MODE", "crop").strip().lower()
+if AUTO_CROP_LIVE_MODE not in ("overlay", "crop", "both"):
+    AUTO_CROP_LIVE_MODE = "crop"
 PREVIEW_SHADOW_LIFT = os.environ.get("DIGIPATH_PREVIEW_SHADOW_LIFT", "1").strip().lower() not in (
     "0",
     "false",
@@ -113,10 +155,10 @@ SUPPRESS_LIBJPEG_WARN = os.environ.get("DIGIPATH_SUPPRESS_LIBJPEG_WARN", "1").st
     "off",
 )
 HEARTBEAT_SECS = int(os.environ.get("DIGIPATH_HEARTBEAT_INTERVAL_SECS", "5"))
-CAMERA_WARMUP_SECS = max(0.0, float(os.environ.get("DIGIPATH_CAMERA_WARMUP_SECS", "1")))
-SCAN_WARMUP_FRAMES = max(4, int(os.environ.get("DIGIPATH_SCAN_WARMUP_FRAMES", "15")))
-SCAN_BURST_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_BURST_FRAMES", "6")))
-SCAN_CAPTURE_DRAIN = max(2, int(os.environ.get("DIGIPATH_SCAN_CAPTURE_DRAIN", "8")))
+CAMERA_WARMUP_SECS = max(0.0, float(os.environ.get("DIGIPATH_CAMERA_WARMUP_SECS", "0.15")))
+SCAN_WARMUP_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_WARMUP_FRAMES", "2")))
+SCAN_BURST_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_BURST_FRAMES", "1")))
+SCAN_CAPTURE_DRAIN = max(1, int(os.environ.get("DIGIPATH_SCAN_CAPTURE_DRAIN", "2")))
 SCAN_ENHANCE = os.environ.get("DIGIPATH_SCAN_ENHANCE", "1").strip().lower() not in (
     "0",
     "false",
@@ -153,8 +195,15 @@ CAMERA_BACKLIGHT_COMP = os.environ.get("DIGIPATH_CAMERA_BACKLIGHT_COMP", "1").st
     "no",
     "off",
 )
-FOCUS_SETTLE_SECS = max(0.2, float(os.environ.get("DIGIPATH_FOCUS_SETTLE_SECS", "0.8")))
-FOCUS_TRIGGER_ON_CAPTURE = os.environ.get("DIGIPATH_FOCUS_TRIGGER_ON_CAPTURE", "1").strip().lower() not in (
+FOCUS_SETTLE_SECS = max(0.0, float(os.environ.get("DIGIPATH_FOCUS_SETTLE_SECS", "0.15")))
+FOCUS_TRIGGER_ON_CAPTURE = os.environ.get("DIGIPATH_FOCUS_TRIGGER_ON_CAPTURE", "0").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Instant capture: use the live preview frame already on screen (no AF wait / burst).
+CAPTURE_INSTANT = os.environ.get("DIGIPATH_CAPTURE_INSTANT", "1").strip().lower() not in (
     "0",
     "false",
     "no",
@@ -202,6 +251,7 @@ active_stream_width = PREVIEW_WIDTH
 active_stream_height = PREVIEW_HEIGHT
 capture_cap_lock = threading.RLock()
 _scan_in_progress = threading.Event()
+_scan_upload_busy = threading.Event()
 _preview_encode_event = threading.Event()
 _preview_encode_lock = threading.Lock()
 _last_encoded_version = -1
@@ -224,10 +274,9 @@ _ws_last_reconnect_kick_at = 0.0
 WS_STALE_SECS = max(15.0, float(os.environ.get("DIGIPATH_WS_STALE_SECS", "60")))
 WS_RECONNECT_MAX_SECS = max(1.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_MAX_SECS", "5")))
 WS_RECONNECT_MIN_SECS = max(0.5, float(os.environ.get("DIGIPATH_WS_RECONNECT_MIN_SECS", "1")))
-WS_OFFLINE_KICK_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_OFFLINE_KICK_SECS", "8")))
-# TCP keepalives so half-open tunnels/networks drop and the reconnect loop can run.
 WS_PING_INTERVAL = int(os.environ.get("DIGIPATH_WS_PING_INTERVAL", "20"))
-WS_PING_TIMEOUT = max(5, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "10")))
+WS_PING_TIMEOUT = max(5, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "25")))
+WS_OFFLINE_KICK_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_OFFLINE_KICK_SECS", "15")))
 STREAM_HTTP_UPLOAD_RAW = os.environ.get("DIGIPATH_STREAM_HTTP_UPLOAD", "auto").strip().lower()
 STREAM_HTTP_UPLOAD = STREAM_HTTP_UPLOAD_RAW not in ("0", "false", "no", "off")
 STREAM_HTTP_WS_PRIORITY = STREAM_HTTP_UPLOAD_RAW in ("auto", "ws", "1", "true", "yes", "on")
@@ -245,6 +294,9 @@ _last_paper_quad = None
 _last_paper_shape = None
 _last_paper_output_size = None
 _auto_crop_misses = 0
+_auto_crop_hits = 0
+_auto_crop_last_log_at = 0.0
+_auto_crop_was_locked = False
 _adaptive_lock = threading.Lock()
 _adaptive_fps = WS_MAX_FPS
 _adaptive_jpeg_quality = PREVIEW_JPEG_QUALITY
@@ -500,12 +552,24 @@ def device_payload(event_type: str) -> dict:
             "adaptiveStream": STREAM_ADAPTIVE,
             "adaptiveStreamFps": _effective_stream_fps(),
             "autofocus": camera_focus_status,
-            "mechanism": get_mechanism().status_dict(),
+            "mechanism": _safe_mechanism_status(),
+            "piCodeVersion": PI_CODE_VERSION,
+            "wsLastIssue": _ws_last_issue,
         },
     }
 
 
+def _safe_mechanism_status() -> dict:
+    try:
+        return get_mechanism().status_dict()
+    except Exception as err:
+        return {"enabled": False, "initError": f"mechanism status error: {err}"}
+
+
 def _effective_stream_fps() -> float:
+    # Free tunnel bandwidth for heartbeats/pings while a scan JPEG uploads.
+    if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+        return 1.0
     if not STREAM_ADAPTIVE:
         return WS_MAX_FPS
     with _adaptive_lock:
@@ -526,11 +590,15 @@ def _effective_jpeg_max_bytes() -> int:
         return int(_adaptive_jpeg_max_bytes)
 
 
+_last_ws_send_ms = 0.0
+
+
 def _record_ws_send_sample(elapsed_ms: float):
-    global _ws_send_samples, _ws_send_slow
+    global _ws_send_samples, _ws_send_slow, _last_ws_send_ms
+    _last_ws_send_ms = elapsed_ms
     with _adaptive_lock:
         _ws_send_samples = min(_ws_send_samples + 1, 40)
-        if elapsed_ms > 80.0:
+        if elapsed_ms > 60.0:
             _ws_send_slow = min(_ws_send_slow + 1, 40)
 
 
@@ -586,12 +654,15 @@ def _adaptive_stream_tick():
                 int(_adaptive_jpeg_max_bytes * 1.06) + 8000,
             )
         elif score < -0.12:
-            _adaptive_fps = max(STREAM_ADAPTIVE_MIN_FPS, _adaptive_fps - 1.0)
-            _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 3)
+            # Prefer smaller JPEG payloads over dropping below a usable live fps —
+            # tiny fps + fat frames = multi-second tunnel backlog delay.
+            _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 6)
             _adaptive_jpeg_max_bytes = max(
-                max(120_000, int(STREAM_JPEG_MAX_BYTES * 0.45)),
-                int(_adaptive_jpeg_max_bytes * 0.9),
+                max(60_000, int(STREAM_JPEG_MAX_BYTES * 0.35)),
+                int(_adaptive_jpeg_max_bytes * 0.78),
             )
+            if score < -0.35:
+                _adaptive_fps = max(STREAM_ADAPTIVE_MIN_FPS, _adaptive_fps - 1.0)
 
         _ws_send_samples = 0
         _ws_send_slow = 0
@@ -657,6 +728,190 @@ def _order_paper_points(points):
     )
 
 
+def _quad_from_contour(contour, image_area: float):
+    """Return ordered 4-point quad + score extras, or None."""
+    area = float(cv2.contourArea(contour))
+    area_ratio = area / image_area if image_area else 0.0
+    if area_ratio < AUTO_CROP_MIN_AREA or area_ratio > AUTO_CROP_MAX_AREA:
+        return None
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter <= 0:
+        return None
+
+    polygon = None
+    used_min_area_rect = False
+    for eps in (0.015, 0.02, 0.028, 0.04):
+        approx = cv2.approxPolyDP(contour, eps * perimeter, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            polygon = approx.reshape(4, 2).astype(np.float32)
+            break
+    if polygon is None:
+        # Near-rectangle fallback — only for mid-sized blobs (not whole-room edges).
+        if area_ratio > 0.70:
+            return None
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect).astype(np.float32)
+        rect_area = max(1.0, float(abs(rect[1][0] * rect[1][1])))
+        if area / rect_area < 0.80:
+            return None
+        polygon = box
+        used_min_area_rect = True
+
+    if not cv2.isContourConvex(polygon.astype(np.float32)):
+        return None
+
+    ordered = _order_paper_points(polygon)
+    top_left, top_right, bottom_right, bottom_left = ordered
+    width = float(max(np.linalg.norm(top_right - top_left), np.linalg.norm(bottom_right - bottom_left)))
+    height = float(max(np.linalg.norm(bottom_left - top_left), np.linalg.norm(bottom_right - top_right)))
+    if width < 80 or height < 80:
+        return None
+    aspect = width / max(1.0, height)
+    aspect_ok = (AUTO_CROP_ASPECT_MIN <= aspect <= AUTO_CROP_ASPECT_MAX) or (
+        AUTO_CROP_ASPECT_MIN <= (1.0 / aspect) <= AUTO_CROP_ASPECT_MAX
+    )
+    if not aspect_ok:
+        return None
+
+    x, y, box_w, box_h = cv2.boundingRect(ordered.astype(np.int32))
+    rectangularity = area / max(1.0, float(box_w * box_h))
+    min_rect = 0.62 if used_min_area_rect else 0.55
+    if rectangularity < min_rect:
+        return None
+
+    return {
+        "quad": ordered,
+        "area": area,
+        "area_ratio": area_ratio,
+        "rectangularity": rectangularity,
+        "aspect": aspect,
+        "width": width,
+        "height": height,
+    }
+
+
+def _paper_brightness_score(gray_small, quad) -> float:
+    """Prefer bright paper interiors vs darker desk/room background."""
+    mask = np.zeros(gray_small.shape, dtype=np.uint8)
+    cv2.fillConvexPoly(mask, np.round(quad).astype(np.int32), 255)
+    inside = gray_small[mask > 0]
+    if inside.size < 80:
+        return 0.0
+    mean_in = float(np.mean(inside))
+    outside = gray_small[mask == 0]
+    coverage = float(inside.size) / float(max(1, gray_small.size))
+    # Near-full-frame "paper" (room walls) — hard reject.
+    if coverage > AUTO_CROP_MAX_AREA or outside.size < max(80, int(gray_small.size * 0.06)):
+        return 0.0
+    mean_out = float(np.mean(outside))
+    contrast = mean_in - mean_out
+    # Hard reject only if the region is darker than its surroundings (not paper).
+    if contrast < -8.0:
+        return 0.0
+    if AUTO_CROP_REQUIRE_BRIGHT and mean_in < AUTO_CROP_MIN_BRIGHTNESS and contrast < AUTO_CROP_MIN_CONTRAST:
+        return 0.0
+    score = mean_in + max(0.0, contrast) * 1.4
+    if mean_in < AUTO_CROP_MIN_BRIGHTNESS:
+        score *= 0.72
+    if contrast < AUTO_CROP_MIN_CONTRAST:
+        score *= 0.78
+    return max(1.0, score)
+
+
+def _paper_center_score(quad, width: int, height: int) -> float:
+    center = quad.mean(axis=0)
+    dx = abs((center[0] / max(1.0, width)) - 0.5)
+    dy = abs((center[1] / max(1.0, height)) - 0.5)
+    return max(0.0, 1.0 - (dx + dy) * 1.6)
+
+
+def _collect_edge_maps(gray):
+    """Fewer maps = much lower CPU on Pi (was 7 maps/frame → laggy feed)."""
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    kernel = np.ones((5, 5), dtype=np.uint8)
+    maps = []
+    for low, high in ((30, 110), (45, 150)):
+        edges = cv2.Canny(blurred, low, high)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+        maps.append(edges)
+    # Bright-paper mask helps when desk is dark
+    adaptive = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, -6
+    )
+    _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bright = cv2.bitwise_or(adaptive, otsu)
+    bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, kernel, iterations=2)
+    bright = cv2.morphologyEx(bright, cv2.MORPH_OPEN, kernel, iterations=1)
+    maps.append(bright)
+    return maps
+
+
+def _detect_paper_quad_simple(gray, image_area: float, scale: float):
+    """Reliable fallback — largest convex 4-gon that still looks like paper."""
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 45, 150)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8), iterations=2)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_area = 0.0
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:25]:
+        area = float(cv2.contourArea(contour))
+        area_ratio = area / image_area if image_area else 0.0
+        if area_ratio < AUTO_CROP_MIN_AREA or area_ratio > AUTO_CROP_MAX_AREA:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0:
+            continue
+        for eps in (0.02, 0.03, 0.04):
+            polygon = cv2.approxPolyDP(contour, eps * perimeter, True)
+            if len(polygon) != 4 or not cv2.isContourConvex(polygon):
+                continue
+            ordered = _order_paper_points(polygon.reshape(4, 2).astype(np.float32))
+            x, y, box_w, box_h = cv2.boundingRect(ordered.astype(np.int32))
+            if box_w < 80 or box_h < 80:
+                continue
+            if area / max(1.0, float(box_w * box_h)) < 0.55:
+                continue
+            aspect = float(box_w) / max(1.0, float(box_h))
+            aspect_ok = (AUTO_CROP_ASPECT_MIN <= aspect <= AUTO_CROP_ASPECT_MAX) or (
+                AUTO_CROP_ASPECT_MIN <= (1.0 / aspect) <= AUTO_CROP_ASPECT_MAX
+            )
+            if not aspect_ok:
+                continue
+            if _paper_brightness_score(gray, ordered) <= 0:
+                continue
+            if area > best_area:
+                best = ordered
+                best_area = area
+            break
+    if best is None:
+        return None
+    return _order_paper_points(best / scale)
+
+
+def _is_plausible_paper_quad(quad, frame_shape) -> bool:
+    """Reject tiny false locks and giant room-edge locks."""
+    if quad is None:
+        return False
+    height, width = frame_shape[:2]
+    frame_area = float(max(1, width * height))
+    qw, qh = _quad_dims(quad)
+    coverage = (qw * qh) / frame_area
+    if coverage < AUTO_CROP_MIN_FRAME_COVERAGE:
+        return False
+    if coverage > AUTO_CROP_MAX_AREA:
+        return False
+    if max(qw, qh) < AUTO_CROP_MIN_EDGE_PX:
+        return False
+    if min(qw, qh) < max(160, int(AUTO_CROP_MIN_EDGE_PX * 0.45)):
+        return False
+    # Must not be a thin strip
+    aspect = qw / max(1, qh)
+    if aspect < 0.4 or aspect > 2.5:
+        return False
+    return True
+
+
 def _detect_paper_quad(frame):
     if not AUTO_CROP_PAPER or frame is None or getattr(frame, "size", 0) == 0:
         return None
@@ -664,75 +919,225 @@ def _detect_paper_quad(frame):
     scale = min(1.0, 960.0 / max(height, width))
     small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else frame
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(cv2.GaussianBlur(gray, (5, 5), 0), 45, 150)
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8), iterations=2)
     image_area = float(small.shape[0] * small.shape[1])
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    sh, sw = gray.shape[:2]
+
     best = None
-    best_area = 0.0
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        area_ratio = area / image_area if image_area else 0.0
-        if area_ratio < AUTO_CROP_MIN_AREA or area_ratio > 0.97:
-            continue
-        perimeter = cv2.arcLength(contour, True)
-        if perimeter <= 0:
-            continue
-        polygon = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
-        if len(polygon) != 4 or not cv2.isContourConvex(polygon):
-            continue
-        x, y, box_width, box_height = cv2.boundingRect(polygon)
-        if box_width < 100 or box_height < 100 or area / max(1.0, box_width * box_height) < 0.55:
-            continue
-        if area > best_area:
-            best = polygon.reshape(4, 2).astype(np.float32)
-            best_area = area
-    return _order_paper_points(best / scale) if best is not None else None
+    best_score = -1.0
+    seen = set()
+
+    for edge_map in _collect_edge_maps(gray):
+        contours, _ = cv2.findContours(edge_map, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:40]
+        for contour in contours:
+            candidate = _quad_from_contour(contour, image_area)
+            if candidate is None:
+                continue
+            key = tuple(np.round(candidate["quad"]).astype(int).reshape(-1).tolist())
+            if key in seen:
+                continue
+            seen.add(key)
+            brightness = _paper_brightness_score(gray, candidate["quad"])
+            if brightness <= 0:
+                continue
+            center = _paper_center_score(candidate["quad"], sw, sh)
+            aspect_bonus = 1.0 - min(abs(candidate["aspect"] - 0.77), abs(candidate["aspect"] - 1.29)) * 0.35
+            score = (
+                candidate["area_ratio"] * 3.2
+                + candidate["rectangularity"] * 2.4
+                + (brightness / 255.0) * 2.0
+                + center * 1.3
+                + max(0.0, aspect_bonus)
+            )
+            if score > best_score:
+                best_score = score
+                best = candidate["quad"]
+
+    if best is None or best_score < AUTO_CROP_MIN_SCORE:
+        simple = _detect_paper_quad_simple(gray, image_area, scale)
+        if simple is None or not _is_plausible_paper_quad(simple, frame.shape):
+            return None
+        # Re-check brightness on full-res-ish gray for the simple path too
+        simple_small = (simple * scale).astype(np.float32) if scale < 1 else simple
+        if _paper_brightness_score(gray, simple_small) <= 0:
+            return None
+        return _refine_paper_corners(frame, simple)
+
+    full_quad = _order_paper_points(best / scale)
+    refined = _refine_paper_corners(frame, full_quad)
+    if not _is_plausible_paper_quad(refined, frame.shape):
+        return None
+    return refined
 
 
-def _crop_paper(frame):
-    global _auto_crop_frame_count, _last_paper_quad, _last_paper_shape, _last_paper_output_size, _auto_crop_misses
-    shape = frame.shape[:2] if frame is not None else None
-    _auto_crop_frame_count += 1
-    if shape != _last_paper_shape:
-        _last_paper_output_size = None
-    if shape != _last_paper_shape or _auto_crop_frame_count % AUTO_CROP_DETECT_EVERY == 1:
-        detected_quad = _detect_paper_quad(frame)
-        if detected_quad is None:
-            _auto_crop_misses += 1
-            if _auto_crop_misses >= AUTO_CROP_MAX_MISSES:
-                _last_paper_quad = None
-        elif shape != _last_paper_shape or _last_paper_quad is None:
-            _last_paper_quad = detected_quad
-            _auto_crop_misses = 0
-        else:
-            _last_paper_quad = (
-                (1.0 - AUTO_CROP_SMOOTHING) * _last_paper_quad
-                + AUTO_CROP_SMOOTHING * detected_quad
-            ).astype(np.float32)
-            _auto_crop_misses = 0
-        _last_paper_shape = shape
-    points = _last_paper_quad
+def _refine_paper_corners(frame, quad):
+    """Snap corners to true edges (sub-pixel) for exact crop borders."""
+    if quad is None or not AUTO_CROP_REFINE:
+        return quad
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        corners = np.asarray(quad, dtype=np.float32).reshape(-1, 1, 2)
+        win = max(5, min(21, int(min(frame.shape[0], frame.shape[1]) * 0.02) | 1))
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001)
+        refined = cv2.cornerSubPix(gray, corners, (win, win), (-1, -1), criteria)
+        refined = refined.reshape(4, 2).astype(np.float32)
+        refined[:, 0] = np.clip(refined[:, 0], 0, frame.shape[1] - 1)
+        refined[:, 1] = np.clip(refined[:, 1], 0, frame.shape[0] - 1)
+        return _order_paper_points(refined)
+    except Exception:
+        return _order_paper_points(quad)
+
+
+def _expand_paper_quad(points, frame_shape, pad_ratio: float = AUTO_CROP_PAD_RATIO):
+    """Slight padding so text near edges is not clipped."""
+    if points is None or pad_ratio <= 0:
+        return points
+    height, width = frame_shape[:2]
+    center = points.mean(axis=0)
+    expanded = center + (points - center) * (1.0 + pad_ratio)
+    expanded[:, 0] = np.clip(expanded[:, 0], 0, width - 1)
+    expanded[:, 1] = np.clip(expanded[:, 1], 0, height - 1)
+    return expanded.astype(np.float32)
+
+
+def _even_dim(value: int) -> int:
+    value = max(2, int(value))
+    return value if value % 2 == 0 else value + 1
+
+
+def _quad_dims(points):
+    top_left, top_right, bottom_right, bottom_left = points
+    width = int(round(max(np.linalg.norm(bottom_right - bottom_left), np.linalg.norm(top_right - top_left))))
+    height = int(round(max(np.linalg.norm(top_right - bottom_right), np.linalg.norm(top_left - bottom_left))))
+    return _even_dim(width), _even_dim(height)
+
+
+def _warp_paper_quad(frame, points, output_size=None):
     if points is None:
         return frame
-    top_left, top_right, bottom_right, bottom_left = points
-    detected_width = int(max(np.linalg.norm(bottom_right - bottom_left), np.linalg.norm(top_right - top_left)))
-    detected_height = int(max(np.linalg.norm(top_right - bottom_right), np.linalg.norm(top_left - bottom_left)))
-    if detected_width < 100 or detected_height < 100:
-        return frame
-    if _last_paper_output_size is None:
-        target_width, target_height = detected_width, detected_height
+    points = _expand_paper_quad(points, frame.shape)
+    if output_size is None:
+        target_width, target_height = _quad_dims(points)
     else:
-        width_smoothing = min(0.12, AUTO_CROP_SMOOTHING)
-        target_width = int((1.0 - width_smoothing) * _last_paper_output_size[0] + width_smoothing * detected_width)
-        target_height = int((1.0 - width_smoothing) * _last_paper_output_size[1] + width_smoothing * detected_height)
-    _last_paper_output_size = (target_width, target_height)
+        target_width, target_height = _even_dim(output_size[0]), _even_dim(output_size[1])
+    if target_width < 100 or target_height < 100:
+        return frame
     destination = np.array(
         [[0, 0], [target_width - 1, 0], [target_width - 1, target_height - 1], [0, target_height - 1]],
         dtype=np.float32,
     )
-    matrix = cv2.getPerspectiveTransform(points, destination)
-    return cv2.warpPerspective(frame, matrix, (target_width, target_height), borderMode=cv2.BORDER_REPLICATE)
+    matrix = cv2.getPerspectiveTransform(points.astype(np.float32), destination)
+    return cv2.warpPerspective(
+        frame,
+        matrix,
+        (target_width, target_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def _crop_paper(frame, *, exact: bool = False):
+    """Live crop (smooth) or exact crop (scan)."""
+    global _auto_crop_frame_count, _last_paper_quad, _last_paper_shape, _last_paper_output_size, _auto_crop_misses
+    global _auto_crop_last_log_at, _auto_crop_was_locked, _auto_crop_hits
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return frame
+    shape = frame.shape[:2]
+    _auto_crop_frame_count += 1
+
+    if exact:
+        detected = _detect_paper_quad(frame)
+        points = detected if detected is not None else _last_paper_quad
+        if points is None:
+            return frame
+        # Prefer locked live size for stable scan aspect; else use detected dims.
+        out_size = _last_paper_output_size if (AUTO_CROP_SIZE_LOCK and _last_paper_output_size) else _quad_dims(points)
+        return _warp_paper_quad(frame, points, out_size)
+
+    if shape != _last_paper_shape:
+        _last_paper_output_size = None
+        _last_paper_quad = None
+        _auto_crop_misses = 0
+        _auto_crop_hits = 0
+
+    if shape != _last_paper_shape or _auto_crop_frame_count % AUTO_CROP_DETECT_EVERY == 1:
+        detected_quad = _detect_paper_quad(frame)
+        has_doc = detected_quad is not None and _is_plausible_paper_quad(detected_quad, frame.shape)
+        if not has_doc:
+            _auto_crop_misses += 1
+            _auto_crop_hits = 0
+            # Unlock immediately — never keep a stale zoomed crop when paper is gone.
+            if _last_paper_quad is not None:
+                print("[PiWS] Auto-crop UNLOCKED (no document) — full preview")
+                _last_paper_quad = None
+                _last_paper_output_size = None
+                _auto_crop_was_locked = False
+        elif _last_paper_quad is None:
+            _auto_crop_hits += 1
+            _auto_crop_misses = 0
+            # Require consecutive hits so a one-frame room false-positive does not zoom in.
+            if _auto_crop_hits >= AUTO_CROP_LOCK_HITS:
+                _last_paper_quad = detected_quad
+                w, h = _quad_dims(detected_quad)
+                print(f"[PiWS] Auto-crop LOCKED ({w}x{h})")
+                _auto_crop_was_locked = True
+        else:
+            jump = float(np.mean(np.linalg.norm(detected_quad - _last_paper_quad, axis=1)))
+            diag = float(np.hypot(shape[1], shape[0]))
+            # Huge jump = lost document / wrong object → drop crop right away
+            if jump > diag * 0.18:
+                _auto_crop_misses += 1
+                _auto_crop_hits = 0
+                print("[PiWS] Auto-crop UNLOCKED (unstable) — full preview")
+                _last_paper_quad = None
+                _last_paper_output_size = None
+                _auto_crop_was_locked = False
+            else:
+                alpha = AUTO_CROP_SMOOTHING
+                if jump < diag * 0.01:
+                    alpha = max(0.04, AUTO_CROP_SMOOTHING * 0.45)
+                elif jump < diag * 0.03:
+                    alpha = max(0.06, AUTO_CROP_SMOOTHING * 0.7)
+                _last_paper_quad = (
+                    (1.0 - alpha) * _last_paper_quad + alpha * detected_quad
+                ).astype(np.float32)
+                _auto_crop_misses = 0
+                _auto_crop_hits = AUTO_CROP_LOCK_HITS
+        _last_paper_shape = shape
+
+    if _last_paper_quad is not None and not _is_plausible_paper_quad(_last_paper_quad, frame.shape):
+        print("[PiWS] Auto-crop UNLOCKED (implausible) — full preview")
+        _last_paper_quad = None
+        _last_paper_output_size = None
+        _auto_crop_was_locked = False
+        _auto_crop_hits = 0
+
+    # No document → original camera frame (later resized to PREVIEW_WIDTH x PREVIEW_HEIGHT)
+    if _last_paper_quad is None:
+        return frame
+
+    detected_width, detected_height = _quad_dims(_last_paper_quad)
+    if _last_paper_output_size is None:
+        target_width, target_height = detected_width, detected_height
+    elif AUTO_CROP_SIZE_LOCK:
+        # Keep output size almost fixed so live feed does not "breathe"
+        size_alpha = AUTO_CROP_SIZE_SMOOTHING
+        prev_w, prev_h = _last_paper_output_size
+        # Ignore tiny size noise completely
+        if abs(detected_width - prev_w) / max(1, prev_w) < 0.02 and abs(detected_height - prev_h) / max(1, prev_h) < 0.02:
+            target_width, target_height = prev_w, prev_h
+        else:
+            target_width = _even_dim((1.0 - size_alpha) * prev_w + size_alpha * detected_width)
+            target_height = _even_dim((1.0 - size_alpha) * prev_h + size_alpha * detected_height)
+    else:
+        size_alpha = min(0.12, AUTO_CROP_SMOOTHING)
+        prev_w, prev_h = _last_paper_output_size
+        target_width = _even_dim((1.0 - size_alpha) * prev_w + size_alpha * detected_width)
+        target_height = _even_dim((1.0 - size_alpha) * prev_h + size_alpha * detected_height)
+    _last_paper_output_size = (target_width, target_height)
+    # Live crop fills the whole preview canvas — no black bars / letterbox.
+    return _warp_paper_quad(frame, _last_paper_quad, (PREVIEW_WIDTH, PREVIEW_HEIGHT))
 
 
 def _lift_preview_shadows(frame):
@@ -750,17 +1155,74 @@ def _lift_preview_shadows(frame):
         return frame
 
 
-def _prepare_preview_frame(frame):
-    oriented = _lift_preview_shadows(_apply_preview_rotation(_crop_paper(frame)))
-    if oriented is None:
+def _draw_paper_overlay(frame, quad):
+    """Draw green document outline so auto-crop detection is visible on live preview."""
+    if frame is None or quad is None:
         return frame
-    height, width = oriented.shape[:2]
-    if PREVIEW_WIDTH == width and PREVIEW_HEIGHT == height:
-        return oriented
-    downscale = PREVIEW_WIDTH < width or PREVIEW_HEIGHT < height
-    if not downscale:
-        return oriented
-    return cv2.resize(oriented, (PREVIEW_WIDTH, PREVIEW_HEIGHT), interpolation=cv2.INTER_AREA)
+    out = frame.copy()
+    pts = np.round(quad).astype(np.int32).reshape(-1, 1, 2)
+    cv2.polylines(out, [pts], True, (0, 220, 80), 3, cv2.LINE_AA)
+    for point in pts.reshape(-1, 2):
+        cv2.circle(out, (int(point[0]), int(point[1])), 6, (0, 255, 120), -1, cv2.LINE_AA)
+    label = "DOCUMENT DETECTED"
+    cv2.putText(out, label, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(out, label, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 120), 2, cv2.LINE_AA)
+    return out
+
+
+def _fit_to_preview(frame, *, letterbox: bool = False):
+    """Always emit PREVIEW_WIDTH x PREVIEW_HEIGHT. Default fills the canvas (no black bars)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return frame
+    height, width = frame.shape[:2]
+    if width == PREVIEW_WIDTH and height == PREVIEW_HEIGHT:
+        return frame
+    # letterbox kept only for rare callers — live crop/full preview always fill.
+    if letterbox:
+        scale = min(float(PREVIEW_WIDTH) / float(max(1, width)), float(PREVIEW_HEIGHT) / float(max(1, height)))
+        new_w = _even_dim(max(2, int(width * scale)))
+        new_h = _even_dim(max(2, int(height * scale)))
+        resized = cv2.resize(
+            frame,
+            (new_w, new_h),
+            interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR,
+        )
+        canvas = np.zeros((PREVIEW_HEIGHT, PREVIEW_WIDTH, 3), dtype=frame.dtype)
+        x0 = max(0, (PREVIEW_WIDTH - new_w) // 2)
+        y0 = max(0, (PREVIEW_HEIGHT - new_h) // 2)
+        canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+        return canvas
+    downscale = width > PREVIEW_WIDTH or height > PREVIEW_HEIGHT
+    return cv2.resize(
+        frame,
+        (PREVIEW_WIDTH, PREVIEW_HEIGHT),
+        interpolation=cv2.INTER_AREA if downscale else cv2.INTER_LINEAR,
+    )
+
+
+def _prepare_preview_frame(frame):
+    """Live preview: cropped document fills view when locked; full camera when unlocked."""
+    if frame is None:
+        return frame
+    rotated = _apply_preview_rotation(frame)
+    if AUTO_CROP_LIVE_MODE == "crop":
+        cropped = _crop_paper(rotated, exact=False)
+        if _last_paper_quad is not None and cropped is not None and cropped is not rotated:
+            return _lift_preview_shadows(cropped)  # already PREVIEW_WxH, edge-to-edge
+        return _fit_to_preview(_lift_preview_shadows(rotated), letterbox=False)
+    if AUTO_CROP_LIVE_MODE == "both":
+        cropped = _crop_paper(rotated, exact=False)
+        if _last_paper_quad is not None and cropped is not None and cropped is not rotated:
+            # No green border / no black pad — just the filled crop.
+            return _lift_preview_shadows(cropped)
+        return _fit_to_preview(_lift_preview_shadows(rotated), letterbox=False)
+
+    # overlay: keep full frame, draw green document box when locked
+    _crop_paper(rotated, exact=False)
+    oriented = _lift_preview_shadows(rotated)
+    if _last_paper_quad is not None:
+        oriented = _draw_paper_overlay(oriented, _last_paper_quad)
+    return _fit_to_preview(oriented, letterbox=False)
 
 
 def configure_capture(cap, width: int, height: int):
@@ -1246,6 +1708,34 @@ def _bgr_from_jpeg(jpeg: bytes):
         return None
 
 
+def _copy_raw_camera_frame():
+    """Copy the latest raw camera frame (no green overlay) — never blocks USB."""
+    with frame_lock:
+        if latest_bgr is not None and getattr(latest_bgr, "size", 0):
+            return latest_bgr.copy()
+    return None
+
+
+def _crop_locked_paper(frame):
+    """Warp using the live-locked green-box region only — no re-detect (keeps stream smooth)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    points = _last_paper_quad
+    if points is None:
+        return None
+    try:
+        if not _is_plausible_paper_quad(points, frame.shape):
+            return None
+        out_size = (
+            _last_paper_output_size
+            if (AUTO_CROP_SIZE_LOCK and _last_paper_output_size)
+            else _quad_dims(points)
+        )
+        return _warp_paper_quad(frame, points, out_size)
+    except Exception:
+        return None
+
+
 def _copy_wysiwyg_preview_frame():
     """Exact pixels from live preview — BGR buffer first, then last WS JPEG sent."""
     preview = _copy_latest_scan_frame()
@@ -1282,7 +1772,7 @@ def _enhance_document_frame(frame):
 def _scan_profile_from_payload(payload: dict | None = None) -> dict:
     """Per-scan size from dashboard paper guide — landscape output only."""
     payload = payload or {}
-    if CAPTURE_MATCH_PREVIEW:
+    if CAPTURE_MATCH_PREVIEW or CAPTURE_INSTANT:
         width, height = PREVIEW_WIDTH, PREVIEW_HEIGHT
     else:
         width = int(payload.get("scanWidth") or SCAN_WIDTH)
@@ -1304,7 +1794,7 @@ def _scan_profile_from_payload(payload: dict | None = None) -> dict:
 
 
 def _scan_output_dims(profile: dict | None = None) -> tuple[int, int]:
-    if CAPTURE_MATCH_PREVIEW:
+    if CAPTURE_MATCH_PREVIEW or CAPTURE_INSTANT:
         return PREVIEW_WIDTH, PREVIEW_HEIGHT
     if profile is not None:
         return int(profile["width"]), int(profile["height"])
@@ -1365,19 +1855,23 @@ def _finalize_scan_frame(
     profile: dict | None = None,
     *,
     already_cropped: bool = False,
+    preserve_size: bool = False,
 ) -> bytes | None:
-    """Encode scan JPEG, avoiding a second crop for frames from the live preview."""
+    """Encode scan JPEG. preserve_size keeps the document crop aspect (no stretch)."""
     if frame is None:
         return None
-    target_w, target_h = _scan_output_dims(profile)
-    oriented = frame if already_cropped else _crop_paper(frame)
-    if oriented.shape[1] != target_w or oriented.shape[0] != target_h:
-        upscaling = oriented.shape[1] < target_w or oriented.shape[0] < target_h
-        oriented = cv2.resize(
-            oriented,
-            (target_w, target_h),
-            interpolation=cv2.INTER_LANCZOS4 if upscaling else cv2.INTER_AREA,
-        )
+    oriented = frame if already_cropped else _crop_paper(frame, exact=True)
+    if oriented is None:
+        return None
+    if not preserve_size:
+        target_w, target_h = _scan_output_dims(profile)
+        if oriented.shape[1] != target_w or oriented.shape[0] != target_h:
+            upscaling = oriented.shape[1] < target_w or oriented.shape[0] < target_h
+            oriented = cv2.resize(
+                oriented,
+                (target_w, target_h),
+                interpolation=cv2.INTER_LANCZOS4 if upscaling else cv2.INTER_AREA,
+            )
     oriented = _enhance_document_frame(oriented)
     jpeg = encode_jpeg(oriented, SCAN_JPEG_QUALITY, optimize=False)
     if not _jpeg_is_complete(jpeg):
@@ -1472,8 +1966,45 @@ def capture_scan_snapshot(profile: dict | None = None) -> bytes | None:
 
 
 def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
-    """WYSIWYG still capture — use live preview pixels; never fail if stream is visible."""
-    if not CAPTURE_MATCH_PREVIEW:
+    """Instant capture from live buffer — never pauses the stream / never locks USB."""
+    started = time.monotonic()
+
+    # Instant path (default): copy raw camera frame, crop to green-box region, enhance.
+    # Stream keeps running — no _scan_in_progress, no capture_cap_lock.
+    if CAPTURE_INSTANT or CAPTURE_MATCH_PREVIEW:
+        raw = _copy_raw_camera_frame()
+        source = "raw buffer"
+        if raw is None:
+            # Last resort: decode last WS JPEG (may include overlay — crop strips edges)
+            preview, source = _copy_wysiwyg_preview_frame()
+            raw = preview
+        if raw is not None:
+            rotated = _apply_preview_rotation(raw) if source == "raw buffer" else raw
+            cropped = _crop_locked_paper(rotated)
+            used_crop = cropped is not None and cropped is not rotated
+            frame_out = cropped if used_crop else rotated
+            # Strip accidental overlay pixels if we fell back to preview buffer
+            if source != "raw buffer" and not used_crop:
+                # Preview may have green box drawn — prefer raw-only path next time
+                pass
+            jpeg = _finalize_scan_frame(
+                frame_out,
+                profile,
+                already_cropped=True,
+                preserve_size=used_crop,
+            )
+            if jpeg:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                h, w = frame_out.shape[:2]
+                mode = "document-crop" if used_crop else "full-frame"
+                print(
+                    f"[PiWS] Instant capture {w}x{h} ({mode}) from {source} in {elapsed_ms}ms — "
+                    "stream uninterrupted"
+                )
+                return jpeg
+
+    # Opt-in slow hi-res path only when instant is disabled
+    if not CAPTURE_MATCH_PREVIEW and not CAPTURE_INSTANT:
         cap = active_capture_cap
         if cap is None or not cap.isOpened():
             return None
@@ -1483,60 +2014,19 @@ def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
         finally:
             _scan_in_progress.clear()
 
-    requested_burst = max(1, min(12, int((profile or {}).get("captureFrameCount") or SCAN_BURST_FRAMES)))
-    preview_frame = None
-    source = ""
-    if requested_burst > 1:
-        cap = active_capture_cap
-        with capture_cap_lock:
-            if cap is not None and cap.isOpened():
-                burst_frame = _capture_still_frame(
-                    cap,
-                    for_preview=True,
-                    burst_frames=requested_burst,
-                )
-                if burst_frame is not None:
-                    preview_frame = _prepare_preview_frame(burst_frame)
-                    _store_camera_frames(burst_frame, preview_frame)
-                    source = f"preview burst {requested_burst} frames"
-    if preview_frame is None:
-        preview_frame, source = _copy_wysiwyg_preview_frame()
-    if preview_frame is not None:
-        print(
-            f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
-            f"(WYSIWYG {source} — same as live preview)"
-        )
-        return _finalize_scan_frame(preview_frame, profile, already_cropped=True)
-
-    # Stream not ready yet — briefly share the camera through the capture lock.
-    cap = active_capture_cap
-    frame = None
-    preview_frame = None
-    with capture_cap_lock:
-        if cap is not None and cap.isOpened():
-            frame = _capture_still_frame(cap, for_preview=True)
-        if frame is not None:
-            preview_frame = _prepare_preview_frame(frame)
-            _store_camera_frames(frame, preview_frame)
-    if preview_frame is None:
-        print("[PiWS] Scan capture miss — no preview buffer and USB read failed")
-        return None
-    print(
-        f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
-        f"(USB fallback, cam {frame.shape[1]}x{frame.shape[0]})"
-    )
-    return _finalize_scan_frame(preview_frame, profile, already_cropped=True)
+    print("[PiWS] Scan capture miss — no live frame buffer yet (wait for stream)")
+    return None
 
 
 def _run_scan_command(cmd_id: str, payload: dict | None = None):
-    """Background scan — capture and upload only; mechanism actions are disabled."""
+    """Capture only — motors stay idle until Confirm & Register sends SORT."""
     profile = _scan_profile_from_payload(payload)
     try:
         guide_label = f" ({profile['paperGuideId']})" if profile.get("paperGuideId") else ""
         print(
-            f"[PiWS] Scan {cmd_id} capture "
+            f"[PiWS] Scan {cmd_id} capture-only "
             f"{profile['width']}x{profile['height']} {profile['orientation']}{guide_label} "
-            "mechanism=disabled"
+            "(motors wait for SORT / Confirm & Register)"
         )
 
         snap = capture_scan_bytes(profile)
@@ -1550,10 +2040,70 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
         update_command_status(cmd_id, "Executing")
         upload_scan(snap, cmd_id)
         update_command_status(cmd_id, "Executed")
-        print(f"[PiWS] Scan {cmd_id} uploaded — mechanism remains disabled")
+        print(f"[PiWS] Scan {cmd_id} uploaded — motors NOT started (wait for Confirm & Register)")
     except Exception as err:
         print(f"[PiWS] Scan {cmd_id} failed: {err}")
         update_command_status(cmd_id, "Failed", str(err))
+
+
+def _run_sort_command(cmd_id: str, payload: dict | None = None):
+    """Confirm & Register → lift to layer → sort deposit → return main."""
+    payload = payload or {}
+    sort_layer = resolve_sort_layer(payload)
+    mech = get_mechanism()
+    try:
+        print(f"[PiWS] SORT {cmd_id} layer={sort_layer} (Confirm & Register)")
+        if not mech.enabled:
+            update_command_status(
+                cmd_id,
+                "Failed",
+                "Mechanism disabled — set DIGIPATH_MECH_ENABLED=1",
+            )
+            return
+        update_command_status(cmd_id, "Executing")
+        # Block until sort finishes so command status is accurate.
+        mech.sort_and_return(sort_layer)
+        update_command_status(cmd_id, "Executed")
+        print(f"[PiWS] SORT {cmd_id} done (layer {sort_layer})")
+    except Exception as err:
+        print(f"[PiWS] SORT {cmd_id} failed: {err}")
+        update_command_status(cmd_id, "Failed", str(err))
+
+
+def _run_motor_test_command(cmd_id: str, payload: dict | None = None):
+    """Dashboard Test Motors button — same jog as the startup test."""
+    mech = get_mechanism()
+    try:
+        print(f"[PiWS] MOTOR_TEST {cmd_id}")
+        if not mech.enabled:
+            update_command_status(
+                cmd_id,
+                "Failed",
+                "Mechanism disabled — set DIGIPATH_MECH_ENABLED=1",
+            )
+            return
+        try:
+            update_command_status(cmd_id, "Executing")
+        except Exception as err:
+            print(f"[PiWS] MOTOR_TEST {cmd_id}: could not report Executing ({err}) — running test anyway")
+        ok = mech.startup_self_test()
+        _send_presence_now("motor_test")
+        if ok:
+            update_command_status(cmd_id, "Executed")
+        else:
+            update_command_status(
+                cmd_id,
+                "Failed",
+                (mech.last_test or {}).get("message")
+                or mech.status_dict().get("lastError")
+                or "Motor test failed — check Pi log",
+            )
+    except Exception as err:
+        print(f"[PiWS] MOTOR_TEST {cmd_id} failed: {err}")
+        try:
+            update_command_status(cmd_id, "Failed", str(err))
+        except Exception as report_err:
+            print(f"[PiWS] MOTOR_TEST {cmd_id}: could not report failure ({report_err})")
 
 
 def _is_ws_closed_error(err) -> bool:
@@ -1605,6 +2155,9 @@ def upload_stream_frame_http(jpeg: bytes):
     if not STREAM_HTTP_UPLOAD or not jpeg or not BACKEND_BASE_URL:
         return
     if _scan_in_progress.is_set():
+        return
+    if _scan_upload_busy.is_set():
+        # Don't fight the scan JPEG upload for tunnel bandwidth — keep WS stream only.
         return
     if STREAM_HTTP_WS_PRIORITY and ws_authenticated:
         # WS is the live path — skip HTTPS preview cache while frames are flowing.
@@ -1688,7 +2241,12 @@ def ws_frame_sender_worker():
         except Exception as err:
             if _is_ws_closed_error(err):
                 print(f"[PiWS] WS closed during frame send: {err}")
-                _force_ws_reconnect(f"frame send: {err}")
+                # Large scan uploads saturate the tunnel — don't tear down WS
+                # on a single failed frame; heartbeat + watchdog will recover.
+                if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+                    print("[PiWS] Deferring reconnect during scan/upload")
+                    continue
+                _force_ws_reconnect_debounced(f"frame send: {err}")
 
 
 def _signal_preview_encode():
@@ -1703,7 +2261,13 @@ def preview_encode_send_worker():
             continue
         _preview_encode_event.clear()
 
-        if _scan_in_progress.is_set():
+        if _scan_in_progress.is_set() or _scan_upload_busy.is_set():
+            # Keep encoding paused during capture/upload so WS keepalive can breathe.
+            continue
+
+        # Tunnel congested — skip this encode tick so we only ship the newest frame later.
+        if _last_ws_send_ms > 120.0:
+            time.sleep(0.02)
             continue
 
         drained = True
@@ -1760,7 +2324,9 @@ def ws_sender_worker():
         except Exception as err:
             print(f"[PiWS] WS outbound failed (text): {err}")
             if _is_ws_closed_error(err):
-                _force_ws_reconnect(f"outbound text: {err}")
+                if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+                    continue
+                _force_ws_reconnect_debounced(f"outbound text: {err}")
 
 
 def send_ws_signal(payload: dict):
@@ -1809,7 +2375,10 @@ def send_ws_presence(event_type: str) -> bool:
             return True
         except Exception as err:
             if _is_ws_closed_error(err):
-                _force_ws_reconnect(f"presence send: {err}")
+                # Prefer HTTP keepalive over tearing the socket mid-upload/blip.
+                if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+                    return False
+                _force_ws_reconnect_debounced(f"presence send: {err}")
             return False
     return send_ws_json({"type": message_type, "payload": device_payload(event_type)})
 
@@ -1850,8 +2419,23 @@ def _close_ws_socket(ws) -> None:
         pass
 
 
+_last_force_reconnect_at = 0.0
+WS_RECONNECT_DEBOUNCE_SECS = max(2.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_DEBOUNCE_SECS", "4")))
+
+
+_ws_last_issue = ""
+
+
+def _note_ws_issue(text: str):
+    global _ws_last_issue
+    _ws_last_issue = f"{time.strftime('%H:%M:%S')} {text}"[:240]
+
+
 def _force_ws_reconnect(reason: str):
     global ws_connected, ws_authenticated, realtime_ws, _active_ws_app, _ws_last_reconnect_kick_at
+    global _last_force_reconnect_at
+    _note_ws_issue(f"reconnect: {reason}")
+    _last_force_reconnect_at = time.monotonic()
     ws_connected = False
     ws_authenticated = False
     _mark_ws_offline()
@@ -1863,6 +2447,15 @@ def _force_ws_reconnect(reason: str):
     if app is not None and app is not ws:
         _close_ws_socket(app)
     print(f"[PiWS] Auto-reconnect: {reason}")
+
+
+def _force_ws_reconnect_debounced(reason: str):
+    """Avoid reconnect storms when the tunnel blips for a second."""
+    global _last_force_reconnect_at
+    now = time.monotonic()
+    if now - _last_force_reconnect_at < WS_RECONNECT_DEBOUNCE_SECS:
+        return
+    _force_ws_reconnect(reason)
 
 
 def extract_text_with_groq(image_bytes: bytes) -> tuple[str, str]:
@@ -2129,6 +2722,15 @@ def start_ai_enrich_async(document_id: str, command_id: str, image_bytes: bytes)
 
 
 def upload_scan(image_bytes: bytes, command_id: str):
+    """Upload the captured JPEG — this exact file becomes the document attachment."""
+    _scan_upload_busy.set()
+    try:
+        return _upload_scan_body(image_bytes, command_id)
+    finally:
+        _scan_upload_busy.clear()
+
+
+def _upload_scan_body(image_bytes: bytes, command_id: str):
     encoded = base64.b64encode(image_bytes).decode("ascii")
     payload = {
         "deviceId": DEVICE_ID,
@@ -2177,6 +2779,10 @@ def upload_scan(image_bytes: bytes, command_id: str):
     if AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id and (ai_extract_pending or not extracted):
         print("[PiWS] Scheduling background AI enrich...")
         start_ai_enrich_async(document_id, command_id, image_bytes)
+    print(
+        f"[PiWS] Saved attachment = captured JPEG ({len(image_bytes)} bytes) "
+        f"→ document {document_id or '?'}"
+    )
     return result
 
 
@@ -2204,11 +2810,26 @@ def update_command_status(command_id: str, status: str, error: str = ""):
     body = {"status": status}
     if error:
         body["errorMessage"] = _user_scan_error_message(error)
-    requests.put(
-        f"{BACKEND_BASE_URL}/devices/commands/{command_id}",
-        json=body,
-        headers=DEVICE_HEADERS,
-    ).raise_for_status()
+    last_err = None
+    # Without a timeout a stalled tunnel request blocks the command thread forever.
+    for attempt in range(3):
+        try:
+            requests.put(
+                f"{BACKEND_BASE_URL}/devices/commands/{command_id}",
+                json=body,
+                headers=DEVICE_HEADERS,
+                timeout=10,
+            ).raise_for_status()
+            return
+        except Exception as err:
+            last_err = err
+            print(f"[PiWS] Command {command_id} → {status} update failed (try {attempt + 1}/3): {err}")
+            time.sleep(1.0 + attempt)
+    raise last_err
+
+
+_handled_command_ids: deque = deque(maxlen=200)
+_handled_command_lock = threading.Lock()
 
 
 def handle_command_message(message: str):
@@ -2223,15 +2844,36 @@ def handle_command_message(message: str):
     cmd_id = command.get("id")
     if not cmd_id:
         return
-    if command.get("command") != "SCAN":
-        update_command_status(cmd_id, "Failed", "Unsupported command")
+    # Backend re-sends Pending commands on reconnect; never run one twice.
+    with _handled_command_lock:
+        if cmd_id in _handled_command_ids:
+            return
+        _handled_command_ids.append(cmd_id)
+    cmd_name = str(command.get("command") or "").strip().upper()
+    payload = command.get("payload") or {}
+    if cmd_name == "SCAN":
+        threading.Thread(
+            target=_run_scan_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
+        return
+    if cmd_name == "SORT":
+        threading.Thread(
+            target=_run_sort_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
+        return
+    if cmd_name == "MOTOR_TEST":
+        threading.Thread(
+            target=_run_motor_test_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
         return
 
-    threading.Thread(
-        target=_run_scan_command,
-        args=(cmd_id, command.get("payload") or {}),
-        daemon=True,
-    ).start()
+    update_command_status(cmd_id, "Failed", f"Unsupported command: {cmd_name}")
 
 
 def _store_camera_frames(frame, preview):
@@ -2534,19 +3176,55 @@ def _http_presence_heartbeat() -> bool:
         if response.status_code >= 400:
             print(f"[PiWS] HTTP heartbeat failed: {response.status_code} {response.text[:160]}")
             return False
+        _dispatch_http_pending_commands(response)
         return True
     except Exception as err:
         print(f"[PiWS] HTTP heartbeat error: {err}")
         return False
 
 
-def heartbeat_worker():
-    while not stop_event.wait(HEARTBEAT_SECS):
+def _dispatch_http_pending_commands(response):
+    """Backup command channel: the WS link can be down while HTTP heartbeats still work."""
+    try:
+        commands = (response.json() or {}).get("pendingCommands") or []
+    except Exception:
+        return
+    for command in commands:
+        if isinstance(command, dict) and command.get("id"):
+            print(f"[PiWS] Command {command.get('id')} ({command.get('command')}) received via HTTP heartbeat")
+            handle_command_message(json.dumps({"type": "command:pending", "command": command}))
+
+
+def _send_presence_now(reason: str):
+    """Push mechanism/test status right away instead of waiting for the next heartbeat."""
+    ok = False
+    try:
         if ws_authenticated:
-            send_ws_presence("device_heartbeat")
-        else:
-            # Keep trying to look alive while WS auto-reconnects.
+            ok = send_ws_presence("device_heartbeat")
+    except Exception as err:
+        print(f"[PiWS] Presence push ({reason}) failed: {err}")
+    if not ok:
+        _http_presence_heartbeat()
+
+
+def heartbeat_worker():
+    """WS heartbeat every tick; HTTP backup only when needed (avoids tunnel lag)."""
+    http_tick = 0
+    while not stop_event.wait(HEARTBEAT_SECS):
+        ws_ok = False
+        if ws_authenticated:
+            ws_ok = send_ws_presence("device_heartbeat")
+        http_tick += 1
+        need_http = (
+            not ws_ok
+            or _scan_upload_busy.is_set()
+            or _scan_in_progress.is_set()
+            or (http_tick % 3 == 0)
+        )
+        if need_http:
             _http_presence_heartbeat()
+        if ws_ok:
+            _touch_ws_activity()
 
 
 def handle_realtime_control_message(message: str):
@@ -2572,6 +3250,7 @@ def handle_realtime_control_message(message: str):
     if msg_type == "auth:error":
         _clear_auth_timer()
         _stop_auth_retry()
+        _note_ws_issue(f"auth failed: {data.get('message')} (check DIGIPATH_DEVICE_API_KEY)")
         print(f"[PiWS] Backend auth failed: {data.get('message')}")
         print(f"[PiWS] Check DIGIPATH_DEVICE_API_KEY matches backend DEVICE_API_KEY (got {_mask_secret(DEVICE_API_KEY)})")
         _force_ws_reconnect("auth failed")
@@ -2596,6 +3275,10 @@ def on_realtime_open(ws):
     ws.send(json.dumps({"type": "auth", "deviceId": DEVICE_ID, "apiKey": DEVICE_API_KEY}))
     print(f"[PiWS] WebSocket connected to {ws_url()} — waiting for auth:ok")
     print(f"[PiWS] Device {DEVICE_ID}, apiKey={_mask_secret(DEVICE_API_KEY)}")
+    print(
+        f"[PiWS] Auto-crop={'ON' if AUTO_CROP_PAPER else 'OFF'} "
+        f"live_mode={AUTO_CROP_LIVE_MODE} (crop=show document; overlay=green box; capture always crops)"
+    )
     if DEVTUNNEL_TOKEN:
         print("[PiWS] Using DIGIPATH_DEVTUNNEL_TOKEN for tunnel authorization")
     _start_auth_timer()
@@ -2622,6 +3305,7 @@ def on_realtime_close(_ws, close_status_code, close_msg):
     ws_authenticated = False
     realtime_ws = None
     _mark_ws_offline()
+    _note_ws_issue(f"closed ({close_status_code or 'n/a'}): {close_msg or 'closed'}")
     print(
         f"[PiWS] WebSocket disconnected ({close_status_code or 'n/a'}): "
         f"{close_msg or 'closed'} — auto-reconnect pending"
@@ -2629,6 +3313,7 @@ def on_realtime_close(_ws, close_status_code, close_msg):
 
 
 def on_realtime_error(_ws, error):
+    _note_ws_issue(f"error: {error}")
     print(f"[PiWS] WebSocket error: {error} — auto-reconnect pending")
     _mark_ws_offline()
     _close_ws_socket(_ws)
@@ -2640,7 +3325,11 @@ def ws_health_watchdog():
         now = time.monotonic()
         if ws_connected and ws_authenticated:
             idle = now - _ws_last_activity_at
-            if idle > WS_STALE_SECS:
+            # Uploads saturate the tunnel — give more slack before declaring stale.
+            stale_limit = WS_STALE_SECS * 2 if (
+                _scan_upload_busy.is_set() or _scan_in_progress.is_set()
+            ) else WS_STALE_SECS
+            if idle > stale_limit:
                 _force_ws_reconnect(f"stale link ({idle:.0f}s idle)")
             continue
 
@@ -2721,6 +3410,7 @@ def run():
         f"JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {WS_MAX_FPS:.0f}fps"
         f"{' adaptive' if STREAM_ADAPTIVE else ''}, "
         f"preview_rotate={PREVIEW_ROTATE}, "
+        f"capture_instant={int(CAPTURE_INSTANT)}, "
         f"capture_match_preview={int(CAPTURE_MATCH_PREVIEW)}, "
         f"heartbeat={HEARTBEAT_SECS}s"
     )
@@ -2731,6 +3421,11 @@ def run():
     threading.Thread(target=ws_sender_worker, daemon=True).start()
     threading.Thread(target=ws_health_watchdog, daemon=True).start()
     threading.Thread(target=heartbeat_worker, daemon=True).start()
+    try:
+        mechanism_startup_self_test()
+    except Exception as err:
+        print(f"[PiWS] Startup motor test error: {err}")
+    _send_presence_now("startup_motor_test")
     try:
         if get_mechanism().home_on_start:
             print("[PiWS] Homing lift to MAIN (top) before ready...")
@@ -2752,9 +3447,9 @@ def run():
             f"Capture→{mech.capture_down_count}×DOWN {mech.move_steps}→photo→"
             f"SORT {mech.sort_deposit_steps}→UP {mech.move_steps}"
             if mech.open_loop
-            else "hall-guided"
+            else "hall-guided (no Hall #3)"
         )
-        print(f"[PiWS] Mechanism: ON — {mode}")
+        print(f"[PiWS] Mechanism: ON — motors on Confirm&Register/SORT only — {mode}")
     else:
         print(
             "[PiWS] Mechanism: OFF — scan will not move NEMA motors. "

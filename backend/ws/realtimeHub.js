@@ -133,11 +133,18 @@ class RealtimeHub {
         client.ping();
       }
 
+      // Devices get a 2-miss grace (~60s) so a congested tunnel during scan upload
+      // does not immediately kill the WebSocket and flash Offline in the UI.
       for (const clients of this.deviceClients.values()) {
         for (const client of clients) {
           if (!client.isAlive) {
-            client.terminate();
-            continue;
+            client.missedPongs = (client.missedPongs || 0) + 1;
+            if (client.missedPongs >= 2) {
+              client.terminate();
+              continue;
+            }
+          } else {
+            client.missedPongs = 0;
           }
           client.isAlive = false;
           client.ping();
@@ -323,6 +330,7 @@ class RealtimeHub {
       sendJson(ws, { type: 'auth:ok', deviceId });
       this.recordDeviceConnected(deviceId);
       this.broadcastDevicePresence(deviceId);
+      this.resendPendingCommands(ws, deviceId);
     };
 
     ws.on('message', (data, isBinary) => {
@@ -604,6 +612,24 @@ class RealtimeHub {
       sendJson(client, payload);
     }
     return true;
+  }
+
+  // Commands are only delivered over WS, so anything queued while the Pi was
+  // reconnecting would otherwise sit Pending and block new commands.
+  resendPendingCommands(ws, deviceId) {
+    setImmediate(async () => {
+      try {
+        const Command = require('../models/Command');
+        const pending = await Command.find({ deviceId, status: 'Pending' })
+          .sort({ createdAt: 1 })
+          .lean();
+        for (const command of pending) {
+          sendJson(ws, { type: 'command:pending', command });
+        }
+      } catch (err) {
+        console.warn(`[RealtimeHub] Pending command resend failed for ${deviceId}: ${err.message}`);
+      }
+    });
   }
 
   isDeviceConnected(deviceId) {

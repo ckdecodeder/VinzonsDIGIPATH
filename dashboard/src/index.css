@@ -4048,6 +4048,79 @@ textarea.form-input.is-invalid:focus {
   font-size: 0.85rem;
 }
 
+.scanner-sort-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1.25rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  text-align: left;
+}
+
+.scanner-sort-status--running {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.scanner-sort-status--done {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.scanner-sort-status--failed {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.scanner-motor-diag {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.scanner-motor-diag__title {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.scanner-motor-diag dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.3rem 0.6rem;
+  margin: 0;
+}
+
+.scanner-motor-diag dt {
+  color: var(--text-muted);
+}
+
+.scanner-motor-diag dd {
+  margin: 0;
+}
+
+.scanner-motor-diag__ok {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.scanner-motor-diag__bad {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.scanner-motor-diag__hint {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem;
+  border-radius: var(--radius-md);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 .scanner-toggle-row {
   display: flex;
   align-items: center;
@@ -4188,7 +4261,8 @@ textarea.form-input.is-invalid:focus {
 }
 
 .scanner-preview-shell--live .scanner-live-stream {
-  object-fit: contain;
+  object-fit: cover;
+  object-position: center center;
 }
 
 .scanner-preview-shell--portrait .scanner-live-stream {
@@ -4197,7 +4271,7 @@ textarea.form-input.is-invalid:focus {
 }
 
 .scanner-preview-shell--landscape .scanner-live-stream {
-  object-fit: contain;
+  object-fit: cover;
   object-position: center center;
 }
 

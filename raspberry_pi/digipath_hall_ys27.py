@@ -1,15 +1,15 @@
 """
 YS-27 Hall sensor modules on Raspberry Pi GPIO.
 
-Physical placement (Vinzons — 5 sensors):
+Physical placement (Vinzons — Hall #3 scanner/capture-height REMOVED):
   hall 1 = door            GPIO 5
   hall 2 = main / layer 1  GPIO 6
-  hall 3 = scanner         GPIO 13
   hall 4 = layer 2         GPIO 19
   hall 5 = layer 3         GPIO 12
+  (hall 3 / CAPTURE unused — capture height uses motor step counts)
 
 Logical IDs used by mechanism (LAYER_1 shares hall 2 with MAIN):
-  DOOR=1 MAIN=2 CAPTURE=3 LAYER_1=4 LAYER_2=5 LAYER_3=6
+  DOOR=1 MAIN=2 CAPTURE=3(disabled) LAYER_1=4 LAYER_2=5 LAYER_3=6
 """
 
 from __future__ import annotations
@@ -71,9 +71,9 @@ PHYSICAL_HALL_NO = {
 LIFT_AXIS_RANK = {
     MAIN: 0,
     LAYER_1: 0,
-    CAPTURE: 1,
-    LAYER_2: 2,
-    LAYER_3: 3,
+    # CAPTURE/hall3 removed — ranks: main/L1 top, then layer2, layer3 bottom
+    LAYER_2: 1,
+    LAYER_3: 2,
 }
 
 
@@ -146,8 +146,10 @@ class HallSensorBank:
         dev = self._inputs_by_bcm.get(bcm)
         if not dev:
             return False
-        raw = bool(dev.is_active)
-        return raw if not self.active_low else not raw
+        # pull_up=True makes gpiozero report is_active when the pin is LOW, so derive the
+        # physical level first — otherwise active-low gets inverted twice.
+        pin_high = not bool(dev.is_active)
+        return (not pin_high) if self.active_low else pin_high
 
     def read_all(self) -> dict[int, bool]:
         return {sid: self.is_triggered(sid) for sid in sorted(self.pin_map)}
@@ -192,20 +194,28 @@ class HallSensorBank:
         chunk_steps: int = 8,
         on_sensor: Callable[[HallReading], None] | None = None,
         stop_event=None,
+        abort_sensors: set[int] | None = None,
     ) -> tuple[bool, int, set[int]]:
         """
         Pulse motor in chunks; call on_sensor when any hall fires.
-        Stops only when stop_sensor triggers.
+        Stops when stop_sensor triggers, max_steps is reached, or an abort sensor
+        (a hall past the target in the direction of travel) newly triggers.
         Returns (stopped_at_target, steps_moved, passed_sensors).
         """
         moved = 0
         passed: set[int] = set()
+        # A sensor already active at the start is where we are, not an overshoot.
+        abort = {sid for sid in (abort_sensors or set()) if not self.is_triggered(sid)}
         while moved < max_steps:
             if stop_event is not None and stop_event.is_set():
                 break
             chunk = min(chunk_steps, max_steps - moved)
-            moved += motor_step(chunk)
+            stepped = motor_step(chunk)
+            moved += stepped
+            if stepped <= 0:
+                break
 
+            hit_abort = False
             for sid in sorted(self.pin_map):
                 if not self.is_triggered(sid):
                     continue
@@ -215,6 +225,10 @@ class HallSensorBank:
                     on_sensor(HallReading(sensor_id=sid, triggered=True))
                 if sid == stop_sensor:
                     return True, moved, passed
+                if sid in abort:
+                    hit_abort = True
+            if hit_abort:
+                break
         return False, moved, passed
 
 
@@ -222,18 +236,20 @@ def build_default_bank(simulate: bool = False) -> HallSensorBank:
     main_bcm = _env_int("DIGIPATH_HALL_MAIN_BCM", 6)
     layer1_bcm = _env_int("DIGIPATH_HALL_LAYER1_BCM", main_bcm)
 
+    # Hall #3 (CAPTURE / scanner height) default OFF — use open-loop step capture height.
     pin_map = {
         DOOR: _env_int("DIGIPATH_HALL_DOOR_BCM", 5),
         MAIN: main_bcm,
-        CAPTURE: _env_int("DIGIPATH_HALL_CAPTURE_BCM", 13),
+        CAPTURE: _env_int("DIGIPATH_HALL_CAPTURE_BCM", 0),
         LAYER_1: layer1_bcm,
         LAYER_2: _env_int("DIGIPATH_HALL_LAYER2_BCM", 19),
         LAYER_3: _env_int("DIGIPATH_HALL_LAYER3_BCM", 12),
     }
+    pin_map = {sid: bcm for sid, bcm in pin_map.items() if int(bcm or 0) > 0}
     active_low = _env_bool("DIGIPATH_HALL_ACTIVE_LOW", "1")
     bank = HallSensorBank(pin_map, active_low=active_low, simulate=simulate)
     print(
-        "[Hall] map: #1 door=5  #2 main/layer1=6  #3 scanner=13  "
+        "[Hall] map: #1 door=5  #2 main/layer1=6  #3 scanner=OFF  "
         "#4 layer2=19  #5 layer3=12"
     )
     return bank

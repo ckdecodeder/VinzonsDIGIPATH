@@ -1,16 +1,19 @@
 """
 DigiPath mechanical sequence — TB6600 lift + sort with YS-27 hall sensors.
 
-Physical halls:
-  1 door → 2 main/layer1 → 3 scanner → 4 layer2 → 5 layer3
+Physical halls (Hall #3 scanner REMOVED):
+  1 door (GPIO 5) — safety: must be CLOSED before SORT (no auto motor on close)
+  2 main/layer1 (GPIO 6)
+  4 layer2 (GPIO 19)
+  5 layer3 (GPIO 12)
 
-Flow (hall-guided, no guessing):
-  1. Door hall #1 detects close → lift DOWN until scanner hall #3
-  2. Scan + upload (caller)
-  3. Upload done signal → lift to target layer hall (#2 / #4 / #5),
-     direction from current hall rank (up vs down)
-  4. Sort carousel deposit
-  5. Lift returns to main hall #2
+Confirm & Register (SORT) sequence:
+  0. Require hall #1 door closed (if wired)
+  1. Lift UP or DOWN until target layer hall (#2 / #4 / #5)
+  2. Sort carousel deposit rotate
+  3. Lift until main hall #2
+
+Capture button = photo/upload only (no motors).
 """
 
 from __future__ import annotations
@@ -22,7 +25,6 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from digipath_hall_ys27 import (
-    CAPTURE,
     DOOR,
     LAYER_1,
     LAYER_2,
@@ -101,8 +103,10 @@ class DigipathMechanism:
             "DIGIPATH_MOTOR_ENABLED", "0"
         )
         self.simulate = _env_bool("DIGIPATH_MECH_SIMULATE", "0")
-        self.open_loop = _env_bool("DIGIPATH_MECH_OPEN_LOOP", "1")
+        self.open_loop = _env_bool("DIGIPATH_MECH_OPEN_LOOP", "0")
         self.door_monitor_enabled = _env_bool("DIGIPATH_DOOR_MONITOR", "0")
+        # Hall #1 door = safety gate before SORT (does NOT auto-move motors).
+        self.sort_require_door_closed = _env_bool("DIGIPATH_SORT_REQUIRE_DOOR_CLOSED", "1")
         self.home_on_start = _env_bool("DIGIPATH_MECH_HOME_ON_START", "0")
         # After photo upload: sort rotate then lift up (same step size).
         self.sort_after_upload = _env_bool("DIGIPATH_MECH_SORT_AFTER_UPLOAD", "1")
@@ -241,7 +245,8 @@ class DigipathMechanism:
             return
         self._status.door_closed = self._halls.is_triggered(DOOR)
         self._status.at_main = self._halls.is_triggered(MAIN)
-        self._status.at_capture = self._halls.is_triggered(CAPTURE)
+        # Hall #3 removed — capture height is open-loop steps only.
+        self._status.at_capture = self._status.phase in ("ready_for_scan", "to_capture")
 
     def status_dict(self) -> dict:
         with self._lock:
@@ -403,7 +408,6 @@ class DigipathMechanism:
 
         if self.simulate and not self._halls.is_triggered(target_sensor):
             trigger_at = {
-                CAPTURE: max(200, max_steps // 3),
                 MAIN: max(200, max_steps // 4),
                 LAYER_2: max(400, max_steps // 2),
                 LAYER_3: max(600, (max_steps * 3) // 4),
@@ -503,64 +507,13 @@ class DigipathMechanism:
                 self._lift.set_enabled(False)
 
     def go_to_capture(self):
-        """Door/scan prep: move lift until scanner hall #3 triggers."""
-        self._ensure_ready()
-        if not self.homed and not self.open_loop:
-            # Safety: if somehow not homed, go to main first then to scanner.
-            print("[Mech] Not at known home — homing to main before scanner")
-            self.home_to_main(reason="pre-capture")
-        if self.open_loop:
-            with self._lock:
-                self._status.phase = "to_capture"
-                self._status.last_error = ""
-            self._motor_pause("before lift to scanner")
-            try:
-                self._enable_lift_only("to scanner/capture")
-                moved = self._move_lift_open_loop(
-                    self.lift_to_capture_dir,
-                    self.open_loop_capture_steps,
-                    "scanner",
-                )
-                self._motor_pause("after scanner move")
-                return moved
-            except Exception as err:
-                with self._lock:
-                    self._status.phase = "error"
-                    self._status.last_error = str(err)
-                raise
-            finally:
-                if self._lift:
-                    self._lift.set_enabled(False)
-
-        with self._lock:
-            self._status.phase = "to_capture"
-            self._status.last_error = ""
-
-        self._motor_pause("before lift to scanner")
-        try:
-            self._enable_lift_only("to scanner hall #3")
-            # From main (#2) this resolves to DOWN; stops exactly on hall #3.
-            moved = self._move_lift_to_hall(
-                CAPTURE,
-                label="scanner",
-                fallback_dir=self.lift_to_capture_dir,
-                direction="down" if self._current_lift_sensor() in (None, MAIN, LAYER_1) else None,
-            )
-            self._motor_pause("after scanner hall")
-            return moved
-        except Exception as err:
-            with self._lock:
-                self._status.phase = "error"
-                self._status.last_error = str(err)
-            raise
-        finally:
-            if self._lift:
-                self._lift.set_enabled(False)
+        """Move to capture height via step counts — Hall #3 scanner sensor removed."""
+        self.prepare_for_capture()
 
     def return_to_main(self):
-        """Return lift to main/home hall #2."""
+        """Return lift to main/home hall #2 (UP/DOWN until hall #2 fires)."""
         self._ensure_ready()
-        if self.open_loop:
+        if self._halls is None:
             with self._lock:
                 self._status.phase = "to_main"
             self._motor_pause("before lift to main")
@@ -613,27 +566,24 @@ class DigipathMechanism:
                 self._lift.set_enabled(False)
 
     def on_door_closed(self):
-        """Hall #1 door closed → NEMA down until hall #3 scanner."""
-        self._ensure_ready()
-        with self._lock:
-            if self._status.phase not in ("idle", "ready_for_scan"):
-                print(f"[Mech] Door closed ignored — busy phase={self._status.phase}")
-                return
-            self._status.last_error = ""
+        """Hall #1 closed edge — status only. Motors run on Confirm & Register / SORT."""
+        self._refresh_hall_flags()
+        print("[Mech] Hall #1 DOOR closed (safety) — waiting for Confirm & Register to SORT")
 
-        print("[Mech] Hall #1 DOOR closed → command: lift DOWN until hall #3 SCANNER")
-        try:
-            self.go_to_capture()
-            print(f"[Mech] Scan settle {self.scan_settle_secs:.0f}s at scanner...")
-            time.sleep(self.scan_settle_secs)
-            with self._lock:
-                self._status.phase = "ready_for_scan"
-            print("[Mech] Ready for scan at scanner frame (hall #3)")
-        except Exception as err:
-            with self._lock:
-                self._status.phase = "error"
-                self._status.last_error = str(err)
-            print(f"[Mech] Door → scanner failed: {err}")
+    def assert_door_ready_for_sort(self):
+        """Block SORT while door is open when hall #1 is wired."""
+        if not self.sort_require_door_closed or not self._halls:
+            return
+        door_bcm = int(self._halls.pin_map.get(DOOR, 0) or 0)
+        if door_bcm <= 0:
+            return
+        self._refresh_hall_flags()
+        if self._halls.is_triggered(DOOR):
+            print("[Mech] Hall #1 DOOR closed — OK to sort")
+            return
+        raise RuntimeError(
+            "Close the scanner door (hall #1 / GPIO 5) before Confirm & Register sort"
+        )
 
     def prepare_for_capture(self):
         """
@@ -728,8 +678,9 @@ class DigipathMechanism:
                 self._lift.set_enabled(False)
 
     def sort_and_return(self, sort_layer: int):
-        """After upload: lift to target layer hall, sort deposit, return to main."""
+        """Confirm & Register: lift to target layer hall, sort deposit, return to main."""
         self._ensure_ready()
+        self.assert_door_ready_for_sort()
         target_layer = _clamp_layer(sort_layer)
         target_sensor = LAYER_TO_SENSOR[target_layer]
         passed_layers: list[int] = []
@@ -762,22 +713,15 @@ class DigipathMechanism:
                 f"[Mech] UPLOAD_DONE → proceed sort to layer {target_layer} "
                 f"({self._hall_label(target_sensor)})"
             )
-            if self.open_loop:
-                layer_steps = self.open_loop_layer_steps.get(target_layer, self.open_loop_layer_steps[1])
-                print(
-                    f"[Mech] Open-loop lift {self.lift_to_layer_dir} → layer {target_layer} "
-                    f"({layer_steps} steps) before sort"
-                )
-                self._motor_pause("before lift to layer")
-                self._enable_lift_only(f"open-loop layer {target_layer}")
-                moved = self._move_lift_open_loop(
-                    self.lift_to_layer_dir, layer_steps, f"layer-{target_layer}"
-                )
-                print(f"[Mech] Open-loop lift at layer {target_layer} after {moved} steps")
-                self._motor_pause("after lift at layer")
-            else:
-                self._motor_pause("before lift to layer")
+            # Prefer hall sensors: lift UP or DOWN until the target tray hall fires.
+            use_halls = self._halls is not None
+            self._motor_pause("before lift to layer")
+            if use_halls:
                 self._enable_lift_only(f"hall-guided layer {target_layer}")
+                print(
+                    f"[Mech] Lift UP/DOWN until hall for layer {target_layer} "
+                    f"({self._hall_label(target_sensor)}) then SORT"
+                )
                 if target_layer == 3 and not layer_has_hall(self._halls.pin_map, 3):
                     moved = self._move_lift_to_sort_layer(target_layer, on_sensor=_on_layer_hall)
                     print(f"[Mech] Lift at layer 3 (via layer2 + extra) after {moved} steps")
@@ -789,9 +733,21 @@ class DigipathMechanism:
                         on_sensor=_on_layer_hall,
                     )
                     print(
-                        f"[Mech] Lift at layer {target_layer} after {moved} steps "
-                        f"(passed layers: {passed_layers})"
+                        f"[Mech] At layer {target_layer} after {moved} steps "
+                        f"(passed: {passed_layers}) — starting SORT"
                     )
+                self._motor_pause("after lift at layer")
+            else:
+                layer_steps = self.open_loop_layer_steps.get(target_layer, self.open_loop_layer_steps[1])
+                print(
+                    f"[Mech] No halls — open-loop lift {self.lift_to_layer_dir} → layer {target_layer} "
+                    f"({layer_steps} steps) before sort"
+                )
+                self._enable_lift_only(f"open-loop layer {target_layer}")
+                moved = self._move_lift_open_loop(
+                    self.lift_to_layer_dir, layer_steps, f"layer-{target_layer}"
+                )
+                print(f"[Mech] Open-loop lift at layer {target_layer} after {moved} steps")
                 self._motor_pause("after lift at layer")
 
             with self._lock:

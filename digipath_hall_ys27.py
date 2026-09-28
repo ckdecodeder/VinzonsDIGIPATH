@@ -1,15 +1,15 @@
 """
 YS-27 Hall sensor modules on Raspberry Pi GPIO.
 
-Physical placement (Vinzons — 5 sensors):
+Physical placement (Vinzons — Hall #3 scanner/capture-height REMOVED):
   hall 1 = door            GPIO 5
   hall 2 = main / layer 1  GPIO 6
-  hall 3 = scanner         GPIO 13
   hall 4 = layer 2         GPIO 19
   hall 5 = layer 3         GPIO 12
+  (hall 3 / CAPTURE unused — capture height uses motor step counts)
 
 Logical IDs used by mechanism (LAYER_1 shares hall 2 with MAIN):
-  DOOR=1 MAIN=2 CAPTURE=3 LAYER_1=4 LAYER_2=5 LAYER_3=6
+  DOOR=1 MAIN=2 CAPTURE=3(disabled) LAYER_1=4 LAYER_2=5 LAYER_3=6
 """
 
 from __future__ import annotations
@@ -71,9 +71,9 @@ PHYSICAL_HALL_NO = {
 LIFT_AXIS_RANK = {
     MAIN: 0,
     LAYER_1: 0,
-    CAPTURE: 1,
-    LAYER_2: 2,
-    LAYER_3: 3,
+    # CAPTURE/hall3 removed — ranks: main/L1 top, then layer2, layer3 bottom
+    LAYER_2: 1,
+    LAYER_3: 2,
 }
 
 
@@ -222,18 +222,20 @@ def build_default_bank(simulate: bool = False) -> HallSensorBank:
     main_bcm = _env_int("DIGIPATH_HALL_MAIN_BCM", 6)
     layer1_bcm = _env_int("DIGIPATH_HALL_LAYER1_BCM", main_bcm)
 
+    # Hall #3 (CAPTURE / scanner height) default OFF — use open-loop step capture height.
     pin_map = {
         DOOR: _env_int("DIGIPATH_HALL_DOOR_BCM", 5),
         MAIN: main_bcm,
-        CAPTURE: _env_int("DIGIPATH_HALL_CAPTURE_BCM", 13),
+        CAPTURE: _env_int("DIGIPATH_HALL_CAPTURE_BCM", 0),
         LAYER_1: layer1_bcm,
         LAYER_2: _env_int("DIGIPATH_HALL_LAYER2_BCM", 19),
         LAYER_3: _env_int("DIGIPATH_HALL_LAYER3_BCM", 12),
     }
+    pin_map = {sid: bcm for sid, bcm in pin_map.items() if int(bcm or 0) > 0}
     active_low = _env_bool("DIGIPATH_HALL_ACTIVE_LOW", "1")
     bank = HallSensorBank(pin_map, active_low=active_low, simulate=simulate)
     print(
-        "[Hall] map: #1 door=5  #2 main/layer1=6  #3 scanner=13  "
+        "[Hall] map: #1 door=5  #2 main/layer1=6  #3 scanner=OFF  "
         "#4 layer2=19  #5 layer3=12"
     )
     return bank

@@ -3,7 +3,7 @@ const path = require('path');
 const { generateId } = require('./helpers');
 
 const uploadRoot = path.join(__dirname, '..', 'uploads', 'scans');
-const maxAttachmentsPerDocument = Number(process.env.MAX_ATTACHMENTS_PER_DOCUMENT || 8);
+const maxAttachmentsPerDocument = Number(process.env.MAX_ATTACHMENTS_PER_DOCUMENT || 50);
 const maxAttachmentBytes = Number(process.env.MAX_ATTACHMENT_BYTES || 10 * 1024 * 1024);
 const allowedAttachmentMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const allowedAttachmentExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf']);

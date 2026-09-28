@@ -23,6 +23,7 @@ import {
   Wifi,
   WifiOff,
   RefreshCw,
+  RotateCw,
   XCircle,
 } from "lucide-react";
 import { resolveUploadUrl, isPdfMedia } from "../utils/mediaUrl";
@@ -166,7 +167,7 @@ const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {})
 };
 
 const WS_STREAM_TIMEOUT_MS = 15000;
-const STREAM_STALE_MS = 12000;
+const STREAM_STALE_OVERLAY_MS = 90000;
 const SNAPSHOT_POLL_MS = 3500;
 
 const deviceUsesWsJpegStream = (device) => (
@@ -228,6 +229,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const { device, cameOnline } = useLiveDevice(deviceProp);
   const camera = useRef(null);
   const commandPollRef = useRef(null);
+  const commandPollBusyRef = useRef(false);
+  const appliedScanCommandsRef = useRef(new Set());
   const enrichPollRef = useRef(null);
   const autoFilledRef = useRef({});
   const previewImgRef = useRef(null);
@@ -257,8 +260,43 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [step, setStep] = useState(1);
   const [cameraSource] = useState(PHYSICAL_CAMERA_VALUE);
   const [paperGuideId, setPaperGuideId] = useState('letter-landscape');
-  const captureFrameCount = 3;
-  const [requiredCaptureCount, setRequiredCaptureCount] = useState(5);
+  const [pagesToCaptureInput, setPagesToCaptureInput] = useState('1');
+  const MAX_SCAN_ATTACHMENTS = 50; // keep in sync with backend MAX_ATTACHMENTS_PER_DOCUMENT
+  const requiredCaptureCount = (() => {
+    const parsed = Number(pagesToCaptureInput);
+    if (!Number.isFinite(parsed) || parsed < 1) return 1;
+    return Math.min(MAX_SCAN_ATTACHMENTS, Math.floor(parsed));
+  })();
+  const commitPagesToCapture = () => {
+    const parsed = Number(pagesToCaptureInput);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setPagesToCaptureInput('1');
+      return;
+    }
+    setPagesToCaptureInput(String(Math.min(MAX_SCAN_ATTACHMENTS, Math.floor(parsed))));
+  };
+  const sanitizeCapturedFiles = (files = []) => {
+    const seen = new Set();
+    const out = [];
+    for (const file of files) {
+      if (!file) continue;
+      const key = file.id || file.url || file.previewUrl || file.dataUrl || file.name;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: file.id,
+        name: file.name || 'scan.jpg',
+        type: file.type || 'image/jpeg',
+        size: file.size,
+        url: file.url || file.previewUrl || undefined,
+        dataUrl: file.dataUrl,
+        source: file.source || 'scanner',
+        uploadedAt: file.uploadedAt,
+      });
+      if (out.length >= MAX_SCAN_ATTACHMENTS) break;
+    }
+    return out;
+  };
   const [showPaperGuide, setShowPaperGuide] = useState(false);
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [previewMode, setPreviewMode] = useState('ws');
@@ -276,6 +314,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [progress, setProgress] = useState(0);
   const [isDeviceScanning, setIsDeviceScanning] = useState(false);
   const [deviceScanStatus, setDeviceScanStatus] = useState('');
+  const [isMotorTesting, setIsMotorTesting] = useState(false);
+  const motorTestAbortRef = useRef(false);
+  const [sortStatus, setSortStatus] = useState(null);
+  const sortPollAbortRef = useRef(false);
 
   // Scan results
   const [capturedImage, setCapturedImage] = useState(null);
@@ -734,7 +776,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       const last = lastFrameAtRef.current;
       if (!last) return;
       const age = Date.now() - last;
-      if (age < STREAM_STALE_MS) {
+      // Quiet grace: keep last frame while heartbeat says Online.
+      // Only show the reconnect overlay after a long stall.
+      if (age < STREAM_STALE_OVERLAY_MS) {
         if (streamStaleRef.current) {
           streamStaleRef.current = false;
           setStreamStale(false);
@@ -939,6 +983,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
   const applyPhysicalScanResult = (result, commandId) => {
     if (result.status === 'Executed') {
+      // One command → one gallery image (ignore duplicate poll responses).
+      if (commandId && appliedScanCommandsRef.current.has(commandId)) {
+        return true;
+      }
+      if (commandId) {
+        appliedScanCommandsRef.current.add(commandId);
+      }
+
       const doc = result.resultDocument;
       setHardwareScannedDoc(doc || null);
       if (doc) {
@@ -954,16 +1006,30 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         );
         const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : 'image/jpeg');
         const captureNumber = capturedImagesRef.current.length + 1;
+        if (captureNumber > requiredCaptureCount || captureNumber > MAX_SCAN_ATTACHMENTS) {
+          setIsDeviceScanning(false);
+          return true;
+        }
+        const fileKey = scannedFile?.id || scannedUrl;
+        if (fileKey && capturedImagesRef.current.some((f) => (f.id || f.url || f.previewUrl) === fileKey)) {
+          setIsDeviceScanning(false);
+          if (capturedImagesRef.current.length >= requiredCaptureCount) setStep(2);
+          return true;
+        }
         const captureFile = {
-          ...(scannedFile || {}),
           id: scannedFile?.id || `${commandId || 'capture'}-${captureNumber}`,
           name: scannedFile?.name || `scan-${captureNumber}.jpg`,
           type: scannedType,
+          size: scannedFile?.size,
           url: scannedFile?.url || scannedUrl,
           previewUrl: scannedUrl,
           source: scannedFile?.source || 'camera',
+          uploadedAt: scannedFile?.uploadedAt,
         };
-        capturedImagesRef.current = [...capturedImagesRef.current, captureFile];
+        capturedImagesRef.current = sanitizeCapturedFiles([
+          ...capturedImagesRef.current,
+          captureFile,
+        ]);
         setCapturedImages(capturedImagesRef.current);
         const autoSubject = resolveAutoSubject(doc);
         const autoSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
@@ -1008,7 +1074,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         setDeviceScanStatus(`${requiredCaptureCount} capture${requiredCaptureCount === 1 ? '' : 's'} complete. Review the captured images below.`);
         setStep(2);
       } else {
-        setDeviceScanStatus(`Capture ${capturedImagesRef.current.length} of ${requiredCaptureCount} complete. Press Capture Document again.`);
+        setDeviceScanStatus(
+          `Capture ${capturedImagesRef.current.length} of ${requiredCaptureCount} saved. `
+          + `Move the next page/part under the camera, then press Capture again.`,
+        );
       }
       return true;
     }
@@ -1035,25 +1104,35 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       setDeviceScanStatus('Physical scanner is offline. Wait for the device heartbeat before sending a scan command.');
       return;
     }
+    if (isDeviceScanning) {
+      return;
+    }
+    if (capturedImagesRef.current.length >= requiredCaptureCount) {
+      setDeviceScanStatus(`Already captured ${requiredCaptureCount} page${requiredCaptureCount === 1 ? '' : 's'}. Continue to details or rescan.`);
+      return;
+    }
 
     setIsDeviceScanning(true);
     setDeviceScanStatus('Sending scan command to physical scanner...');
-    setIsSubjectExtracting(false);
-    setEnrichmentHint('');
-    setHardwareScannedDoc(null);
-    setExtractedText('');
-    autoFilledRef.current = {
-      subject: '',
-      senderName: '',
-      scannedText: '',
-      documentTypeId: '',
-      dateReceived: '',
-    };
-    setFormData((prev) => ({
-      ...prev,
-      subject: '',
-      senderName: '',
-    }));
+    // Only reset AI/form helpers on the first page of a multi-page session.
+    if (capturedImagesRef.current.length === 0) {
+      setIsSubjectExtracting(false);
+      setEnrichmentHint('');
+      setHardwareScannedDoc(null);
+      setExtractedText('');
+      autoFilledRef.current = {
+        subject: '',
+        senderName: '',
+        scannedText: '',
+        documentTypeId: '',
+        dateReceived: '',
+      };
+      setFormData((prev) => ({
+        ...prev,
+        subject: '',
+        senderName: '',
+      }));
+    }
 
     try {
       const command = await commandService.sendScan(device.id || 'DEV-001', {
@@ -1067,12 +1146,24 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         paperGuideId: selectedPaperGuide.id,
         scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
         scanHeight: streamDims.height > 0 ? streamDims.height : (deviceStreamResolution?.height || 1080),
-        captureFrameCount,
+        // Always 1 frame per press — multi-page = multiple button presses.
+        captureFrameCount: 1,
       });
-      setDeviceScanStatus('Waiting for the physical scanner to capture and upload the document...');
+      setDeviceScanStatus(
+        requiredCaptureCount > 1
+          ? `Capturing page ${capturedImagesRef.current.length + 1} of ${requiredCaptureCount}...`
+          : 'Waiting for the physical scanner to capture and upload the document...',
+      );
 
+      if (commandPollRef.current) {
+        clearInterval(commandPollRef.current);
+        commandPollRef.current = null;
+      }
+      commandPollBusyRef.current = false;
       let attempts = 0;
       commandPollRef.current = setInterval(async () => {
+        if (commandPollBusyRef.current) return;
+        commandPollBusyRef.current = true;
         attempts += 1;
         try {
           const result = await commandService.checkStatus(command.id);
@@ -1087,11 +1178,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           }
         } catch {
           // Keep polling while the backend or device is busy.
+        } finally {
+          commandPollBusyRef.current = false;
         }
-      }, 2000);
+      }, 500);
     } catch (err) {
       setIsDeviceScanning(false);
-      const isPendingConflict = /pending command/i.test(err.message || '');
+      const isPendingConflict = /pending .*command/i.test(err.message || '');
       setDeviceScanStatus(
         isPendingConflict
           ? 'The scanner is still busy with a previous scan. Cancel it or wait a moment, then try again.'
@@ -1119,6 +1212,102 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     } catch (err) {
       setIsDeviceScanning(false);
       setDeviceScanStatus(toUserFacingError(err.message, 'Unable to cancel scan command.'));
+    }
+  };
+
+  useEffect(() => () => {
+    motorTestAbortRef.current = true;
+    sortPollAbortRef.current = true;
+  }, []);
+
+  const watchSortCommand = async (commandId, sortLayer) => {
+    sortPollAbortRef.current = false;
+    let lastStatus = 'Pending';
+    const deadline = Date.now() + 600000;
+    while (!sortPollAbortRef.current && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      let result;
+      try {
+        result = await commandService.checkStatus(commandId);
+      } catch {
+        continue;
+      }
+      if (sortPollAbortRef.current || !result?.status) continue;
+      if (result.status === 'Executing' && lastStatus !== 'Executing') {
+        setSortStatus({ state: 'running', message: `Sorter is moving the document to tray layer ${sortLayer}...` });
+      }
+      lastStatus = result.status;
+      if (result.status === 'Executed') {
+        setSortStatus({ state: 'done', message: `Document sorted into tray layer ${sortLayer}.` });
+        return;
+      }
+      if (result.status === 'Failed' || result.status === 'Cancelled') {
+        setSortStatus({ state: 'failed', message: `Sorter failed: ${result.errorMessage || result.status}` });
+        return;
+      }
+    }
+    if (!sortPollAbortRef.current) {
+      setSortStatus({
+        state: 'failed',
+        message: lastStatus === 'Executing'
+          ? 'Sorter did not report back in 10 minutes — the lift may still be searching for the tray hall sensor.'
+          : 'The Pi never picked up the sort command. Check the scanner connection.',
+      });
+    }
+  };
+
+  const handleMotorTest = async () => {
+    if (isMotorTesting || isDeviceScanning) return;
+    if (!device?.connected) {
+      setDeviceScanStatus('Scanner is offline. Check Pi power and network, then wait for heartbeat.');
+      return;
+    }
+    motorTestAbortRef.current = false;
+    setIsMotorTesting(true);
+    setDeviceScanStatus('Motor test: lift DOWN → UP, then sort one turn...');
+    try {
+      const command = await commandService.sendMotorTest(device.id || 'DEV-001');
+      if (command?.delivered === false) {
+        setDeviceScanStatus('Motor test queued — Pi live link is down, sending through the backup heartbeat link (up to ~10s)...');
+      }
+      let lastStatus = command?.status || 'Pending';
+      const deadline = Date.now() + 90000;
+      while (!motorTestAbortRef.current && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        let result;
+        try {
+          result = await commandService.checkStatus(command.id);
+        } catch {
+          continue;
+        }
+        if (result?.status) lastStatus = result.status;
+        if (result?.status === 'Executing') {
+          setDeviceScanStatus('Pi received the motor test — motors should be moving now...');
+        }
+        if (result?.status === 'Executed') {
+          setDeviceScanStatus('Motor test done — check that both motors actually moved.');
+          return;
+        }
+        if (result?.status === 'Failed' || result?.status === 'Cancelled') {
+          setDeviceScanStatus(`Motor test failed: ${result.errorMessage || result.status}`);
+          return;
+        }
+      }
+      if (!motorTestAbortRef.current) {
+        setDeviceScanStatus(
+          lastStatus === 'Executing'
+            ? 'Pi started the motor test but never reported back. Check Motor diagnostics below for the last test result.'
+            : 'The Pi never picked up the motor test (still Pending). Its live link is down or it runs old code — replug the USB into the Pi, restart the backend, then try again.',
+        );
+      }
+    } catch (err) {
+      setDeviceScanStatus(
+        /pending .*command/i.test(err.message || '')
+          ? `${err.message} Press Cancel Scan to clear it, then test again.`
+          : toUserFacingError(err.message, 'Unable to send motor test command.'),
+      );
+    } finally {
+      if (!motorTestAbortRef.current) setIsMotorTesting(false);
     }
   };
 
@@ -1154,8 +1343,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         const scanOfficeId = hardwareScannedDoc.currentOfficeId
           || hardwareScannedDoc.originOfficeId
           || receptionOfficeId;
+        const filesToSave = sanitizeCapturedFiles(capturedImages);
         await onEditDocument?.({
-          ...hardwareScannedDoc,
+          id: hardwareScannedDoc.id,
           subject: formData.subject,
           documentDirection: 'Incoming',
           documentTypeId: formData.documentTypeId,
@@ -1165,7 +1355,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           dateReceived: formData.dateReceived,
           originOfficeId: receptionOfficeId || scanOfficeId,
           originOfficeOther: formData.originOfficeOther.trim(),
-          currentOfficeId: mayorsOfficeId,
           destinationOfficeId: mayorsOfficeId,
           senderName: formData.senderName,
           senderContact: formData.senderContact,
@@ -1175,9 +1364,36 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           senderNotificationChannels: formData.senderContact ? ['sms'] : [],
           remarks: formData.remarks,
           scannedText: extractedText,
-          scannedFiles: capturedImages,
+          scannedFiles: filesToSave,
+          scannedImageUrl: filesToSave[0]?.url
+            || filesToSave[0]?.previewUrl
+            || hardwareScannedDoc.scannedImageUrl,
           intakeStatus: 'Approved',
         });
+        // Motors run only after Confirm & Register (not on Capture).
+        if (device?.connected) {
+          const sortLayer = resolveSortLayer(formData.documentTypeId);
+          try {
+            setDeviceScanStatus('Document registered — starting sorter motors...');
+            setSortStatus({ state: 'running', message: `Sending sort command (tray layer ${sortLayer})...` });
+            const sortCommand = await commandService.sendSort(device.id || 'DEV-001', {
+              documentId: hardwareScannedDoc.id,
+              documentTypeId: formData.documentTypeId,
+              sortLayer,
+            });
+            setDeviceScanStatus('Sort command sent to physical scanner.');
+            watchSortCommand(sortCommand.id, sortLayer);
+          } catch (sortErr) {
+            const message = toUserFacingError(
+              sortErr?.message,
+              'Document saved, but sorter command failed. Check Pi connection.',
+            );
+            setDeviceScanStatus(message);
+            setSortStatus({ state: 'failed', message });
+          }
+        } else if (isPhysicalSource) {
+          setSortStatus({ state: 'failed', message: 'Scanner is offline — the document was saved but not sorted.' });
+        }
         setStep(4);
         return;
       }
@@ -1203,7 +1419,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         remarks: formData.remarks,
         scannedText: extractedText,
           scannedImageUrl: capturedImages[0]?.url || capturedImage,
-          scannedFiles: capturedImages,
+          scannedFiles: sanitizeCapturedFiles(capturedImages),
         intakeStatus: 'Approved',
       };
 
@@ -1228,6 +1444,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       clearInterval(enrichPollRef.current);
       enrichPollRef.current = null;
     }
+    if (commandPollRef.current) {
+      clearInterval(commandPollRef.current);
+      commandPollRef.current = null;
+    }
+    commandPollBusyRef.current = false;
+    appliedScanCommandsRef.current = new Set();
+    setIsDeviceScanning(false);
     setIsSubjectExtracting(false);
     setEnrichmentHint('');
     setDeviceScanStatus('');
@@ -1243,10 +1466,18 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   };
 
   const handleReset = () => {
+    sortPollAbortRef.current = true;
+    setSortStatus(null);
     if (enrichPollRef.current) {
       clearInterval(enrichPollRef.current);
       enrichPollRef.current = null;
     }
+    if (commandPollRef.current) {
+      clearInterval(commandPollRef.current);
+      commandPollRef.current = null;
+    }
+    commandPollBusyRef.current = false;
+    appliedScanCommandsRef.current = new Set();
     autoFilledRef.current = {};
     setIsSubjectExtracting(false);
     setEnrichmentHint('');
@@ -1360,10 +1591,30 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     id="required-capture-count"
                     className="form-input"
                     type="number"
-                    min="1"
-                    max="100"
-                    value={requiredCaptureCount}
-                    onChange={(e) => setRequiredCaptureCount(Math.min(100, Math.max(1, Number(e.target.value) || 1)))}
+                    min="0"
+                    max={MAX_SCAN_ATTACHMENTS}
+                    inputMode="numeric"
+                    value={pagesToCaptureInput}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setPagesToCaptureInput('');
+                        return;
+                      }
+                      if (!/^\d{1,3}$/.test(raw)) return;
+                      const next = Number(raw);
+                      if (next > MAX_SCAN_ATTACHMENTS) {
+                        setPagesToCaptureInput(String(MAX_SCAN_ATTACHMENTS));
+                        return;
+                      }
+                      setPagesToCaptureInput(raw);
+                    }}
+                    onBlur={commitPagesToCapture}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
                     disabled={isDeviceScanning || isExtracting || capturedImages.length > 0}
                   />
                 </div>
@@ -1462,7 +1713,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               {isPhysicalSource && previewReady && streamStale && (
                 <div className="scanner-preview-overlay scanner-preview-overlay--reconnect">
                   <Loader2 size={28} className="animate-spin" />
-                  <span>Reconnecting stream...</span>
+                  <span>
+                    {(device?.connected || device?.streamWsConnected)
+                      ? 'Refreshing stream…'
+                      : 'Reconnecting stream...'}
+                  </span>
                 </div>
               )}
 
@@ -1515,9 +1770,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               </div>
 
               <ul className="scanner-scan-tips">
-                <li>Use the paper guide to match document size</li>
-                <li>Close the door to auto-move to capture position</li>
-                <li>Capture uploads the scan and triggers sorting</li>
+                <li>Align the document in the live preview, then press Capture</li>
+                <li>Capture saves the photo only — motors stay idle</li>
+                <li>After Confirm &amp; Register, the sorter moves to the tray (close the door first)</li>
               </ul>
 
               <div className="scanner-scan-actions">
@@ -1536,9 +1791,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
                   {isExtracting
                     ? 'Processing...'
-                    : `Capture ${Math.min(capturedImages.length + 1, requiredCaptureCount)} of ${requiredCaptureCount}`}
+                    : requiredCaptureCount <= 1
+                      ? 'Capture Document'
+                      : `Capture ${Math.min(capturedImages.length + 1, requiredCaptureCount)} of ${requiredCaptureCount}`}
                 </button>
-                {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
+                {(isDeviceScanning || /pending .*command|still busy/i.test(deviceScanStatus || '')) && (
                   <button
                     onClick={handleCancelPhysicalScan}
                     disabled={isExtracting}
@@ -1546,6 +1803,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   >
                     <XCircle size={18} />
                     Cancel Scan
+                  </button>
+                )}
+                {isPhysicalSource && (
+                  <button
+                    onClick={handleMotorTest}
+                    disabled={isMotorTesting || isDeviceScanning || isExtracting}
+                    className="btn btn-secondary scanner-capture-btn--block"
+                  >
+                    {isMotorTesting ? <Loader2 size={18} className="animate-spin" /> : <RotateCw size={18} />}
+                    {isMotorTesting ? 'Testing Motors...' : 'Test Motors'}
                   </button>
                 )}
               </div>
@@ -1556,6 +1823,101 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   <span>{deviceScanStatus}</span>
                 </div>
               )}
+
+              {isPhysicalSource && device && (() => {
+                const mech = device.payload?.mechanism;
+                const piVersion = device.payload?.piCodeVersion;
+                const test = mech?.lastTest || {};
+                const hallsAfter = test.hallsAfter && Object.keys(test.hallsAfter).length
+                  ? test.hallsAfter
+                  : test.hallsBefore || {};
+                let hint = '';
+                if (!piVersion) {
+                  hint = 'Pi is running old code. Plug the USB (VinzonsDIGIPATH-Pi) into the Pi to auto-update, then wait ~1 min.';
+                } else if (!mech?.enabled) {
+                  hint = 'Motors disabled on the Pi. Set DIGIPATH_MECH_ENABLED=1 in raspberry_pi/.env.';
+                } else if (mech.initError) {
+                  hint = 'GPIO could not start the motor drivers — check that gpiozero/lgpio is installed on the Pi.';
+                } else if (mech.pinFactory && !/^(LGPIO|RPiGPIO|PiGPIO)Factory$/.test(mech.pinFactory) && mech.pinFactory !== 'simulate') {
+                  hint = `GPIO library "${mech.pinFactory}" cannot drive real pins on this Pi — install python3-lgpio (sudo apt install python3-lgpio) so the motor pulses reach the TB6600.`;
+                } else if (/Raspberry Pi 5/i.test(mech.piModel || '') && mech.pinFactory && mech.pinFactory !== 'LGPIOFactory') {
+                  hint = `Raspberry Pi 5 needs lgpio, but "${mech.pinFactory}" is in use — install python3-lgpio.`;
+                } else if (test.ok) {
+                  hint = mech.signalMode === 'sink'
+                    ? 'Pulses were sent. If motors did not move: check motor coil pairs (A+/A−, B+/B−), 9–40V motor power, and TB6600 current DIP switches.'
+                    : 'Pulses were sent. If motors did not move: 3.3V GPIO may be too weak for the TB6600 — rewire PUL+/DIR+/ENA+ to 5V, PUL−/DIR−/ENA− to the GPIOs, and set DIGIPATH_TB6600_SIGNAL_SINK=1.';
+                }
+                return (
+                  <div className="scanner-motor-diag">
+                    <div className="scanner-motor-diag__title">Motor diagnostics</div>
+                    <dl>
+                      <dt>Pi code</dt>
+                      <dd>{piVersion || 'old (no version reported)'}</dd>
+                      <dt>Live link</dt>
+                      <dd className={device.payload?.websocketConnected ? 'scanner-motor-diag__ok' : 'scanner-motor-diag__bad'}>
+                        {device.payload?.websocketConnected ? 'WebSocket connected' : 'WebSocket down (HTTP backup only)'}
+                      </dd>
+                      {device.payload?.wsLastIssue && (
+                        <>
+                          <dt>Link issue</dt>
+                          <dd>{device.payload.wsLastIssue}</dd>
+                        </>
+                      )}
+                      <dt>Motors</dt>
+                      <dd>
+                        {!mech ? 'no data'
+                          : !mech.enabled ? 'disabled'
+                            : mech.initError ? 'init failed'
+                              : mech.motorsReady === false ? 'not ready' : 'ready'}
+                        {mech?.signalMode ? ` · ${mech.signalMode} wiring` : ''}
+                      </dd>
+                      {(mech?.pinFactory || mech?.piModel) && (
+                        <>
+                          <dt>GPIO</dt>
+                          <dd>{[mech.pinFactory, mech.piModel].filter(Boolean).join(' · ')}</dd>
+                        </>
+                      )}
+                      {mech?.initError && (
+                        <>
+                          <dt>Error</dt>
+                          <dd className="scanner-motor-diag__bad">{mech.initError}</dd>
+                        </>
+                      )}
+                      <dt>Last test</dt>
+                      <dd className={test.at ? (test.ok ? 'scanner-motor-diag__ok' : 'scanner-motor-diag__bad') : ''}>
+                        {test.at
+                          ? `${test.ok ? 'OK' : 'FAILED'} · ${String(test.at).replace('T', ' ')}`
+                          : 'not run yet'}
+                      </dd>
+                      {test.message && (
+                        <>
+                          <dt>Result</dt>
+                          <dd>{test.message}</dd>
+                        </>
+                      )}
+                      {test.at && test.ok && (
+                        <>
+                          <dt>Pulses</dt>
+                          <dd>
+                            lift {test.liftMoved ?? 0} · sort {test.sortMoved ?? 0} @ {test.stepDelayUs}µs
+                          </dd>
+                        </>
+                      )}
+                      {Object.keys(hallsAfter).length > 0 && (
+                        <>
+                          <dt>Halls</dt>
+                          <dd>
+                            {Object.entries(hallsAfter)
+                              .map(([name, on]) => `${name}: ${on ? 'magnet' : '—'}`)
+                              .join(' · ')}
+                          </dd>
+                        </>
+                      )}
+                    </dl>
+                    {hint && <p className="scanner-motor-diag__hint">{hint}</p>}
+                  </div>
+                );
+              })()}
             </aside>
           </div>
         </div>
@@ -1874,6 +2236,15 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
             The scan was saved and forwarded to the Mayor's Office (FIFO queue).
           </p>
+
+          {sortStatus && (
+            <div className={`scanner-sort-status scanner-sort-status--${sortStatus.state}`}>
+              {sortStatus.state === 'running' && <Loader2 size={16} className="animate-spin" />}
+              {sortStatus.state === 'done' && <CheckCircle2 size={16} />}
+              {sortStatus.state === 'failed' && <AlertCircle size={16} />}
+              <span>{sortStatus.message}</span>
+            </div>
+          )}
 
           <div style={{
             padding: '1rem', background: 'var(--bg-elevated)',
