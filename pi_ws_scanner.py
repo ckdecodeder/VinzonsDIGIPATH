@@ -35,7 +35,7 @@ from digipath_mechanism import (
     resolve_sort_layer,
 )
 
-PI_CODE_VERSION = "2026-09-28-ws-stream-fix"
+PI_CODE_VERSION = "2026-09-29-door-direct-l1"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -115,6 +115,9 @@ AUTO_CROP_REQUIRE_BRIGHT = os.environ.get("DIGIPATH_AUTO_CROP_REQUIRE_BRIGHT", "
 # Soft preference — hard-reject only when paper is darker than background.
 AUTO_CROP_MIN_CONTRAST = max(0.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_CONTRAST", "8")))
 AUTO_CROP_MIN_SCORE = max(0.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_SCORE", "2.2")))
+# HSV gates (0-255): paper must be low-saturation (white/gray) and reasonably bright.
+AUTO_CROP_MAX_SATURATION = max(10.0, min(255.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MAX_SATURATION", "70"))))
+AUTO_CROP_MIN_PAPER_VALUE = max(0.0, min(255.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_PAPER_VALUE", "160"))))
 AUTO_CROP_SIZE_LOCK = os.environ.get("DIGIPATH_AUTO_CROP_SIZE_LOCK", "1").strip().lower() not in (
     "0",
     "false",
@@ -832,6 +835,20 @@ def _paper_brightness_score(gray_small, quad) -> float:
     return max(1.0, score)
 
 
+def _paper_color_ok(hsv_small, quad) -> bool:
+    """Paper is bright and nearly colorless; wood, boards and desks are not."""
+    if hsv_small is None:
+        return True
+    mask = np.zeros(hsv_small.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(mask, np.round(quad).astype(np.int32), 255)
+    inside = hsv_small[mask > 0]
+    if inside.size < 80:
+        return False
+    mean_sat = float(np.mean(inside[:, 1]))
+    mean_val = float(np.mean(inside[:, 2]))
+    return mean_sat <= AUTO_CROP_MAX_SATURATION and mean_val >= AUTO_CROP_MIN_PAPER_VALUE
+
+
 def _paper_center_score(quad, width: int, height: int) -> float:
     center = quad.mean(axis=0)
     dx = abs((center[0] / max(1.0, width)) - 0.5)
@@ -860,7 +877,7 @@ def _collect_edge_maps(gray):
     return maps
 
 
-def _detect_paper_quad_simple(gray, image_area: float, scale: float):
+def _detect_paper_quad_simple(gray, image_area: float, scale: float, hsv=None):
     """Reliable fallback — largest convex 4-gon that still looks like paper."""
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blurred, 45, 150)
@@ -893,6 +910,8 @@ def _detect_paper_quad_simple(gray, image_area: float, scale: float):
             if not aspect_ok:
                 continue
             if _paper_brightness_score(gray, ordered) <= 0:
+                continue
+            if not _paper_color_ok(hsv, ordered):
                 continue
             if area > best_area:
                 best = ordered
@@ -933,6 +952,7 @@ def _detect_paper_quad(frame):
     scale = min(1.0, 960.0 / max(height, width))
     small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else frame
     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     image_area = float(small.shape[0] * small.shape[1])
     sh, sw = gray.shape[:2]
 
@@ -954,6 +974,8 @@ def _detect_paper_quad(frame):
             brightness = _paper_brightness_score(gray, candidate["quad"])
             if brightness <= 0:
                 continue
+            if not _paper_color_ok(hsv, candidate["quad"]):
+                continue
             center = _paper_center_score(candidate["quad"], sw, sh)
             aspect_bonus = 1.0 - min(abs(candidate["aspect"] - 0.77), abs(candidate["aspect"] - 1.29)) * 0.35
             score = (
@@ -968,7 +990,7 @@ def _detect_paper_quad(frame):
                 best = candidate["quad"]
 
     if best is None or best_score < AUTO_CROP_MIN_SCORE:
-        simple = _detect_paper_quad_simple(gray, image_area, scale)
+        simple = _detect_paper_quad_simple(gray, image_area, scale, hsv)
         if simple is None or not _is_plausible_paper_quad(simple, frame.shape):
             return None
         # Re-check brightness on full-res-ish gray for the simple path too

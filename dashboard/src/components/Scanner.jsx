@@ -1770,9 +1770,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               </div>
 
               <ul className="scanner-scan-tips">
+                <li>Close the door — the lift drops to layer 2 for capture</li>
                 <li>Align the document in the live preview, then press Capture</li>
-                <li>Capture saves the photo only — motors stay idle</li>
-                <li>After Confirm &amp; Register, the sorter moves to the tray</li>
+                <li>After Confirm &amp; Register, the lift goes to the tray layer, sorts, then returns to layer 2</li>
+                <li>Open the door when done — the lift goes back up to layer 1</li>
               </ul>
 
               <div className="scanner-scan-actions">
@@ -1871,6 +1872,23 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                               : mech.motorsReady === false ? 'not ready' : 'ready'}
                         {mech?.signalMode ? ` · ${mech.signalMode} wiring` : ''}
                       </dd>
+                      {mech?.doorMode && (
+                        <>
+                          <dt>Door</dt>
+                          <dd className={mech.doorDetected ? 'scanner-motor-diag__ok' : ''}>
+                            {mech.doorDetected ? 'detected (lift → layer 2)' : 'not detected (lift → layer 1)'}
+                          </dd>
+                        </>
+                      )}
+                      {mech?.liftAt && (
+                        <>
+                          <dt>Lift</dt>
+                          <dd>
+                            {mech.liftAt}
+                            {mech.phase && mech.phase !== 'idle' ? ` · ${mech.phase.replace(/_/g, ' ')}` : ''}
+                          </dd>
+                        </>
+                      )}
                       {(mech?.pinFactory || mech?.piModel) && (
                         <>
                           <dt>GPIO</dt>
