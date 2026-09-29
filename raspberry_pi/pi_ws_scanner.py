@@ -35,7 +35,7 @@ from digipath_mechanism import (
     resolve_sort_layer,
 )
 
-PI_CODE_VERSION = "2026-09-29-door-direct-l1"
+PI_CODE_VERSION = "2026-09-30-lift-hold"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")

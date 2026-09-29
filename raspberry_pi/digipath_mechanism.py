@@ -152,6 +152,8 @@ class DigipathMechanism:
         self.door_debounce_secs = max(0.0, float(os.environ.get("DIGIPATH_DOOR_DEBOUNCE_SECS", "0.3")))
         self.door_release_secs = max(0.2, float(os.environ.get("DIGIPATH_DOOR_RELEASE_SECS", "2")))
         self.door_retry_secs = 15.0
+        # Keep the lift driver energised between moves so the load cannot slide down the axis.
+        self.lift_hold = _env_bool("DIGIPATH_LIFT_HOLD", "1")
         self.home_on_start = _env_bool("DIGIPATH_MECH_HOME_ON_START", "0")
         # Power-on jog: lift DOWN then UP (same steps), sort one direction.
         self.startup_test = _env_bool("DIGIPATH_MECH_STARTUP_TEST", "1")
@@ -316,6 +318,9 @@ class DigipathMechanism:
             )
             if self._halls:
                 print(f"[Mech] Hall snapshot at start: {self._halls.read_all_labeled()}")
+        if self.lift_hold:
+            self._lift.set_enabled(True)
+            print("[Mech] Lift HOLD on — lift motor stays locked between moves")
 
     def close(self):
         self._stop.set()
@@ -454,6 +459,11 @@ class DigipathMechanism:
         )
         return direction
 
+    def _release_lift(self):
+        """Turn the lift driver off after a move, unless it must hold the load in place."""
+        if self._lift and not self.lift_hold:
+            self._lift.set_enabled(False)
+
     def _enable_lift_only(self, reason: str):
         print(f"[Mech] NEMA LIFT ENA=ON ({reason})")
         self._lift.set_enabled(True)
@@ -462,7 +472,7 @@ class DigipathMechanism:
     def _enable_sort_only(self, reason: str):
         print(f"[Mech] NEMA SORT ENA=ON ({reason})")
         self._sort.set_enabled(True)
-        self._lift.set_enabled(False)
+        self._release_lift()
 
     def _move_lift_open_loop(self, direction: str, steps: int, label: str) -> int:
         count = max(0, int(steps))
@@ -745,7 +755,7 @@ class DigipathMechanism:
                     )
                     result["liftMoved"] = moved
                     print(f"[Mech] Test lift DOWN+UP pulses {moved}/{lift_steps * 2}")
-                    self._lift.set_enabled(False)
+                    self._release_lift()
                     time.sleep(pause)
 
                 if sort_steps > 0:
@@ -787,7 +797,7 @@ class DigipathMechanism:
             result["at"] = datetime.now().isoformat(timespec="seconds")
             self.last_test = result
             if self._lift:
-                self._lift.set_enabled(False)
+                self._release_lift()
             if self._sort:
                 self._sort.set_enabled(False)
 
@@ -853,7 +863,7 @@ class DigipathMechanism:
             raise
         finally:
             if self._lift:
-                self._lift.set_enabled(False)
+                self._release_lift()
 
     def go_to_capture(self):
         """Move to capture height via step counts — Hall #3 scanner sensor removed."""
@@ -886,7 +896,7 @@ class DigipathMechanism:
                 raise
             finally:
                 if self._lift:
-                    self._lift.set_enabled(False)
+                    self._release_lift()
 
         with self._lock:
             self._status.phase = "to_main"
@@ -912,7 +922,7 @@ class DigipathMechanism:
             raise
         finally:
             if self._lift:
-                self._lift.set_enabled(False)
+                self._release_lift()
 
     def on_door_closed(self):
         """Hall #1 closed edge — status only. Motors run on Confirm & Register / SORT."""
@@ -955,7 +965,7 @@ class DigipathMechanism:
                 self._enable_lift_only(f"capture down #{i}/{downs}")
                 moved = self._move_lift_open_loop("down", steps, f"capture-down-{i}")
                 print(f"[Mech] DOWN #{i}/{downs} done ({moved} steps)")
-                self._lift.set_enabled(False)
+                self._release_lift()
                 if i < downs and self.motor_settle_secs > 0:
                     self._motor_pause(f"wait after down #{i}")
 
@@ -972,7 +982,7 @@ class DigipathMechanism:
             raise
         finally:
             if self._lift:
-                self._lift.set_enabled(False)
+                self._release_lift()
 
     def run_post_upload_sort(self, sort_layer: int):
         """After upload: SORT rotate then lift UP (open-loop), or hall-guided if sensors on."""
@@ -1016,7 +1026,7 @@ class DigipathMechanism:
             if self._sort:
                 self._sort.set_enabled(False)
             if self._lift:
-                self._lift.set_enabled(False)
+                self._release_lift()
 
     def sort_and_return(self, sort_layer: int):
         with self._motion_lock:
@@ -1123,7 +1133,7 @@ class DigipathMechanism:
             if self._sort:
                 self._sort.set_enabled(False)
             if self._lift:
-                self._lift.set_enabled(False)
+                self._release_lift()
 
     def _move_idle(self, target_sensor: int, *, reason: str, pause_first: bool = True) -> int:
         """Park the lift at layer 2 (capture) or layer 1/main. Caller holds the motion lock."""
@@ -1162,7 +1172,7 @@ class DigipathMechanism:
             raise
         finally:
             if self._lift:
-                self._lift.set_enabled(False)
+                self._release_lift()
 
     def _reconcile_door_position(self, door_detected: bool):
         """Follow the door: detected → layer 2, released → layer 1. Never preempts a running motion."""
