@@ -69,6 +69,7 @@ class RealtimeHub {
     this.streamRelayPending = new Map();
     this.streamRelayStats = new Map();
     this.streamConsumerStats = new Map();
+    this.streamReceiveStats = new Map();
     this.streamHintAt = new Map();
   }
 
@@ -338,6 +339,8 @@ class RealtimeHub {
       if (isBinary) {
         if (!ws.auth?.deviceId) return;
         this.relayStreamFrame(ws.auth.deviceId, data);
+        // The device keeps at most a couple of frames in flight, so frames never queue up in the tunnel.
+        sendJson(ws, { type: 'stream:ack' });
         return;
       }
 
@@ -495,12 +498,21 @@ class RealtimeHub {
     const clients = this.deviceClients.get(deviceId);
     if (!clients?.size) return;
 
+    // Frames per second that actually arrived from the device since the last hint.
+    let receiveFps = 0;
+    const received = this.streamReceiveStats.get(deviceId);
+    if (received && now - received.since >= 1000) {
+      receiveFps = Math.round((received.frames * 10000) / (now - received.since)) / 10;
+      this.streamReceiveStats.set(deviceId, { frames: 0, since: now });
+    }
+
     this.streamHintAt.set(deviceId, now);
     const payload = {
       type: 'stream:hint',
       pressure: Math.max(0, Math.min(1, pressure)),
       skipRate: Math.max(0, Math.min(1, skipRate)),
       consumerFps,
+      receiveFps,
       subscribers,
     };
     for (const client of clients) {
@@ -512,6 +524,9 @@ class RealtimeHub {
     const buf = Buffer.isBuffer(frameBuffer) ? frameBuffer : Buffer.from(frameBuffer);
     const now = Date.now();
     this.latestStreamFrames.set(deviceId, { frame: buf, at: now });
+    const received = this.streamReceiveStats.get(deviceId) || { frames: 0, since: now };
+    received.frames += 1;
+    this.streamReceiveStats.set(deviceId, received);
 
     let state = this.streamRelayPending.get(deviceId);
     if (!state) {

@@ -1116,7 +1116,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             file.dataUrl,
           ]).filter(Boolean),
         );
-        const scannedFile = doc.scannedFiles?.find((file) => (
+        const scanPageCandidates = (doc.scannedFiles || []).flatMap((file) => (
+          Array.isArray(file?.pages) ? file.pages : [file]
+        ));
+        const scannedFile = scanPageCandidates.find((file) => (
           !isPdfMedia(file?.url, file?.type)
           && !existingCaptureKeys.has(file?.id || file?.url || file?.dataUrl)
         ));

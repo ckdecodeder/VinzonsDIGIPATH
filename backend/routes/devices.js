@@ -19,7 +19,14 @@ const {
   getUserOfficeId,
 } = require('../utils/helpers');
 const { queueSenderNotifications } = require('../utils/senderNotifications');
-const { maxAttachmentsPerDocument, persistAttachments } = require('../utils/attachments');
+const {
+  maxAttachmentsPerDocument,
+  persistAttachments,
+  buildScanPdfAttachment,
+  getScannerPages,
+  isScannerPdf,
+  removeOrphanedAttachments,
+} = require('../utils/attachments');
 const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
 const {
   getDeviceSnapshot,
@@ -172,13 +179,11 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   if (!attachmentSource?.dataUrl && !attachmentSource?.url) {
     return res.status(400).json({ message: 'A scanned page image is required.' });
   }
-  if (
-    existingDocument
-    && (existingDocument.scannedFiles?.length || 0) >= maxAttachmentsPerDocument
-  ) {
+  const existingScanPages = getScannerPages(existingDocument?.scannedFiles || []);
+  if (existingDocument && existingScanPages.length >= maxAttachmentsPerDocument) {
     return res.status(400).json({ message: `A document can have at most ${maxAttachmentsPerDocument} scanned pages.` });
   }
-  const scannedFiles = attachmentSource
+  const newScanPages = attachmentSource
     ? await persistAttachments(req, [{
         id: attachmentSource.id || (command?.id ? `SCANPAGE_${command.id}` : undefined),
         name: attachmentSource.name || `${deviceId}-scan.jpg`,
@@ -191,6 +196,24 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       }])
     : [];
 
+  const trackingNumber = existingDocument?.trackingNumber || req.body.trackingNumber || generateTrackingNumber();
+  const existingPageIds = new Set(existingScanPages.map((page) => page.id).filter(Boolean));
+  const scanPages = [
+    ...existingScanPages,
+    ...newScanPages.filter((page) => !page.id || !existingPageIds.has(page.id)),
+  ];
+  const previousScanFiles = (existingDocument?.scannedFiles || []).filter((file) => (
+    isScannerPdf(file) || getScannerPages([file]).length
+  ));
+  const otherFiles = (existingDocument?.scannedFiles || []).filter((file) => !previousScanFiles.includes(file));
+  let scanPdf = null;
+  try {
+    scanPdf = await buildScanPdfAttachment(req, scanPages, { baseName: trackingNumber, uploadedAt: now });
+  } catch (err) {
+    console.warn(`Unable to build scan PDF for ${trackingNumber}:`, err.message);
+  }
+  const scannedFiles = scanPdf ? [scanPdf, ...otherFiles] : [...otherFiles, ...scanPages];
+
   const subject = req.body.extractedTitle?.trim()
     || (typeof req.body.subject === 'string' ? req.body.subject.trim() : '')
     || 'Scanned Document';
@@ -200,18 +223,15 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
     : 'Received';
   let doc = existingDocument;
   if (doc) {
-    const existingAttachmentIds = new Set((doc.scannedFiles || []).map((file) => file.id));
-    doc.scannedFiles = [
-      ...(doc.scannedFiles || []),
-      ...scannedFiles.filter((file) => !existingAttachmentIds.has(file.id)),
-    ];
-    doc.scannedImageUrl = doc.scannedFiles[0]?.url || doc.scannedFiles[0]?.dataUrl || '';
+    doc.scannedFiles = scannedFiles;
+    doc.scannedImageUrl = scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || '';
     doc.updatedAt = now;
     await doc.save();
+    if (scanPdf) await removeOrphanedAttachments(previousScanFiles, scannedFiles);
   } else {
     doc = new Document({
       id: req.body.documentId || generateId('DOC'),
-      trackingNumber: req.body.trackingNumber || generateTrackingNumber(),
+      trackingNumber,
       subject,
       documentDirection: req.body.documentDirection || 'Incoming',
       status: registrationStatus,

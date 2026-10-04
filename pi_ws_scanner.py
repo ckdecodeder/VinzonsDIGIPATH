@@ -37,7 +37,7 @@ from digipath_mechanism import (
     resolve_sort_layer,
 )
 
-PI_CODE_VERSION = "2026-10-04-camera-light-set-query"
+PI_CODE_VERSION = "2026-10-04-fixed-camera-fps"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -85,6 +85,16 @@ STREAM_ADAPTIVE_MAX_FPS = min(
     max(STREAM_ADAPTIVE_MIN_FPS, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MAX_FPS", str(WS_MAX_FPS)))),
 )
 STREAM_ADAPTIVE_TICK_SECS = max(1.5, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_TICK_SECS", "3")))
+# Live-stream JPEG widths, largest first. A slow link drops to a smaller width so fps stays up;
+# only the streamed copy shrinks (camera, auto-crop and scan capture keep full resolution).
+STREAM_SEND_WIDTHS = sorted(
+    {
+        int(width)
+        for width in os.environ.get("DIGIPATH_STREAM_SEND_WIDTHS", "1280,960,768,640").split(",")
+        if width.strip().isdigit() and int(width) >= 320
+    },
+    reverse=True,
+) or [1280]
 STREAM_SEND_INTERVAL = (1.0 / WS_MAX_FPS) if WS_MAX_FPS > 0 else 0.05
 STREAM_BUFFER_FRAMES = max(1, int(os.environ.get("DIGIPATH_STREAM_BUFFER_FRAMES", "1")))
 STREAM_DRIVER_DRAIN = max(1, int(os.environ.get("DIGIPATH_STREAM_DRIVER_DRAIN", "3")))
@@ -188,6 +198,14 @@ CAMERA_AUTO_EXPOSURE = os.environ.get("DIGIPATH_CAMERA_AUTO_EXPOSURE", "1").stri
     "no",
     "off",
 )
+# 1 lets the webcam stretch exposure in a dim box by dropping its own frame rate (~5 fps);
+# 0 keeps the requested fps and compensates with gain instead.
+CAMERA_EXPOSURE_PRIORITY = 1 if os.environ.get("DIGIPATH_CAMERA_EXPOSURE_PRIORITY", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+) else 0
 CAMERA_AUTO_WB = os.environ.get("DIGIPATH_CAMERA_AUTO_WB", "1").strip().lower() not in (
     "0",
     "false",
@@ -214,6 +232,23 @@ CAPTURE_INSTANT = os.environ.get("DIGIPATH_CAPTURE_INSTANT", "1").strip().lower(
     "no",
     "off",
 )
+# Hi-res document capture: briefly switch the camera to a still resolution, crop with the
+# live green box, then return to the stream size. Falls back to the instant path on failure.
+SCAN_HIRES = os.environ.get("DIGIPATH_SCAN_HIRES", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+SCAN_HIRES_SIZES = [
+    tuple(int(part) for part in size.lower().split("x"))
+    for size in os.environ.get("DIGIPATH_SCAN_HIRES_SIZES", "2560x1440,1920x1080").split(",")
+    if re.fullmatch(r"\s*\d+x\d+\s*", size.lower())
+]
+SCAN_HIRES_SETTLE_SECS = max(0.0, float(os.environ.get("DIGIPATH_SCAN_HIRES_SETTLE_SECS", "0.5")))
+SCAN_HIRES_BURST_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_HIRES_BURST_FRAMES", "2")))
+# The live stream is paused while the scan uploads, so a smaller JPEG means a shorter freeze.
+SCAN_HIRES_JPEG_QUALITY = max(75, min(100, int(os.environ.get("DIGIPATH_SCAN_HIRES_JPEG_QUALITY", "88"))))
 GROQ_API_KEY = os.environ.get("DIGIPATH_GROQ_API_KEY", "").strip()
 GROQ_API_URL = os.environ.get(
     "DIGIPATH_GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions"
@@ -263,6 +298,20 @@ _last_encoded_version = -1
 _ws_frame_slot: bytes | None = None
 _ws_frame_slot_lock = threading.Lock()
 _ws_frame_send_event = threading.Event()
+# Frames sent but not yet acknowledged by the backend (send times). Capping this keeps the
+# live feed current on a slow/jittery tunnel instead of letting stale frames pile up.
+STREAM_MAX_IN_FLIGHT = max(1, int(os.environ.get("DIGIPATH_STREAM_MAX_IN_FLIGHT", "2")))
+_ws_inflight: deque = deque()
+_ws_inflight_lock = threading.Lock()
+_ws_ack_supported = False
+_ws_ack_rtt_ms = 0.0
+# Per-stage stream counters, reported as rates in the heartbeat to find where fps is lost.
+_stream_stats = {
+    "camera": 0, "readMs": 0.0, "prepMs": 0.0, "encoded": 0, "encodeMs": 0.0,
+    "sent": 0, "sendMs": 0.0, "heldInflight": 0, "skipSlowSend": 0,
+}
+_stream_stats_base = (time.monotonic(), dict(_stream_stats))
+_stream_stats_last: dict = {}
 
 ws_connected = False
 ws_authenticated = False
@@ -316,6 +365,15 @@ _backend_pressure = 0.0
 _consumer_paint_fps = 0.0
 _ws_send_samples = 0
 _ws_send_slow = 0
+_ws_frames_sent_tick = 0
+_backend_receive_fps = 0.0
+_backend_receive_at = 0.0
+_adaptive_send_tier = 0
+_tier_bad_ticks = 0
+_tier_good_ticks = 0
+_tier_up_needed = 5
+_tier_last_up_at = 0.0
+_stream_delivered_fps = 0.0
 _last_adaptive_tick_at = 0.0
 _last_adaptive_log_at = 0.0
 _adaptive_hold_until = 0.0
@@ -565,6 +623,11 @@ def device_payload(event_type: str) -> dict:
             "previewFps": _effective_stream_fps(),
             "adaptiveStream": STREAM_ADAPTIVE,
             "adaptiveStreamFps": _effective_stream_fps(),
+            "streamSendWidth": _effective_send_width(),
+            "streamDeliveredFps": round(_stream_delivered_fps, 1),
+            "streamAckRttMs": round(_ws_ack_rtt_ms) if _ws_ack_supported else None,
+            "wifi": _wifi_signal(),
+            "streamStages": _stream_stats_snapshot() if event_type == "device_heartbeat" else None,
             "autofocus": camera_focus_status,
             "mechanism": _safe_mechanism_status(),
             "piCodeVersion": PI_CODE_VERSION,
@@ -621,28 +684,76 @@ _last_ws_send_done_at = 0.0
 
 
 def _record_ws_send_sample(elapsed_ms: float):
-    global _ws_send_samples, _ws_send_slow, _last_ws_send_ms, _last_ws_send_done_at
+    global _ws_send_samples, _ws_send_slow, _last_ws_send_ms, _last_ws_send_done_at, _ws_frames_sent_tick
     _last_ws_send_ms = elapsed_ms
     _last_ws_send_done_at = time.monotonic()
     with _adaptive_lock:
         _ws_send_samples = min(_ws_send_samples + 1, 40)
+        _ws_frames_sent_tick += 1
         if elapsed_ms > 60.0:
             _ws_send_slow = min(_ws_send_slow + 1, 40)
 
 
 def _apply_stream_hint(data: dict):
-    global _backend_pressure, _consumer_paint_fps
+    global _backend_pressure, _consumer_paint_fps, _backend_receive_fps, _backend_receive_at
     with _adaptive_lock:
         _backend_pressure = max(0.0, min(1.0, float(data.get("pressure") or 0)))
         consumer = float(data.get("consumerFps") or 0)
         if consumer > 0:
             _consumer_paint_fps = consumer
+        received = float(data.get("receiveFps") or 0)
+        if received > 0:
+            _backend_receive_fps = received
+            _backend_receive_at = time.monotonic()
+
+
+def _effective_send_width() -> int:
+    if not STREAM_ADAPTIVE:
+        return STREAM_SEND_WIDTHS[0]
+    with _adaptive_lock:
+        return STREAM_SEND_WIDTHS[min(_adaptive_send_tier, len(STREAM_SEND_WIDTHS) - 1)]
+
+
+def _adaptive_send_tier_step(now: float, prev_tick_at: float, link_score: float):
+    """Pick the stream width from frames the backend actually received. Caller holds _adaptive_lock."""
+    global _adaptive_send_tier, _tier_bad_ticks, _tier_good_ticks, _tier_up_needed, _tier_last_up_at
+    global _stream_delivered_fps
+    if _backend_receive_at > 0 and now - _backend_receive_at < 6.0:
+        delivered = _backend_receive_fps
+    elif prev_tick_at > 0:
+        delivered = _ws_frames_sent_tick / max(0.5, now - prev_tick_at)
+    else:
+        return
+    _stream_delivered_fps = delivered
+    if len(STREAM_SEND_WIDTHS) < 2:
+        return
+    target = _adaptive_fps
+    if delivered < target * 0.7:
+        _tier_bad_ticks += 1
+        _tier_good_ticks = 0
+    elif delivered >= target * 0.9 and link_score >= -0.05:
+        _tier_good_ticks += 1
+        _tier_bad_ticks = 0
+    else:
+        _tier_bad_ticks = 0
+        _tier_good_ticks = 0
+    if _tier_bad_ticks >= 2 and _adaptive_send_tier < len(STREAM_SEND_WIDTHS) - 1:
+        # Stepping straight back down after a step up means the link can't hold it: wait longer next time.
+        if _tier_last_up_at and now - _tier_last_up_at < 30.0:
+            _tier_up_needed = min(40, _tier_up_needed * 2)
+        _adaptive_send_tier += 1
+        _tier_bad_ticks = 0
+    elif _tier_good_ticks >= _tier_up_needed and _adaptive_send_tier > 0:
+        _adaptive_send_tier -= 1
+        _tier_good_ticks = 0
+        _tier_last_up_at = now
 
 
 def _adaptive_stream_tick():
     """Raise/lower fps + JPEG size based on WS health and backend backpressure."""
     global _adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes
     global _ws_send_samples, _ws_send_slow, _last_adaptive_tick_at, _last_adaptive_log_at
+    global _ws_frames_sent_tick, _backend_receive_at
 
     if not STREAM_ADAPTIVE:
         return
@@ -650,6 +761,7 @@ def _adaptive_stream_tick():
     now = time.monotonic()
     if now - _last_adaptive_tick_at < STREAM_ADAPTIVE_TICK_SECS:
         return
+    prev_tick_at = _last_adaptive_tick_at
     _last_adaptive_tick_at = now
 
     # The scan upload deliberately throttles the stream to 1 fps; judging the link
@@ -658,6 +770,8 @@ def _adaptive_stream_tick():
         with _adaptive_lock:
             _ws_send_samples = 0
             _ws_send_slow = 0
+            _ws_frames_sent_tick = 0
+            _backend_receive_at = 0.0
         return
 
     with _adaptive_lock:
@@ -678,6 +792,7 @@ def _adaptive_stream_tick():
         prev_fps = _adaptive_fps
         prev_q = _adaptive_jpeg_quality
         prev_bytes = _adaptive_jpeg_max_bytes
+        prev_tier = _adaptive_send_tier
 
         if link_score < -0.2:
             _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 4)
@@ -698,20 +813,26 @@ def _adaptive_stream_tick():
         elif link_score >= -0.05 and (utilization is None or utilization >= 0.9):
             _adaptive_fps = min(STREAM_ADAPTIVE_MAX_FPS, _adaptive_fps + 1.0)
 
+        _adaptive_send_tier_step(now, prev_tick_at, link_score)
+
         _ws_send_samples = 0
         _ws_send_slow = 0
+        _ws_frames_sent_tick = 0
 
         changed = (
             int(prev_fps) != int(_adaptive_fps)
             or prev_q != _adaptive_jpeg_quality
             or abs(prev_bytes - _adaptive_jpeg_max_bytes) > 12_000
+            or prev_tier != _adaptive_send_tier
         )
-        if changed and (now - _last_adaptive_log_at) > 8.0:
+        if changed and (prev_tier != _adaptive_send_tier or (now - _last_adaptive_log_at) > 8.0):
             _last_adaptive_log_at = now
             print(
                 f"[PiWS] Adaptive stream -> {_adaptive_fps:.0f}fps "
+                f"width={STREAM_SEND_WIDTHS[_adaptive_send_tier]} "
                 f"q{_adaptive_jpeg_quality} max={_adaptive_jpeg_max_bytes // 1000}KB "
-                f"(pressure={_backend_pressure:.2f} consumer={_consumer_paint_fps:.0f}fps)"
+                f"(delivered={_stream_delivered_fps:.1f}fps pressure={_backend_pressure:.2f} "
+                f"consumer={_consumer_paint_fps:.0f}fps)"
             )
 
 
@@ -736,6 +857,14 @@ def encode_stream_jpeg(frame) -> bytes | None:
     """Fast preview JPEG — adaptive quality/size cap for network conditions."""
     if frame is None:
         return None
+    send_width = _effective_send_width()
+    if frame.shape[1] > send_width:
+        scale = send_width / frame.shape[1]
+        frame = cv2.resize(
+            frame,
+            (_even_dim(send_width), _even_dim(frame.shape[0] * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
     max_bytes = _effective_jpeg_max_bytes()
     base_quality = _effective_preview_jpeg_quality()
     jpeg = encode_jpeg(frame, base_quality, optimize=False)
@@ -2210,9 +2339,11 @@ def enable_v4l2_auto_image_controls(devices: list[str]) -> bool:
             if CAMERA_AUTO_EXPOSURE and exposure_ctrl in names:
                 if _v4l2_set_ctrl(dev, exposure_ctrl, 3):
                     enabled = True
-        if CAMERA_AUTO_EXPOSURE and "exposure_auto_priority" in names:
-            if _v4l2_set_ctrl(dev, "exposure_auto_priority", 1):
+        if "exposure_auto_priority" in names:
+            if _v4l2_set_ctrl(dev, "exposure_auto_priority", CAMERA_EXPOSURE_PRIORITY):
                 enabled = True
+        if "exposure_dynamic_framerate" in names:
+            _v4l2_set_ctrl(dev, "exposure_dynamic_framerate", CAMERA_EXPOSURE_PRIORITY)
         if CAMERA_AUTO_EXPOSURE and "gain_automatic" in names:
             if _v4l2_set_ctrl(dev, "gain_automatic", 1):
                 enabled = True
@@ -2381,7 +2512,10 @@ def _frame_sharpness_score(frame) -> float:
 
 
 def _frame_looks_corrupt(frame) -> bool:
-    """Detect torn MJPEG frames (horizontal seam / doubled image)."""
+    """Detect torn MJPEG frames (horizontal seam).
+
+    No left-vs-right half comparison: a page on a dark desk always differs between halves.
+    """
     try:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
         height, width = gray.shape
@@ -2390,17 +2524,7 @@ def _frame_looks_corrupt(frame) -> bool:
         row_jump = np.mean(np.abs(gray[1:, :] - gray[:-1, :]), axis=1)
         median_jump = float(np.median(row_jump))
         peak_jump = float(np.max(row_jump))
-        if peak_jump > max(30.0, median_jump * 5.5):
-            return True
-        half = width // 2
-        left = gray[:, :half]
-        right = gray[:, half : half + left.shape[1]]
-        if right.shape[1] != left.shape[1]:
-            right = cv2.resize(right, (left.shape[1], height))
-        seam_diff = float(np.mean(np.abs(left - right)))
-        if seam_diff > 28.0 and seam_diff > float(np.mean(np.abs(np.diff(gray, axis=1)))) * 2.2:
-            return True
-        return False
+        return peak_jump > max(30.0, median_jump * 5.5)
     except Exception:
         return False
 
@@ -2614,6 +2738,7 @@ def _finalize_scan_frame(
     *,
     already_cropped: bool = False,
     preserve_size: bool = False,
+    quality: int | None = None,
 ) -> bytes | None:
     """Encode scan JPEG. preserve_size keeps the document crop aspect (no stretch)."""
     if frame is None:
@@ -2631,7 +2756,7 @@ def _finalize_scan_frame(
                 interpolation=cv2.INTER_LANCZOS4 if upscaling else cv2.INTER_AREA,
             )
     oriented = _enhance_document_frame(oriented)
-    jpeg = encode_jpeg(oriented, SCAN_JPEG_QUALITY, optimize=False)
+    jpeg = encode_jpeg(oriented, quality or SCAN_JPEG_QUALITY, optimize=False)
     if not _jpeg_is_complete(jpeg):
         return None
     return jpeg
@@ -2723,9 +2848,88 @@ def capture_scan_snapshot(profile: dict | None = None) -> bytes | None:
         return _finalize_scan_frame(frame, profile)
 
 
-def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
-    """Instant capture from live buffer — never pauses the stream / never locks USB."""
+def _crop_hires_with_locked_quad(frame, quad, quad_shape):
+    """Scale the live green-box quad (stream coords) onto a hi-res frame and warp at full detail."""
+    if quad is None or not quad_shape:
+        return frame, False
+    stream_h, stream_w = quad_shape[:2]
+    frame_h, frame_w = frame.shape[:2]
+    scaled = (quad * np.array([frame_w / stream_w, frame_h / stream_h], dtype=np.float32)).astype(np.float32)
+    if not _is_plausible_paper_quad(scaled, frame.shape):
+        return frame, False
+    cropped = _warp_paper_quad(frame, scaled)
+    return cropped, cropped is not frame
+
+
+def capture_hires_document(profile: dict | None = None) -> bytes | None:
+    """Pause the stream, grab one hi-res frame, crop it with the live green box, resume."""
+    cap = active_capture_cap
+    if not SCAN_HIRES or cap is None or not cap.isOpened():
+        return None
     started = time.monotonic()
+    quad = None if _last_paper_quad is None else np.array(_last_paper_quad, dtype=np.float32)
+    quad_shape = _last_paper_shape
+    stream_w, stream_h = active_capture_width, active_capture_height
+    frame = None
+    _scan_in_progress.set()
+    try:
+        with capture_cap_lock:
+            try:
+                for cam_w, cam_h in SCAN_HIRES_SIZES:
+                    if cam_w <= stream_w:
+                        continue
+                    configure_capture_for_scan(cap, cam_w, cam_h)
+                    warmup_camera_frames(cap, 3, min_secs=SCAN_HIRES_SETTLE_SECS)
+                    candidate = read_sharpest_frame(cap, attempts=SCAN_HIRES_BURST_FRAMES)
+                    if candidate is not None and candidate.shape[1] > stream_w:
+                        frame = candidate
+                        break
+                    got = "no frame" if candidate is None else f"{candidate.shape[1]}x{candidate.shape[0]}"
+                    print(f"[PiWS] Hi-res capture at {cam_w}x{cam_h} gave {got} — trying next size")
+            finally:
+                if stream_w > 0 and stream_h > 0:
+                    configure_capture(cap, stream_w, stream_h)
+                    warmup_camera_frames(cap, 3, min_secs=0.08)
+    finally:
+        _scan_in_progress.clear()
+    if frame is None:
+        return None
+    rotated = _apply_preview_rotation(frame)
+    cropped, used_crop = _crop_hires_with_locked_quad(rotated, quad, quad_shape)
+    if not used_crop and cropped.shape[1] > 2560:
+        # Keeps the JPEG under the AI vision upload limit when no page is locked.
+        scale = 2560.0 / cropped.shape[1]
+        cropped = cv2.resize(
+            cropped,
+            (_even_dim(cropped.shape[1] * scale), _even_dim(cropped.shape[0] * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
+    jpeg = _finalize_scan_frame(
+        cropped, profile, already_cropped=True, preserve_size=True, quality=SCAN_HIRES_JPEG_QUALITY
+    )
+    if jpeg:
+        h, w = cropped.shape[:2]
+        mode = "document-crop" if used_crop else "full-frame"
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        print(
+            f"[PiWS] Hi-res capture {w}x{h} ({mode}) from {frame.shape[1]}x{frame.shape[0]} in {elapsed_ms}ms"
+        )
+    return jpeg
+
+
+def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
+    """Hi-res still when enabled; otherwise instant capture from the live buffer."""
+    started = time.monotonic()
+
+    if SCAN_HIRES:
+        try:
+            jpeg = capture_hires_document(profile)
+        except Exception as err:
+            print(f"[PiWS] Hi-res capture error: {err}")
+            jpeg = None
+        if jpeg:
+            return jpeg
+        print("[PiWS] Hi-res capture failed — using the live frame instead")
 
     # Instant path (default): copy raw camera frame, crop to green-box region, enhance.
     # Stream keeps running — no _scan_in_progress, no capture_cap_lock.
@@ -2974,6 +3178,70 @@ def upload_stream_frame_http(jpeg: bytes):
     threading.Thread(target=_worker, daemon=True).start()
 
 
+def _on_stream_ack():
+    global _ws_ack_supported, _ws_ack_rtt_ms
+    with _ws_inflight_lock:
+        _ws_ack_supported = True
+        if _ws_inflight:
+            rtt_ms = (time.monotonic() - _ws_inflight.popleft()) * 1000.0
+            _ws_ack_rtt_ms = rtt_ms if _ws_ack_rtt_ms <= 0 else _ws_ack_rtt_ms * 0.8 + rtt_ms * 0.2
+    _ws_frame_send_event.set()
+
+
+def _reset_stream_inflight():
+    with _ws_inflight_lock:
+        _ws_inflight.clear()
+
+
+def _stream_stats_snapshot() -> dict:
+    """Rates/averages since the previous snapshot."""
+    global _stream_stats_base, _stream_stats_last
+    now = time.monotonic()
+    started, base = _stream_stats_base
+    if now - started < 5.0 and _stream_stats_last:
+        return _stream_stats_last
+    current = dict(_stream_stats)
+    _stream_stats_base = (now, current)
+    secs = max(0.5, now - started)
+    delta = {key: current[key] - base.get(key, 0) for key in current}
+
+    def avg(total_key, count_key):
+        return round(delta[total_key] / delta[count_key], 1) if delta[count_key] else None
+
+    _stream_stats_last = {
+        "windowSecs": round(secs),
+        "cameraFps": round(delta["camera"] / secs, 1),
+        "readMs": avg("readMs", "camera"),
+        "prepMs": avg("prepMs", "camera"),
+        "encodedFps": round(delta["encoded"] / secs, 1),
+        "encodeMs": avg("encodeMs", "encoded"),
+        "sentFps": round(delta["sent"] / secs, 1),
+        "sendMs": avg("sendMs", "sent"),
+        "heldInflightPerSec": round(delta["heldInflight"] / secs, 1),
+        "skipSlowSendPerSec": round(delta["skipSlowSend"] / secs, 1),
+    }
+    return _stream_stats_last
+
+
+def _wifi_signal() -> dict:
+    """Wi-Fi link quality from /proc/net/wireless (Linux only)."""
+    try:
+        with open("/proc/net/wireless", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()[2:]
+        for line in lines:
+            name, _, rest = line.partition(":")
+            parts = rest.split()
+            if len(parts) >= 3:
+                return {
+                    "iface": name.strip(),
+                    "quality": float(parts[1].rstrip(".")),
+                    "levelDbm": float(parts[2].rstrip(".")),
+                }
+    except Exception:
+        pass
+    return {}
+
+
 def ws_frame_sender_worker():
     """Send only the newest JPEG over WS (drops stale sends)."""
     global _ws_frame_slot, _last_ws_frame_sent_at, _last_ws_jpeg_sent
@@ -2989,10 +3257,28 @@ def ws_frame_sender_worker():
             _ws_frame_slot = None
         if not jpeg or not ws_connected or not ws_authenticated or not realtime_ws:
             continue
+        if _ws_ack_supported:
+            now = time.monotonic()
+            with _ws_inflight_lock:
+                if _ws_inflight and now - _ws_inflight[0] > 2.0:
+                    _ws_inflight.clear()
+                busy = len(_ws_inflight) >= STREAM_MAX_IN_FLIGHT
+            if busy:
+                _stream_stats["heldInflight"] += 1
+                # Wait for an ack; keep this frame only if nothing newer has arrived meanwhile.
+                with _ws_frame_slot_lock:
+                    if _ws_frame_slot is None:
+                        _ws_frame_slot = jpeg
+                continue
         try:
             started = time.perf_counter()
+            with _ws_inflight_lock:
+                _ws_inflight.append(time.monotonic())
             realtime_ws.send(jpeg, opcode=websocket.ABNF.OPCODE_BINARY)
-            _record_ws_send_sample((time.perf_counter() - started) * 1000.0)
+            send_ms = (time.perf_counter() - started) * 1000.0
+            _stream_stats["sendMs"] += send_ms
+            _stream_stats["sent"] += 1
+            _record_ws_send_sample(send_ms)
             _touch_ws_activity()
             _last_ws_frame_sent_at = time.monotonic()
             with _last_ws_jpeg_lock:
@@ -3027,7 +3313,12 @@ def preview_encode_send_worker():
         # Tunnel congested — skip this encode tick so we only ship the newest frame later.
         # Time-bounded: _last_ws_send_ms only refreshes after a new send, so an unbounded
         # check would stop encoding forever after a single slow frame.
-        if _last_ws_send_ms > 120.0 and (time.monotonic() - _last_ws_send_done_at) < 0.35:
+        if (
+            not _ws_ack_supported
+            and _last_ws_send_ms > 120.0
+            and (time.monotonic() - _last_ws_send_done_at) < 0.35
+        ):
+            _stream_stats["skipSlowSend"] += 1
             time.sleep(0.02)
             continue
 
@@ -3050,7 +3341,10 @@ def preview_encode_send_worker():
                     continue
                 preview = latest_preview_bgr
 
+            encode_started = time.perf_counter()
             jpeg = encode_stream_jpeg(preview)
+            _stream_stats["encodeMs"] += (time.perf_counter() - encode_started) * 1000.0
+            _stream_stats["encoded"] += 1
             if not jpeg:
                 continue
 
@@ -3890,6 +4184,7 @@ def stream_producer_worker():
                 reopen_camera = True
                 continue
 
+            read_started = time.perf_counter()
             ok, frame = _drain_latest_frame(cap)
             if not ok or frame is None:
                 miss_reads += 1
@@ -3943,7 +4238,11 @@ def stream_producer_worker():
                 continue
 
             miss_reads = 0
+            prep_started = time.perf_counter()
             preview = _prepare_preview_frame(frame)
+            _stream_stats["prepMs"] += (time.perf_counter() - prep_started) * 1000.0
+            _stream_stats["readMs"] += (prep_started - read_started) * 1000.0
+            _stream_stats["camera"] += 1
             _store_camera_frames(frame, preview)
             last_capture_at = time.perf_counter()
 
@@ -4046,6 +4345,7 @@ def handle_realtime_control_message(message: str):
         _stop_auth_retry()
         _ws_authed_at = time.monotonic()
         ws_authenticated = True
+        _reset_stream_inflight()
         _ws_reconnect_delay = WS_RECONNECT_MIN_SECS
         _mark_ws_online()
         _touch_ws_activity()
@@ -4069,6 +4369,9 @@ def handle_realtime_control_message(message: str):
         return
     if msg_type == "stream:hint":
         _apply_stream_hint(data)
+        return
+    if msg_type == "stream:ack":
+        _on_stream_ack()
         return
 
 
