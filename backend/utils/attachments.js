@@ -142,6 +142,7 @@ const removeOrphanedAttachments = async (previous = [], next = []) => {
 };
 
 module.exports = {
+  maxAttachmentsPerDocument,
   sanitizeFileName,
   extensionFromAttachment,
   getUploadUrl,

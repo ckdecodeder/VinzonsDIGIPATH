@@ -380,6 +380,17 @@ class RealtimeHub {
 
       if (msg.type === 'heartbeat' || msg.type === 'device_connected' || msg.type === 'device_disconnected') {
         this.handlePresenceAsync(ws, msg);
+        return;
+      }
+
+      // Live camera-light state: relayed as-is (no DB write) so the dashboard follows the knob and buttons instantly.
+      if (msg.type === 'camera_light') {
+        this.broadcastToUsers({
+          type: 'camera_light',
+          deviceId: ws.auth.deviceId,
+          light: msg.payload || {},
+          command: msg.command || null,
+        });
       }
     });
 
@@ -619,7 +630,7 @@ class RealtimeHub {
   resendPendingCommands(ws, deviceId) {
     setImmediate(async () => {
       try {
-        const Command = require('../models/Command');
+        const { Command } = require('../models');
         const pending = await Command.find({ deviceId, status: 'Pending' })
           .sort({ createdAt: 1 })
           .lean();

@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const commandSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   deviceId: { type: String, required: true },
-  command: { type: String, enum: ['SCAN', 'SORT', 'MOTOR_TEST', 'RESTART', 'SHUTDOWN'], required: true },
+  command: { type: String, enum: ['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT', 'RESTART', 'SHUTDOWN'], required: true },
   status: { type: String, enum: ['Pending', 'Executing', 'Executed', 'Failed', 'Cancelled'], default: 'Pending' },
   payload: { type: mongoose.Schema.Types.Mixed },
   requestedBy: { type: String },

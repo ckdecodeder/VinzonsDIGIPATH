@@ -25,6 +25,15 @@ fi
 
 log "Restarting WS scanner from $DEST..."
 
+# EMEET webcam HID (light/button reports) is root-only by default; the scanner runs as $RUN_USER.
+EMEET_HID_RULE="/etc/udev/rules.d/99-digipath-emeet-hid.rules"
+if [[ "$(id -u)" -eq 0 && ! -f "$EMEET_HID_RULE" ]]; then
+  echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="328f", MODE="0666"' > "$EMEET_HID_RULE"
+  udevadm control --reload-rules >>"$LOG" 2>&1 || true
+  udevadm trigger --subsystem-match=hidraw >>"$LOG" 2>&1 || true
+  log "Installed $EMEET_HID_RULE (camera HID access for $RUN_USER)."
+fi
+
 pkill -f "$DEST/pi_ws_scanner.py" 2>/dev/null || true
 pkill -f "pi_ws_scanner.py" 2>/dev/null || true
 sleep 1

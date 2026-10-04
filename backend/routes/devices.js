@@ -19,7 +19,7 @@ const {
   getUserOfficeId,
 } = require('../utils/helpers');
 const { queueSenderNotifications } = require('../utils/senderNotifications');
-const { persistAttachments } = require('../utils/attachments');
+const { maxAttachmentsPerDocument, persistAttachments } = require('../utils/attachments');
 const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
 const {
   getDeviceSnapshot,
@@ -34,6 +34,7 @@ const {
   pushCommandToDevice,
   getLatestStreamFrame,
   relayStreamFrame,
+  isDeviceWsConnected,
 } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
@@ -80,7 +81,9 @@ router.post('/devices/heartbeat', deviceLimiter, requireDeviceApiKey, asyncHandl
     .sort({ createdAt: 1 })
     .limit(5)
     .lean();
-  res.status(201).json({ ...result, pendingCommands });
+  // Lets the Pi detect a half-open WS (e.g. backend restarted behind a tunnel) and reconnect.
+  const wsLive = isDeviceWsConnected(heartbeatDeviceId);
+  res.status(201).json({ ...result, pendingCommands, wsLive });
 }));
 
 router.post('/devices/disconnect', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
@@ -146,10 +149,38 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   const command = req.body.commandId ? await Command.findOne({ id: req.body.commandId }).lean() : null;
   const device = await Device.findOne({ id: deviceId }).lean();
   const officeId = req.body.officeId?.trim() || command?.payload?.officeId || device?.assignedTo || 'OFF-001';
+  const continuationDocumentId = req.body.documentId?.trim();
+  let existingDocument = null;
+  if (continuationDocumentId) {
+    if (
+      !command
+      || command.command !== 'SCAN'
+      || command.deviceId !== deviceId
+      || command.payload?.documentId !== continuationDocumentId
+    ) {
+      return res.status(403).json({ message: 'This scan command cannot add a page to that document.' });
+    }
+    existingDocument = await Document.findOne({ id: continuationDocumentId });
+    if (!existingDocument) {
+      return res.status(404).json({ message: 'Document for this scan session was not found.' });
+    }
+    if (existingDocument.intakeStatus !== 'Pending Review') {
+      return res.status(409).json({ message: 'This document scan session is no longer open for additional pages.' });
+    }
+  }
   const attachmentSource = req.body.attachment || req.body.scannedFile;
+  if (!attachmentSource?.dataUrl && !attachmentSource?.url) {
+    return res.status(400).json({ message: 'A scanned page image is required.' });
+  }
+  if (
+    existingDocument
+    && (existingDocument.scannedFiles?.length || 0) >= maxAttachmentsPerDocument
+  ) {
+    return res.status(400).json({ message: `A document can have at most ${maxAttachmentsPerDocument} scanned pages.` });
+  }
   const scannedFiles = attachmentSource
     ? await persistAttachments(req, [{
-        id: attachmentSource.id,
+        id: attachmentSource.id || (command?.id ? `SCANPAGE_${command.id}` : undefined),
         name: attachmentSource.name || `${deviceId}-scan.jpg`,
         type: attachmentSource.type || 'image/jpeg',
         size: attachmentSource.size,
@@ -167,45 +198,57 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   const registrationStatus = registrationStatuses.includes(normalizeWorkflowStatus(requestedScanStatus))
     ? normalizeWorkflowStatus(requestedScanStatus)
     : 'Received';
-  const doc = new Document({
-    id: req.body.documentId || generateId('DOC'),
-    trackingNumber: req.body.trackingNumber || generateTrackingNumber(),
-    subject,
-    documentDirection: req.body.documentDirection || 'Incoming',
-    status: registrationStatus,
-    intakeStatus: 'Pending Review',
-    priorityLevel: req.body.priorityLevel || 'normal',
-    dateReceived: req.body.dateReceived || req.body.extractedDate?.trim() || now.split('T')[0],
-    createdAt: now,
-    updatedAt: now,
-    documentTypeId: req.body.documentTypeId || 'DT-001',
-    documentTypeOther: req.body.documentTypeOther?.trim(),
-    originOfficeId: officeId,
-    originOfficeOther: req.body.originOfficeOther?.trim(),
-    currentOfficeId: officeId,
-    destinationOfficeOther: req.body.destinationOfficeOther?.trim(),
-    senderName: req.body.senderName?.trim() || req.body.extractedSender?.trim() || 'Scanner Device',
-    senderContact: req.body.senderContact?.trim(),
-    senderEmail: req.body.senderEmail?.trim(),
-    notifySender: req.body.notifySender !== undefined ? Boolean(req.body.notifySender) : true,
-    senderNotificationConsent: req.body.senderNotificationConsent !== undefined ? Boolean(req.body.senderNotificationConsent) : true,
-    senderNotificationChannels: normalizeSenderNotificationChannels(req.body.senderNotificationChannels, req.body),
-    remarks: req.body.remarks?.trim() || `Captured by physical scanner ${deviceId}`,
-    scannedText: req.body.scannedText || req.body.extractedText || '',
-    scannedFiles,
-    scannedImageUrl: scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || '',
-    timeline: [{
-      id: generateId('TL'),
-      action: 'hardware_scan',
-      label: 'Physical scanner capture',
-      details: `Document captured by physical scanner ${deviceId}`,
-      officeId,
-      userId: 'hardware',
-      referenceId: deviceId,
-      timestamp: now,
-    }],
-  });
-  await doc.save();
+  let doc = existingDocument;
+  if (doc) {
+    const existingAttachmentIds = new Set((doc.scannedFiles || []).map((file) => file.id));
+    doc.scannedFiles = [
+      ...(doc.scannedFiles || []),
+      ...scannedFiles.filter((file) => !existingAttachmentIds.has(file.id)),
+    ];
+    doc.scannedImageUrl = doc.scannedFiles[0]?.url || doc.scannedFiles[0]?.dataUrl || '';
+    doc.updatedAt = now;
+    await doc.save();
+  } else {
+    doc = new Document({
+      id: req.body.documentId || generateId('DOC'),
+      trackingNumber: req.body.trackingNumber || generateTrackingNumber(),
+      subject,
+      documentDirection: req.body.documentDirection || 'Incoming',
+      status: registrationStatus,
+      intakeStatus: 'Pending Review',
+      priorityLevel: req.body.priorityLevel || 'normal',
+      dateReceived: req.body.dateReceived || req.body.extractedDate?.trim() || now.split('T')[0],
+      createdAt: now,
+      updatedAt: now,
+      documentTypeId: req.body.documentTypeId || 'DT-001',
+      documentTypeOther: req.body.documentTypeOther?.trim(),
+      originOfficeId: officeId,
+      originOfficeOther: req.body.originOfficeOther?.trim(),
+      currentOfficeId: officeId,
+      destinationOfficeOther: req.body.destinationOfficeOther?.trim(),
+      senderName: req.body.senderName?.trim() || req.body.extractedSender?.trim() || 'Scanner Device',
+      senderContact: req.body.senderContact?.trim(),
+      senderEmail: req.body.senderEmail?.trim(),
+      notifySender: req.body.notifySender !== undefined ? Boolean(req.body.notifySender) : true,
+      senderNotificationConsent: req.body.senderNotificationConsent !== undefined ? Boolean(req.body.senderNotificationConsent) : true,
+      senderNotificationChannels: normalizeSenderNotificationChannels(req.body.senderNotificationChannels, req.body),
+      remarks: req.body.remarks?.trim() || `Captured by physical scanner ${deviceId}`,
+      scannedText: req.body.scannedText || req.body.extractedText || '',
+      scannedFiles,
+      scannedImageUrl: scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || '',
+      timeline: [{
+        id: generateId('TL'),
+        action: 'hardware_scan',
+        label: 'Physical scanner capture',
+        details: `Document captured by physical scanner ${deviceId}`,
+        officeId,
+        userId: 'hardware',
+        referenceId: deviceId,
+        timestamp: now,
+      }],
+    });
+    await doc.save();
+  }
 
   const event = new DeviceEvent({
     id: req.body.eventId || generateId('EVT'),
@@ -255,19 +298,23 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
     );
   }
 
-  await createLogEntry(req, 'document_scanned', `Physical scanner uploaded document: ${doc.subject}`, doc.id, 'hardware');
-  await notifyApprovalUsers({
-    title: 'Physical scanner upload',
-    message: `${doc.trackingNumber} was captured by ${deviceId} and needs intake review.`,
-    type: 'warning',
-    referenceType: 'document',
-    referenceId: doc.id,
-    page: 'documents',
-  });
-  await queueSenderNotifications(req, doc, 'document_scanned', {
-    message: `Your document was captured by the physical scanner and registered with tracking number ${doc.trackingNumber}.`,
-    metadata: { deviceId },
-  });
+  if (!existingDocument) {
+    await createLogEntry(req, 'document_scanned', `Physical scanner uploaded document: ${doc.subject}`, doc.id, 'hardware');
+    await notifyApprovalUsers({
+      title: 'Physical scanner upload',
+      message: `${doc.trackingNumber} was captured by ${deviceId} and needs intake review.`,
+      type: 'warning',
+      referenceType: 'document',
+      referenceId: doc.id,
+      page: 'documents',
+    });
+    await queueSenderNotifications(req, doc, 'document_scanned', {
+      message: `Your document was captured by the physical scanner and registered with tracking number ${doc.trackingNumber}.`,
+      metadata: { deviceId },
+    });
+  } else {
+    await createLogEntry(req, 'document_scan_page_added', `Added a scanned page to document ${doc.subject}`, doc.id, 'hardware');
+  }
 
   const deviceSnapshot = await getDeviceSnapshot(deviceId);
   if (req.body.commandId) {
@@ -745,16 +792,34 @@ router.post('/commands/cancel', scannerCommandRoles, asyncHandler(async (req, re
 router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['deviceId', 'command']);
   const commandName = req.body.command?.trim().toUpperCase();
-  if (!['SCAN', 'SORT', 'MOTOR_TEST', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
+  if (!['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
     return res.status(400).json({ message: 'Invalid device command' });
   }
-  if (req.user.role !== 'Admin' && !['SCAN', 'SORT', 'MOTOR_TEST'].includes(commandName)) {
-    return res.status(403).json({ message: 'Receptionists can only request scan/sort/motor test commands' });
+  if (req.user.role !== 'Admin' && !['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT'].includes(commandName)) {
+    return res.status(403).json({ message: 'Receptionists can only request scan/sort/motor test/camera light commands' });
   }
 
   const snapshot = await getDeviceSnapshot(req.body.deviceId);
   if (!snapshot.connected) {
     return res.status(409).json({ message: 'Physical scanner is not connected. Wait for a hardware heartbeat before sending commands.' });
+  }
+
+  // Instant camera setting: never queue behind (or block) a scan/sort.
+  if (commandName === 'CAMERA_LIGHT') {
+    const lightCommand = new Command({
+      id: generateId('CMD'),
+      deviceId: req.body.deviceId,
+      command: commandName,
+      status: 'Pending',
+      payload: req.body.payload,
+      requestedBy: req.user.id,
+      createdAt: new Date().toISOString(),
+    });
+    await lightCommand.save();
+    const lightPayload = lightCommand.toObject?.() || lightCommand;
+    broadcastCommandUpdated(lightPayload);
+    const delivered = pushCommandToDevice(lightCommand.deviceId, lightPayload);
+    return res.status(201).json({ ...lightPayload, delivered });
   }
 
   const cutoff = (ms) => new Date(Date.now() - ms).toISOString();
@@ -791,6 +856,7 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   const pendingCommand = await Command.findOne({
     deviceId: req.body.deviceId,
     status: { $in: ['Pending', 'Executing'] },
+    command: { $ne: 'CAMERA_LIGHT' },
   }).lean();
   if (pendingCommand) {
     if (commandName === 'MOTOR_TEST' && pendingCommand.command === 'MOTOR_TEST') {

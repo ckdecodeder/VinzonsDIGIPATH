@@ -6,10 +6,12 @@ Works on any network when Pi and dashboard share the same backend URL.
 """
 
 import base64
+import glob
 import json
 import os
 import queue
 import re
+import select
 import signal
 import socket
 import subprocess
@@ -35,7 +37,7 @@ from digipath_mechanism import (
     resolve_sort_layer,
 )
 
-PI_CODE_VERSION = "2026-09-30-lift-hold"
+PI_CODE_VERSION = "2026-10-04-camera-light-set-query"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -274,6 +276,8 @@ _active_ws_app = None
 _ws_last_activity_at = 0.0
 _ws_offline_since = None
 _ws_last_reconnect_kick_at = 0.0
+_ws_authed_at = 0.0
+WS_LIVE_GRACE_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_LIVE_GRACE_SECS", "15")))
 WS_STALE_SECS = max(15.0, float(os.environ.get("DIGIPATH_WS_STALE_SECS", "60")))
 WS_RECONNECT_MAX_SECS = max(1.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_MAX_SECS", "5")))
 WS_RECONNECT_MIN_SECS = max(0.5, float(os.environ.get("DIGIPATH_WS_RECONNECT_MIN_SECS", "1")))
@@ -527,6 +531,7 @@ def local_ip() -> str:
 
 def device_payload(event_type: str) -> dict:
     ip = local_ip()
+    _ensure_camera_hw_info()
     resolution = f"{active_capture_width}x{active_capture_height}"
     return {
         "deviceId": DEVICE_ID,
@@ -564,8 +569,20 @@ def device_payload(event_type: str) -> dict:
             "mechanism": _safe_mechanism_status(),
             "piCodeVersion": PI_CODE_VERSION,
             "wsLastIssue": _ws_last_issue,
+            "cameraHw": _camera_hw_info,
+            "cameraXu": _safe_camera_xu_snapshot(),
+            "cameraLight": _camera_light_status(),
         },
     }
+
+
+def _safe_camera_xu_snapshot() -> dict:
+    if latest_bgr is None:
+        return {}
+    try:
+        return _camera_xu_snapshot()
+    except Exception as err:
+        return {"error": str(err)}
 
 
 def _safe_mechanism_status() -> dict:
@@ -1172,8 +1189,16 @@ def _crop_paper(frame, *, exact: bool = False):
         target_width = _even_dim((1.0 - size_alpha) * prev_w + size_alpha * detected_width)
         target_height = _even_dim((1.0 - size_alpha) * prev_h + size_alpha * detected_height)
     _last_paper_output_size = (target_width, target_height)
-    # Live crop fills the whole preview canvas — no black bars / letterbox.
-    return _warp_paper_quad(frame, _last_paper_quad, (PREVIEW_WIDTH, PREVIEW_HEIGHT))
+    preview_scale = min(
+        1.0,
+        PREVIEW_WIDTH / target_width,
+        PREVIEW_HEIGHT / target_height,
+    )
+    preview_size = (
+        _even_dim(round(target_width * preview_scale)),
+        _even_dim(round(target_height * preview_scale)),
+    )
+    return _warp_paper_quad(frame, _last_paper_quad, preview_size)
 
 
 def _lift_preview_shadows(frame):
@@ -1357,6 +1382,697 @@ def _run_v4l2_ctl(device: str, *args) -> subprocess.CompletedProcess | None:
         return None
 
 
+_camera_hw_info: dict = {}
+_camera_hw_info_started = False
+
+
+def _run_text(cmd: list[str], limit: int = 2500) -> str:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=8, check=False)
+        return ((proc.stdout or "") + (proc.stderr or "")).strip()[:limit]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as err:
+        return f"unavailable: {err}"
+
+
+def _collect_camera_hw_info():
+    """One-shot report of the webcam's identity and every control it exposes (for remote debugging)."""
+    global _camera_hw_info
+    info: dict = {}
+    idx = active_camera_index if isinstance(active_camera_index, int) else 0
+    dev = f"/dev/video{idx}"
+    info["device"] = dev
+    info["listDevices"] = _run_text(["v4l2-ctl", "--list-devices"], 800)
+    info["controls"] = _run_text(["v4l2-ctl", "-d", dev, "-L"], 3500)
+    usb_id = ""
+    try:
+        usb_dir = os.path.realpath(f"/sys/class/video4linux/video{idx}/device/..")
+        with open(os.path.join(usb_dir, "idVendor")) as f:
+            vendor = f.read().strip()
+        with open(os.path.join(usb_dir, "idProduct")) as f:
+            product = f.read().strip()
+        usb_id = f"{vendor}:{product}"
+        for name in ("manufacturer", "product"):
+            path = os.path.join(usb_dir, name)
+            if os.path.exists(path):
+                with open(path) as f:
+                    info[f"usb_{name}"] = f.read().strip()
+    except OSError:
+        pass
+    info["usbId"] = usb_id
+    if usb_id:
+        verbose = _run_text(["lsusb", "-v", "-d", usb_id], 200000)
+        keep = [
+            line.strip()
+            for line in verbose.splitlines()
+            if any(k in line for k in ("guidExtensionCode", "bUnitID", "bNumControls", "bmControls",
+                                       "iExtension", "VideoControl Interface Descriptor",
+                                       "EXTENSION_UNIT", "bInterfaceClass", "iProduct", "iManufacturer"))
+        ]
+        info["uvcExtensionUnits"] = "\n".join(keep)[:3000]
+    hid = []
+    for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        try:
+            with open(os.path.join(node, "device", "uevent")) as f:
+                fields = dict(line.strip().split("=", 1) for line in f if "=" in line)
+            hid.append(f"{os.path.basename(node)}: {fields.get('HID_NAME', '?')} ({fields.get('HID_ID', '?')})")
+        except OSError:
+            continue
+    info["hidraw"] = hid
+    descriptors = {}
+    for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        try:
+            with open(os.path.join(node, "device", "report_descriptor"), "rb") as f:
+                descriptors[os.path.basename(node)] = f.read().hex()[:1200]
+        except OSError:
+            continue
+    info["hidReportDescriptors"] = descriptors
+    _camera_hw_info = info
+    print(f"[PiWS] Camera hardware: {info.get('usbId')} {info.get('usb_product', '')} — report added to heartbeat")
+
+
+UVC_XU_UNIT = int(os.environ.get("DIGIPATH_CAMERA_XU_UNIT", "2"))
+_UVC_GET_CUR, _UVC_GET_LEN, _UVC_GET_INFO = 0x81, 0x85, 0x86
+
+
+def _uvc_xu_query(fd: int, unit: int, selector: int, query: int, size: int,
+                  data: bytes | None = None) -> bytes | None:
+    """UVC extension-unit query (UVCIOC_CTRL_QUERY); pass data only for SET_CUR."""
+    import ctypes
+    import fcntl
+
+    buf = ctypes.create_string_buffer(size)
+    if data:
+        ctypes.memmove(buf, data, min(size, len(data)))
+
+    class _Query(ctypes.Structure):
+        _fields_ = [
+            ("unit", ctypes.c_uint8),
+            ("selector", ctypes.c_uint8),
+            ("query", ctypes.c_uint8),
+            ("size", ctypes.c_uint16),
+            ("data", ctypes.c_void_p),
+        ]
+
+    q = _Query(unit, selector, query, size, ctypes.cast(buf, ctypes.c_void_p))
+    # _IOWR('u', 0x21, struct uvc_xu_control_query)
+    request = (3 << 30) | (ctypes.sizeof(_Query) << 16) | (ord("u") << 8) | 0x21
+    try:
+        fcntl.ioctl(fd, request, q)
+    except OSError:
+        return None
+    return buf.raw[:size]
+
+
+def _camera_xu_snapshot() -> dict:
+    """Current value of every vendor extension-unit control, to spot which one tracks the ring light."""
+    idx = active_camera_index if isinstance(active_camera_index, int) else 0
+    dev = f"/dev/video{idx}"
+    out: dict = {"unit": UVC_XU_UNIT, "at": datetime.now().strftime("%H:%M:%S")}
+    try:
+        fd = os.open(dev, os.O_RDWR | os.O_NONBLOCK)
+    except OSError as err:
+        out["error"] = str(err)
+        return out
+    try:
+        for selector in range(1, 17):
+            raw_len = _uvc_xu_query(fd, UVC_XU_UNIT, selector, _UVC_GET_LEN, 2)
+            if not raw_len:
+                continue
+            length = int.from_bytes(raw_len, "little")
+            if length <= 0 or length > 512:
+                continue
+            info = _uvc_xu_query(fd, UVC_XU_UNIT, selector, _UVC_GET_INFO, 1)
+            cur = _uvc_xu_query(fd, UVC_XU_UNIT, selector, _UVC_GET_CUR, length) if info and info[0] & 0x01 else None
+            out[str(selector)] = {
+                "len": length,
+                "info": info[0] if info else None,
+                "cur": cur.hex()[:128] if cur else None,
+            }
+    finally:
+        os.close(fd)
+    return out
+
+
+def _ensure_camera_hw_info():
+    global _camera_hw_info_started
+    if _camera_hw_info_started or latest_bgr is None:
+        return
+    _camera_hw_info_started = True
+    threading.Thread(target=_collect_camera_hw_info, daemon=True, name="camera-hw-info").start()
+
+
+# ─── Camera built-in light (EMEET ring/fill light) ─────────────────────────────
+# EMEET vendor HID (report ID 0x09): 09 <group> <sub> <op> 00 <len> 00 <len> <data...>.
+# The light is group 02 / sub 02. Even ops are host commands and the next odd op is the
+# camera's report: 00/01 power [ff, on], 04/05 level [mode, 0-100], 06/07 scene [00, n].
+# Which host command works is confirmed against those reports at runtime, then remembered.
+CAMERA_LIGHT_HID_REPORT_LEN = 32
+CAMERA_LIGHT_PROBE_SECS = float(os.environ.get("DIGIPATH_CAMERA_LIGHT_PROBE_SECS", "1") or 0)
+CAMERA_LIGHT_PUSH_SECS = 0.15
+CAMERA_LIGHT_HID_GROUP = (0x02, 0x02)
+CAMERA_LIGHT_HID_FILE = os.path.expanduser(
+    os.environ.get("DIGIPATH_CAMERA_LIGHT_HID_FILE", "~/.digipath_camera_light_hid.json")
+)
+CAMERA_LIGHT_HID_FILE_VERSION = 4
+# Tried in order until the camera confirms; MM = current mode, LL = level 0-100, SS = scene.
+# Even ops set silently (ACK only); the odd op is a query the camera answers with its current state,
+# whatever data it carries. So every power/level command is confirmed by querying right after it.
+_LIGHT_LEVEL_FORMATS = ["0902020400020002MMLL", "0902020400010001LL"]
+CAMERA_LIGHT_HID_CANDIDATES = {
+    "on": [
+        "0902020000020002ff01", "090202000001000101", "09020200000200020001", "09020200000200020101",
+        "09020206000200020000",
+    ],
+    "off": [
+        "0902020000020002ff00", "090202000001000100", "09020200000200020000", "09020200000200020100",
+        "09020206000200020003", "0902020400020002MM00", "090202040001000100",
+    ],
+    "level": _LIGHT_LEVEL_FORMATS,
+    "up": _LIGHT_LEVEL_FORMATS + ["090202040001000101", "09020204000200020001", "090202080001000101", "0902020a0001000101"],
+    "down": _LIGHT_LEVEL_FORMATS + ["0902020400010001ff", "090202040002000200ff", "090202080001000100", "0902020a0001000100"],
+    "scene": ["0902020600020002" + "00SS"],
+}
+_LIGHT_POWER_QUERY = "0902020100020002ff00"
+_LIGHT_LEVEL_QUERY = "0902020500020002MM00"
+CAMERA_LIGHT_HID_QUERIES = {
+    "on": _LIGHT_POWER_QUERY, "off": _LIGHT_POWER_QUERY,
+    "level": _LIGHT_LEVEL_QUERY, "up": _LIGHT_LEVEL_QUERY, "down": _LIGHT_LEVEL_QUERY,
+}
+# Scenes from the camera's own colour button (op 07) and the mode each one reports (op 05).
+CAMERA_LIGHT_SCENE_MODES = {0: 0, 1: 1, 2: 2, 5: 3}
+CAMERA_LIGHT_DIMMABLE_SCENE = 0
+CAMERA_LIGHT_BRIGHTNESS_STEP = 20
+# Dashboard training names -> HID action. Each one is recorded and tested on its own.
+CAMERA_LIGHT_TRAIN_ACTIONS = {"on": "on", "off": "off", "up": "up", "down": "down", "color": "scene"}
+CAMERA_LIGHT_RECORD_SECS = float(os.environ.get("DIGIPATH_CAMERA_LIGHT_RECORD_SECS", "12") or 12)
+CAMERA_LIGHT_RECORD_QUIET_SECS = 2.5
+for _action, _env in (("on", "ON"), ("off", "OFF"), ("level", "LEVEL")):
+    _override = os.environ.get(f"DIGIPATH_CAMERA_LIGHT_HID_{_env}", "").replace(" ", "")
+    if _override:
+        CAMERA_LIGHT_HID_CANDIDATES[_action] = [_override]
+
+_camera_light_state: dict = {"on": None, "brightness": None, "lastError": "", "at": ""}
+_camera_light_probe: dict = {"xuChanges": [], "hidInput": [], "hidError": ""}
+_camera_light_lock = threading.Lock()
+_camera_light_hid_seq = 0
+_camera_light_hid_events: list = []
+_camera_light_hid_mode = 0
+_camera_light_hid_confirmed: dict = {}
+_camera_light_hid_signatures: dict = {}
+
+
+def _load_camera_light_hid() -> None:
+    global _camera_light_hid_confirmed, _camera_light_hid_signatures
+    try:
+        with open(CAMERA_LIGHT_HID_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("v") == CAMERA_LIGHT_HID_FILE_VERSION:
+            _camera_light_hid_confirmed = dict(data.get("commands") or {})
+            _camera_light_hid_signatures = dict(data.get("signatures") or {})
+            print(f"[PiWS] Camera light HID commands loaded: {_camera_light_hid_confirmed}")
+    except (OSError, ValueError):
+        pass
+
+
+def _write_camera_light_hid() -> None:
+    try:
+        with open(CAMERA_LIGHT_HID_FILE, "w") as f:
+            json.dump({
+                "v": CAMERA_LIGHT_HID_FILE_VERSION,
+                "commands": _camera_light_hid_confirmed,
+                "signatures": _camera_light_hid_signatures,
+            }, f)
+    except OSError as err:
+        print(f"[PiWS] Could not save camera light HID commands: {err}")
+
+
+def _save_camera_light_hid(action: str, template: str) -> None:
+    _camera_light_hid_confirmed[action] = template
+    _write_camera_light_hid()
+    print(f"[PiWS] Camera light '{action}' confirmed with HID {template}")
+
+
+def _find_camera_hidraw() -> str | None:
+    for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        try:
+            with open(os.path.join(node, "device", "uevent")) as f:
+                if "EMEET" in f.read().upper():
+                    return f"/dev/{os.path.basename(node)}"
+        except OSError:
+            continue
+    return None
+
+
+def _hid_send(report_hex: str) -> None:
+    path = _find_camera_hidraw()
+    if not path:
+        raise RuntimeError("EMEET HID device (/dev/hidraw*) not found")
+    report = bytes.fromhex(report_hex)[:CAMERA_LIGHT_HID_REPORT_LEN].ljust(CAMERA_LIGHT_HID_REPORT_LEN, b"\x00")
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.write(fd, report)
+    finally:
+        os.close(fd)
+
+
+def _append_capped(items: list, entry, cap: int) -> None:
+    items.append(entry)
+    del items[:-cap]
+
+
+def _on_camera_hid_report(data: bytes) -> None:
+    global _camera_light_hid_seq, _camera_light_hid_mode
+    _camera_light_hid_seq += 1
+    if len(data) < 9 or data[0] != 0x09 or (data[1], data[2]) != CAMERA_LIGHT_HID_GROUP:
+        return
+    op, size = data[3], data[7]
+    payload = data[8:8 + size]
+    _append_capped(_camera_light_hid_events, {"seq": _camera_light_hid_seq, "op": op, "data": payload}, 50)
+    # Only [ff, state, ...] is the power report; the camera follows it with an unrelated [03, 01, 01, 01].
+    if op == 0x01 and len(payload) >= 2 and payload[0] == 0xFF:
+        _camera_light_state["on"] = payload[1] == 0x01
+        _camera_light_state["offByLevel"] = False
+    elif op == 0x05 and len(payload) >= 2:
+        _camera_light_hid_mode = payload[0]
+        _camera_light_state["mode"] = payload[0]
+        if payload[1] <= 100:
+            _camera_light_state["brightness"] = payload[1]
+        # Level 0 is the knob's dark end; raising it lights again. A power-off (op 01) is not undone here
+        # because the camera also sends level reports while powered off.
+        if payload[1] == 0:
+            _camera_light_state["on"] = False
+            _camera_light_state["offByLevel"] = True
+        elif payload[1] <= 100 and _camera_light_state.get("offByLevel"):
+            _camera_light_state["on"] = True
+            _camera_light_state["offByLevel"] = False
+
+
+def _wait_camera_hid_events(after_seq: int, timeout: float, confirm) -> tuple[bool, list]:
+    deadline = time.monotonic() + timeout
+    seen: list = []
+    while time.monotonic() < deadline:
+        seen = [e for e in _camera_light_hid_events if e["seq"] > after_seq]
+        if any(confirm(e) for e in seen):
+            return True, seen
+        time.sleep(0.1)
+    return False, seen
+
+
+def _camera_light_confirmer(action: str, level: int | None, scene: int | None, before: int | None = None):
+    if action in ("up", "down"):
+        def moved(e) -> bool:
+            if e["op"] != 0x05 or len(e["data"]) < 2 or e["data"][1] > 100 or before is None:
+                return False
+            return e["data"][1] > before if action == "up" else e["data"][1] < before
+        return moved
+
+    def is_power(event, on_value: int) -> bool:
+        data = event["data"]
+        return event["op"] == 0x01 and len(data) >= 2 and data[0] == 0xFF and data[1] == on_value
+
+    def is_level(event, check) -> bool:
+        return event["op"] == 0x05 and len(event["data"]) >= 2 and check(event["data"][1])
+
+    # A recorded physical on/off also counts: match its power report (or first report) exactly.
+    signature = _camera_light_hid_signatures.get(action) if action in ("on", "off") else None
+    recorded = None
+    if signature:
+        sig_op, sig_data = next((s for s in signature if s.startswith("01:")), signature[0]).split(":")
+        recorded = lambda e: f"{e['op']:02x}" == sig_op and e["data"].hex() == sig_data
+    # Only the camera's power report proves on/off; a mode/level report alone does not.
+    if action == "on":
+        return lambda e: is_power(e, 0x01) or bool(recorded and recorded(e))
+    if action == "off":
+        return lambda e: is_power(e, 0x00) or is_level(e, lambda v: v == 0) or bool(recorded and recorded(e))
+    if action == "scene":
+        mode = CAMERA_LIGHT_SCENE_MODES.get(scene)
+        return lambda e: (e["op"] == 0x07 and e["data"][-1:] == bytes([scene])) or (
+            e["op"] == 0x05 and len(e["data"]) >= 1 and e["data"][0] == mode
+        )
+    # The camera moves brightness in steps of 2, so it may report a neighbouring value.
+    return lambda e: is_level(e, lambda v: v <= 100 and abs(v - (level or 0)) <= 3)
+
+
+def _hid_event_text(event) -> str:
+    return f"{event['op']:02x}:{event['data'].hex()}"
+
+
+def _hid_light_try(
+    action: str, templates: list, level: int | None, scene: int | None, before: int | None = None
+) -> tuple[str | None, list]:
+    confirm = _camera_light_confirmer(action, level, scene, before)
+    if level is not None:
+        # The camera only uses even brightness steps.
+        level = max(0, min(100, int(level))) & ~1
+    def fill(template: str) -> str:
+        return (
+            template.replace("MM", f"{_camera_light_hid_mode & 0xFF:02x}")
+            .replace("LL", f"{(level or 0) & 0xFF:02x}")
+            .replace("SS", f"{(scene or 0) & 0xFF:02x}")
+        )
+
+    query = CAMERA_LIGHT_HID_QUERIES.get(action)
+    results = []
+    for template in templates:
+        report = fill(template)
+        start = _camera_light_hid_seq
+        _hid_send(report)
+        if query:
+            ok, events = _wait_camera_hid_events(start, 0.3, confirm)
+            if not ok:
+                _hid_send(fill(query))
+                ok, events = _wait_camera_hid_events(start, 1.5, confirm)
+        else:
+            ok, events = _wait_camera_hid_events(start, 2.5, confirm)
+        replies = ", ".join(_hid_event_text(e) for e in events) or "no reply"
+        results.append({"command": report, "replies": replies, "ok": ok})
+        if ok:
+            return template, results
+    return None, results
+
+
+def _hid_light_do(action: str, level: int | None = None, scene: int | None = None, before: int | None = None) -> None:
+    known = _camera_light_hid_confirmed.get(action)
+    candidates = CAMERA_LIGHT_HID_CANDIDATES[action]
+    templates = [known] + [c for c in candidates if c != known] if known else candidates
+    template, results = _hid_light_try(action, templates, level, scene, before)
+    if template is None:
+        tried = "; ".join(f"{r['command']} -> {r['replies']}" for r in results)
+        raise RuntimeError(f"Camera did not confirm light {action} ({tried})")
+    if template != known:
+        _save_camera_light_hid(action, template)
+
+
+def _camera_light_set_level(target: int) -> None:
+    current = _camera_light_state.get("brightness")
+    if not isinstance(current, int):
+        raise RuntimeError("Brightness unknown yet. Turn the camera's brightness knob a little first.")
+    # The camera sometimes answers a level command with only its stored level, so retry until it lands.
+    last_error = None
+    for _ in range(3):
+        current = _camera_light_state.get("brightness")
+        # An unchanged level produces no report from the camera, so there is nothing to confirm.
+        if abs(current - target) <= 2:
+            return
+        try:
+            # Raising and lowering are learned separately, like turning the camera's knob either way.
+            _hid_light_do("up" if target > current else "down", level=target, before=current)
+            last_error = None
+        except RuntimeError as err:
+            last_error = err
+        time.sleep(0.3)
+    if abs(_camera_light_state.get("brightness") - target) <= 2:
+        return
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"Camera light stopped at {_camera_light_state.get('brightness')}% (asked for {target}%)")
+
+
+def _camera_light_turn_on(level: int | None) -> None:
+    try:
+        _hid_light_do("on")
+    except RuntimeError:
+        # Without a power command, "off" is brightness 0, so "on" means restoring a level.
+        if _camera_light_state.get("brightness") != 0:
+            raise
+        _camera_light_set_level(level or 70)
+        _camera_light_state["on"] = True
+
+
+def _camera_light_step_target(direction: str) -> tuple[int, int]:
+    current = _camera_light_state.get("brightness")
+    if not isinstance(current, int):
+        raise RuntimeError("Brightness unknown yet. Turn the camera's brightness knob a little first.")
+    if direction == "up" and current >= 100:
+        raise RuntimeError("Already at 100%. Turn the knob down a little first.")
+    if direction == "down" and current <= 2:
+        raise RuntimeError("Already at the lowest brightness. Turn the knob up a little first.")
+    step = CAMERA_LIGHT_BRIGHTNESS_STEP if direction == "up" else -CAMERA_LIGHT_BRIGHTNESS_STEP
+    return current, max(2, min(100, current + step))
+
+
+def set_camera_light(
+    on: bool | None, brightness: int | None, scene: int | None = None, brightness_step: str | None = None
+) -> str:
+    if not _find_camera_hidraw():
+        raise RuntimeError("Camera light needs the EMEET HID device — replug the USB into the Pi to update it")
+    with _camera_light_lock:
+        if on is False:
+            _hid_light_do("off")
+        else:
+            known_on = _camera_light_state.get("on")
+            # Raising the level from 0 lights it again, like the knob, so no power command is needed then.
+            level_change = brightness is not None or brightness_step is not None
+            # "On" is confirmed by querying the power state, so it is safe to send even if already on.
+            if on is True or (on is None and known_on is False and not level_change):
+                _camera_light_turn_on(None if brightness is None else max(1, min(100, int(brightness))))
+            if scene is not None:
+                _hid_light_do("scene", scene=int(scene))
+            if brightness is not None:
+                _camera_light_set_level(max(0, min(100, int(brightness))))
+            if brightness_step in ("up", "down"):
+                current, target = _camera_light_step_target(brightness_step)
+                _hid_light_do(brightness_step, level=target, before=current)
+        _camera_light_state["lastError"] = ""
+        _camera_light_state["at"] = datetime.now().strftime("%H:%M:%S")
+    if on is False:
+        return "Camera light OFF"
+    level = _camera_light_state.get("brightness")
+    return f"Camera light ON {level}%" if level else "Camera light ON"
+
+
+def _camera_report_events(after_seq: int) -> list:
+    # Odd ops are the camera's own reports; even ops are ACKs of commands the Pi sent.
+    return [e for e in _camera_light_hid_events if e["seq"] > after_seq and e["op"] % 2 == 1]
+
+
+def _set_camera_light_training(name: str, entry: dict) -> None:
+    training = dict(_camera_light_state.get("training") or {})
+    training[name] = {**(training.get(name) or {}), **entry}
+    _camera_light_state["training"] = training
+
+
+def record_camera_light_action(name: str) -> list[str]:
+    """Capture only what the camera reports while the user does `name` with the camera's own button."""
+    action = CAMERA_LIGHT_TRAIN_ACTIONS[name]
+    _set_camera_light_training(name, {"phase": "recording", "recorded": [], "seconds": CAMERA_LIGHT_RECORD_SECS})
+    start = _camera_light_hid_seq
+    deadline = time.monotonic() + CAMERA_LIGHT_RECORD_SECS
+    count, changed_at = 0, time.monotonic()
+    while time.monotonic() < deadline:
+        events = _camera_report_events(start)
+        if len(events) != count:
+            count, changed_at = len(events), time.monotonic()
+        # Stop once the camera goes quiet so a later, different button press is not mixed in.
+        if events and time.monotonic() - changed_at >= CAMERA_LIGHT_RECORD_QUIET_SECS:
+            break
+        time.sleep(0.2)
+    recorded = [_hid_event_text(e) for e in _camera_report_events(start)]
+    if recorded:
+        _camera_light_hid_signatures[action] = recorded
+        _write_camera_light_hid()
+    _set_camera_light_training(name, {
+        "phase": "recorded" if recorded else "nothing recorded",
+        "recorded": recorded,
+        "at": datetime.now().strftime("%H:%M:%S"),
+    })
+    return recorded
+
+
+def test_camera_light_action(name: str, value: int | None = None) -> str | None:
+    """Try every candidate command for `name` only and keep the first one the camera confirms."""
+    action = CAMERA_LIGHT_TRAIN_ACTIONS[name]
+    level = scene = before = None
+    # The camera only reports a power change, so testing "on" on a lit light proves nothing.
+    if action == "on" and _camera_light_state.get("on") is True:
+        raise RuntimeError("The light is already ON. Turn it OFF with the camera button, then press Test.")
+    if action == "off" and _camera_light_state.get("on") is False:
+        raise RuntimeError("The light is already OFF. Turn it ON with the camera button, then press Test.")
+    if action in ("up", "down"):
+        before, level = _camera_light_step_target(action)
+    elif action == "scene":
+        order = [0, 1, 2, 5]
+        current_scene = next((s for s, m in CAMERA_LIGHT_SCENE_MODES.items() if m == _camera_light_hid_mode), 0)
+        scene = int(value) if value is not None else order[(order.index(current_scene) + 1) % len(order)]
+    _set_camera_light_training(name, {"phase": "testing", "tests": [], "learned": None})
+    with _camera_light_lock:
+        _camera_light_hid_confirmed.pop(action, None)
+        template, results = _hid_light_try(action, CAMERA_LIGHT_HID_CANDIDATES[action], level, scene, before)
+        if template:
+            _camera_light_hid_confirmed[action] = template
+            print(f"[PiWS] Camera light '{action}' confirmed with HID {template}")
+        _write_camera_light_hid()
+    _set_camera_light_training(name, {
+        "phase": "learned" if template else "no command worked",
+        "tests": results,
+        "learned": template,
+        "target": scene if action == "scene" else level,
+        "at": datetime.now().strftime("%H:%M:%S"),
+    })
+    return template
+
+
+def _camera_light_live_state() -> dict:
+    return {key: _camera_light_state.get(key) for key in ("on", "brightness", "mode", "lastError", "at")}
+
+
+def push_camera_light_state(command: dict | None = None) -> bool:
+    """Send the light state (and a finished command) straight to the dashboard over the WebSocket."""
+    ws = realtime_ws
+    if not (ws_connected and ws_authenticated and ws is not None):
+        return False
+    message = {"type": "camera_light", "payload": _camera_light_live_state()}
+    if command:
+        message["command"] = command
+    try:
+        ws.send(json.dumps(message))
+        return True
+    except Exception as err:
+        print(f"[PiWS] Camera light WS push failed: {err}")
+        return False
+
+
+def camera_light_probe_worker():
+    """Track vendor XU changes for diagnostics."""
+    _load_camera_light_hid()
+    if CAMERA_LIGHT_PROBE_SECS <= 0:
+        return
+    prev: dict = {}
+    while not stop_event.wait(CAMERA_LIGHT_PROBE_SECS):
+        if latest_bgr is None:
+            continue
+        try:
+            snap = _camera_xu_snapshot()
+            for sel, value in snap.items():
+                if not isinstance(value, dict):
+                    continue
+                cur = value.get("cur")
+                old = prev.get(sel)
+                if old is not None and cur != old:
+                    change = {"at": snap.get("at"), "sel": int(sel), "from": old, "to": cur}
+                    _append_capped(_camera_light_probe["xuChanges"], change, 30)
+                prev[sel] = cur
+        except Exception as err:
+            _camera_light_probe["xuError"] = str(err)[:200]
+
+
+def camera_light_hid_reader():
+    """Read the camera's light reports as they arrive and push state changes to the dashboard at once."""
+    hid_fd = None
+    pushed: dict = {}
+    push_due = 0.0
+    while not stop_event.is_set():
+        if hid_fd is None:
+            path = _find_camera_hidraw()
+            try:
+                if not path:
+                    raise OSError("no EMEET hidraw node")
+                hid_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                _camera_light_probe["hidError"] = ""
+            except OSError as err:
+                _camera_light_probe["hidError"] = str(err)[:200]
+                stop_event.wait(10)
+                continue
+        try:
+            readable, _, _ = select.select([hid_fd], [], [], CAMERA_LIGHT_PUSH_SECS)
+            while readable:
+                try:
+                    data = os.read(hid_fd, 64)
+                except BlockingIOError:
+                    break
+                if not data:
+                    break
+                _on_camera_hid_report(data)
+                report_hex = data.rstrip(b"\x00").hex()
+                recent = _camera_light_probe["hidInput"]
+                if recent and recent[-1]["hex"] == report_hex:
+                    recent[-1]["n"] = recent[-1].get("n", 1) + 1
+                else:
+                    _append_capped(recent, {"at": datetime.now().strftime("%H:%M:%S"), "hex": report_hex}, 40)
+        except OSError as err:
+            _camera_light_probe["hidError"] = str(err)[:200]
+            try:
+                os.close(hid_fd)
+            except OSError:
+                pass
+            hid_fd = None
+            stop_event.wait(2)
+            continue
+        state = _camera_light_live_state()
+        state.pop("lastError", None)
+        state.pop("at", None)
+        # Turning the knob streams many reports; one push per interval keeps the dashboard live without flooding.
+        now = time.monotonic()
+        if state != pushed and now >= push_due and push_camera_light_state():
+            pushed = state
+            push_due = now + CAMERA_LIGHT_PUSH_SECS
+
+
+def _camera_light_status() -> dict:
+    return {
+        **_camera_light_state,
+        "mapped": bool(_find_camera_hidraw()),
+        "method": "hid",
+        "confirmed": _camera_light_hid_confirmed,
+        "signatures": _camera_light_hid_signatures,
+        "hidMode": _camera_light_hid_mode,
+        "probe": {
+            "xuChanges": _camera_light_probe["xuChanges"][-15:],
+            "hidInput": _camera_light_probe["hidInput"][-30:],
+            "hidError": _camera_light_probe.get("hidError", ""),
+        },
+    }
+
+
+def _run_camera_light_command(cmd_id: str, payload: dict | None = None):
+    payload = payload or {}
+    on = payload.get("on")
+    brightness = payload.get("brightness")
+    scene = payload.get("scene")
+    try:
+        train = payload.get("train")
+        if train is not None:
+            if train not in CAMERA_LIGHT_TRAIN_ACTIONS:
+                raise RuntimeError(f"Unknown light training action: {train}")
+            if not _find_camera_hidraw():
+                raise RuntimeError("Camera light needs the EMEET HID device — replug the USB into the Pi")
+            if payload.get("step") == "record":
+                recorded = record_camera_light_action(train)
+                print(f"[PiWS] CAMERA_LIGHT {cmd_id}: recorded {train}: {recorded or 'nothing'}")
+                if not recorded:
+                    raise RuntimeError(f"Nothing recorded. Do the {train} action on the camera within {int(CAMERA_LIGHT_RECORD_SECS)} s.")
+            else:
+                value = payload.get("value")
+                learned = test_camera_light_action(train, None if value is None else int(value))
+                print(f"[PiWS] CAMERA_LIGHT {cmd_id}: tested {train}: learned {learned or 'nothing'}")
+                if not learned:
+                    raise RuntimeError(f"No command made the camera confirm {train}.")
+        else:
+            message = set_camera_light(
+                None if on is None else bool(on),
+                None if brightness is None else int(brightness),
+                None if scene is None else int(scene),
+                payload.get("brightnessStep"),
+            )
+            print(f"[PiWS] CAMERA_LIGHT {cmd_id}: {message}")
+        status, error = "Executed", ""
+    except Exception as err:
+        _camera_light_state["lastError"] = str(err)[:240]
+        print(f"[PiWS] CAMERA_LIGHT {cmd_id} failed: {err}")
+        status, error = "Failed", str(err)
+    # The dashboard hears the WS push right away; HTTP keeps the stored command and full heartbeat in sync.
+    push_camera_light_state({"id": cmd_id, "status": status, "errorMessage": error[:300]})
+
+    def report():
+        try:
+            update_command_status(cmd_id, status, error)
+        except Exception as report_err:
+            print(f"[PiWS] CAMERA_LIGHT {cmd_id}: could not report {status} ({report_err})")
+        _send_presence_now("camera_light")
+
+    threading.Thread(target=report, daemon=True, name="camera-light-report").start()
+
+
 def _v4l2_control_names(device: str) -> set[str]:
     proc = _run_v4l2_ctl(device, "-l")
     if not proc or proc.returncode != 0:
@@ -1432,8 +2148,10 @@ def discover_v4l2_image_devices(preferred_index=None) -> list[str]:
 
     image_keys = {
         "exposure_auto",
+        "auto_exposure",
         "exposure_auto_priority",
         "white_balance_temperature_auto",
+        "white_balance_automatic",
         "backlight_compensation",
     }
     found: list[str] = []
@@ -1487,9 +2205,11 @@ def enable_v4l2_auto_image_controls(devices: list[str]) -> bool:
     enabled = False
     for dev in devices:
         names = _v4l2_control_names(dev)
-        if CAMERA_AUTO_EXPOSURE and "exposure_auto" in names:
-            if _v4l2_set_ctrl(dev, "exposure_auto", 3):
-                enabled = True
+        # Newer kernels renamed exposure_auto -> auto_exposure; 3 = aperture priority (auto).
+        for exposure_ctrl in ("exposure_auto", "auto_exposure"):
+            if CAMERA_AUTO_EXPOSURE and exposure_ctrl in names:
+                if _v4l2_set_ctrl(dev, exposure_ctrl, 3):
+                    enabled = True
         if CAMERA_AUTO_EXPOSURE and "exposure_auto_priority" in names:
             if _v4l2_set_ctrl(dev, "exposure_auto_priority", 1):
                 enabled = True
@@ -1499,9 +2219,10 @@ def enable_v4l2_auto_image_controls(devices: list[str]) -> bool:
         if CAMERA_AUTO_EXPOSURE and "gain_auto" in names:
             if _v4l2_set_ctrl(dev, "gain_auto", 1):
                 enabled = True
-        if CAMERA_AUTO_WB and "white_balance_temperature_auto" in names:
-            if _v4l2_set_ctrl(dev, "white_balance_temperature_auto", 1):
-                enabled = True
+        for wb_ctrl in ("white_balance_temperature_auto", "white_balance_automatic"):
+            if CAMERA_AUTO_WB and wb_ctrl in names:
+                if _v4l2_set_ctrl(dev, wb_ctrl, 1):
+                    enabled = True
         if CAMERA_BACKLIGHT_COMP and "backlight_compensation" in names:
             if _v4l2_set_ctrl(dev, "backlight_compensation", 1):
                 enabled = True
@@ -1614,8 +2335,9 @@ def apply_usb_camera_tuning(cap, device_index=None):
     auto_exp_prop = _cap_prop("CAP_PROP_AUTO_EXPOSURE")
     if auto_exp_prop is not None and CAMERA_AUTO_EXPOSURE:
         try:
+            # V4L2 backend passes the raw menu value: 3 = auto (aperture priority), 1 = MANUAL.
             if not cap.set(auto_exp_prop, 0.75):
-                cap.set(auto_exp_prop, 1)
+                cap.set(auto_exp_prop, 3)
         except Exception:
             pass
 
@@ -2056,6 +2778,7 @@ def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
 
 def _run_scan_command(cmd_id: str, payload: dict | None = None):
     """Capture only — motors stay idle until Confirm & Register sends SORT."""
+    payload = payload or {}
     profile = _scan_profile_from_payload(payload)
     try:
         guide_label = f" ({profile['paperGuideId']})" if profile.get("paperGuideId") else ""
@@ -2074,7 +2797,7 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
             )
             return
         update_command_status(cmd_id, "Executing")
-        upload_scan(snap, cmd_id)
+        upload_scan(snap, cmd_id, str(payload.get("documentId") or "").strip())
         update_command_status(cmd_id, "Executed")
         print(f"[PiWS] Scan {cmd_id} uploaded — motors NOT started (wait for Confirm & Register)")
     except Exception as err:
@@ -2761,7 +3484,7 @@ def start_ai_enrich_async(document_id: str, command_id: str, image_bytes: bytes)
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def upload_scan(image_bytes: bytes, command_id: str):
+def upload_scan(image_bytes: bytes, command_id: str, document_id: str = ""):
     """Upload the captured JPEG — this exact file becomes the document attachment."""
     global _adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes
     global _ws_send_samples, _ws_send_slow, _adaptive_hold_until
@@ -2769,7 +3492,7 @@ def upload_scan(image_bytes: bytes, command_id: str):
         saved = (_adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes)
     _scan_upload_busy.set()
     try:
-        return _upload_scan_body(image_bytes, command_id)
+        return _upload_scan_body(image_bytes, command_id, document_id)
     finally:
         with _adaptive_lock:
             _adaptive_fps = max(_adaptive_fps, saved[0])
@@ -2781,7 +3504,8 @@ def upload_scan(image_bytes: bytes, command_id: str):
         _scan_upload_busy.clear()
 
 
-def _upload_scan_body(image_bytes: bytes, command_id: str):
+def _upload_scan_body(image_bytes: bytes, command_id: str, document_id: str = ""):
+    is_continuation = bool(document_id)
     encoded = base64.b64encode(image_bytes).decode("ascii")
     payload = {
         "deviceId": DEVICE_ID,
@@ -2795,10 +3519,12 @@ def _upload_scan_body(image_bytes: bytes, command_id: str):
             "dataUrl": f"data:image/jpeg;base64,{encoded}",
         },
     }
+    if document_id:
+        payload["documentId"] = document_id
 
     extracted = False
     ai_extract_pending = False
-    if AI_EXTRACT_ENABLED and GROQ_API_KEY:
+    if AI_EXTRACT_ENABLED and GROQ_API_KEY and not document_id:
         if AI_EXTRACT_BACKGROUND:
             ai_extract_pending = True
             print("[PiWS] Uploading scan first — AI field extraction will run in background")
@@ -2827,7 +3553,13 @@ def _upload_scan_body(image_bytes: bytes, command_id: str):
     response.raise_for_status()
     result = response.json()
     document_id = result.get("documentId") or (result.get("document") or {}).get("id")
-    if AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id and (ai_extract_pending or not extracted):
+    if (
+        not is_continuation
+        and AI_EXTRACT_ENABLED
+        and GROQ_API_KEY
+        and document_id
+        and (ai_extract_pending or not extracted)
+    ):
         print("[PiWS] Scheduling background AI enrich...")
         start_ai_enrich_async(document_id, command_id, image_bytes)
     print(
@@ -2919,6 +3651,13 @@ def handle_command_message(message: str):
     if cmd_name == "MOTOR_TEST":
         threading.Thread(
             target=_run_motor_test_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
+        return
+    if cmd_name == "CAMERA_LIGHT":
+        threading.Thread(
+            target=_run_camera_light_command,
             args=(cmd_id, payload),
             daemon=True,
         ).start()
@@ -3228,6 +3967,7 @@ def _http_presence_heartbeat() -> bool:
             print(f"[PiWS] HTTP heartbeat failed: {response.status_code} {response.text[:160]}")
             return False
         _dispatch_http_pending_commands(response)
+        _check_backend_ws_live(response)
         return True
     except Exception as err:
         print(f"[PiWS] HTTP heartbeat error: {err}")
@@ -3244,6 +3984,20 @@ def _dispatch_http_pending_commands(response):
         if isinstance(command, dict) and command.get("id"):
             print(f"[PiWS] Command {command.get('id')} ({command.get('command')}) received via HTTP heartbeat")
             handle_command_message(json.dumps({"type": "command:pending", "command": command}))
+
+
+def _check_backend_ws_live(response):
+    """Sends into a half-open socket still "succeed", so ask the backend whether it really sees our WS."""
+    try:
+        ws_live = (response.json() or {}).get("wsLive")
+    except Exception:
+        return
+    if ws_live is not False or not ws_authenticated:
+        return
+    authed_for = time.monotonic() - _ws_authed_at
+    if authed_for < WS_LIVE_GRACE_SECS:
+        return
+    _force_ws_reconnect(f"backend has no WS for this Pi (half-open link, authed {authed_for:.0f}s ago)")
 
 
 def _send_presence_now(reason: str):
@@ -3287,9 +4041,10 @@ def handle_realtime_control_message(message: str):
 
     msg_type = data.get("type")
     if msg_type == "auth:ok":
-        global _ws_reconnect_delay
+        global _ws_reconnect_delay, _ws_authed_at
         _clear_auth_timer()
         _stop_auth_retry()
+        _ws_authed_at = time.monotonic()
         ws_authenticated = True
         _ws_reconnect_delay = WS_RECONNECT_MIN_SECS
         _mark_ws_online()
@@ -3473,6 +4228,8 @@ def run():
     threading.Thread(target=ws_sender_worker, daemon=True).start()
     threading.Thread(target=ws_health_watchdog, daemon=True).start()
     threading.Thread(target=heartbeat_worker, daemon=True).start()
+    threading.Thread(target=camera_light_probe_worker, daemon=True, name="camera-light-probe").start()
+    threading.Thread(target=camera_light_hid_reader, daemon=True, name="camera-light-hid").start()
     try:
         mechanism_startup_self_test()
     except Exception as err:

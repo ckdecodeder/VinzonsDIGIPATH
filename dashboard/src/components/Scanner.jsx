@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { jsPDF } from "jspdf";
 import PageShell from "./PageShell";
 import PdfFitPreview from "./PdfFitPreview";
 import {
@@ -25,6 +26,7 @@ import {
   RefreshCw,
   RotateCw,
   XCircle,
+  Lightbulb,
 } from "lucide-react";
 import { resolveUploadUrl, isPdfMedia } from "../utils/mediaUrl";
 import { getReportedBridgeUrl, probeLanBridge, fetchLanSnapshotAny } from "../utils/bridgePreview";
@@ -114,6 +116,94 @@ const renderScannedDocumentPreview = (src, { alt = 'Scanned document', isPdf = f
   );
 };
 
+const MAX_SCAN_PDF_BYTES = 9 * 1024 * 1024;
+
+const blobToDataUrl = (blob, errorMessage) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => (
+    typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error(errorMessage))
+  );
+  reader.onerror = () => reject(reader.error || new Error(errorMessage));
+  reader.readAsDataURL(blob);
+});
+
+const loadCapturedPage = async (file) => {
+  const src = resolveUploadUrl(file?.dataUrl || file?.previewUrl || file?.url);
+  if (!src) throw new Error('A captured page is missing its image URL.');
+
+  const response = await fetch(src);
+  if (!response.ok) throw new Error(`Unable to load captured page "${file.name || 'scan'}".`);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error(`Unable to read captured page "${file.name || 'scan'}".`));
+      image.src = objectUrl;
+    });
+    if (!blob.type.startsWith('image/')) {
+      throw new Error(`Captured page "${file.name || 'scan'}" is not an image.`);
+    }
+    return {
+      data: await blobToDataUrl(blob, `Unable to prepare captured page "${file.name || 'scan'}" for the PDF.`),
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
+
+const createScannedDocumentPdf = async (files, guide) => {
+  if (!files.length) throw new Error('Capture at least one page before creating the PDF.');
+  const pageWidth = guide.width <= 20 ? guide.width * 25.4 : guide.width;
+  const pageHeight = guide.height <= 20 ? guide.height * 25.4 : guide.height;
+  const orientation = pageWidth > pageHeight ? 'landscape' : 'portrait';
+  const pdf = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: [pageWidth, pageHeight],
+    compress: true,
+  });
+
+  for (let index = 0; index < files.length; index += 1) {
+    const page = await loadCapturedPage(files[index]);
+    if (index > 0) pdf.addPage([pageWidth, pageHeight], orientation);
+    const scale = Math.min(pageWidth / page.width, pageHeight / page.height);
+    const width = page.width * scale;
+    const height = page.height * scale;
+    pdf.addImage(
+      page.data,
+      'JPEG',
+      (pageWidth - width) / 2,
+      (pageHeight - height) / 2,
+      width,
+      height,
+      undefined,
+      'FAST',
+    );
+  }
+
+  const blob = pdf.output('blob');
+  if (blob.size > MAX_SCAN_PDF_BYTES) {
+    throw new Error('The combined PDF is larger than the 9 MB upload limit. Capture fewer pages or use a smaller scan resolution.');
+  }
+  const dataUrl = await blobToDataUrl(blob, 'Unable to prepare the combined PDF for upload.');
+  return {
+    id: `scan-pdf-${Date.now()}`,
+    name: `scanned-document-${Date.now()}.pdf`,
+    type: 'application/pdf',
+    size: blob.size,
+    dataUrl,
+    source: 'scanner',
+    uploadedAt: new Date().toISOString(),
+  };
+};
+
 const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {}) => {
   if (!canvas || !frame?.length) return;
   const fitMode = options.fitMode === 'cover' ? 'cover' : 'contain';
@@ -169,7 +259,13 @@ const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {})
 const WS_STREAM_TIMEOUT_MS = 15000;
 const STREAM_STALE_OVERLAY_MS = 90000;
 const SNAPSHOT_POLL_MS = 3500;
-
+// Same order as the camera's own colour button. Scene = what the Pi sends; mode = what the camera reports.
+const CAMERA_LIGHT_SCENES = [
+  { scene: 0, mode: 0 },
+  { scene: 1, mode: 1 },
+  { scene: 2, mode: 2 },
+  { scene: 5, mode: 3 },
+];
 const deviceUsesWsJpegStream = (device) => (
   device?.payload?.streamMode === 'jpeg-ws'
   || device?.payload?.bridgeVersion === 'ws-jpeg-1.0'
@@ -315,6 +411,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [isDeviceScanning, setIsDeviceScanning] = useState(false);
   const [deviceScanStatus, setDeviceScanStatus] = useState('');
   const [isMotorTesting, setIsMotorTesting] = useState(false);
+  const [lightOn, setLightOn] = useState(false);
+  const [isLightBusy, setIsLightBusy] = useState(false);
+  const [lightStatus, setLightStatus] = useState('');
+  const lightCommandAtRef = useRef(0);
+  const lightSceneIndexRef = useRef(null);
+  const [lightBrightness, setLightBrightness] = useState(50);
+  const [liveLight, setLiveLight] = useState(null);
+  const lightResultsRef = useRef(new Map());
+  const lightDraggingRef = useRef(false);
+  const cameraLightState = { ...(device?.payload?.cameraLight || {}), ...(liveLight || {}) };
   const motorTestAbortRef = useRef(false);
   const [sortStatus, setSortStatus] = useState(null);
   const sortPollAbortRef = useRef(false);
@@ -437,11 +543,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     () => ({ fitMode: previewFitMode }),
     [previewFitMode],
   );
+  const previewAspectWidth = streamDims.width || selectedPaperGuide.width;
+  const previewAspectHeight = streamDims.height || selectedPaperGuide.height;
+  const previewAspectRatio = previewAspectWidth / previewAspectHeight;
   const previewShellClassName = [
     'scanner-preview-shell',
     paperGuideLayout.shellClass,
     previewReady ? 'scanner-preview-shell--live' : '',
   ].filter(Boolean).join(' ');
+  const previewShellStyle = {
+    aspectRatio: `${previewAspectWidth} / ${previewAspectHeight}`,
+    maxWidth: previewAspectRatio < 1 ? 'min(100%, 420px)' : '100%',
+    minHeight: 0,
+  };
   const deviceStreamResolution = parseResolutionLabel(
     device?.payload?.streamResolution || device?.payload?.previewResolution,
   );
@@ -994,8 +1108,23 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       const doc = result.resultDocument;
       setHardwareScannedDoc(doc || null);
       if (doc) {
-        const scannedFile = doc.scannedFiles?.find((f) => !isPdfMedia(f?.url, f?.type))
-          || doc.scannedFiles?.[0];
+        const existingCaptureKeys = new Set(
+          capturedImagesRef.current.flatMap((file) => [
+            file.id,
+            file.url,
+            file.previewUrl,
+            file.dataUrl,
+          ]).filter(Boolean),
+        );
+        const scannedFile = doc.scannedFiles?.find((file) => (
+          !isPdfMedia(file?.url, file?.type)
+          && !existingCaptureKeys.has(file?.id || file?.url || file?.dataUrl)
+        ));
+        if (!scannedFile) {
+          setIsDeviceScanning(false);
+          setDeviceScanStatus('The scanner response did not include a new page. Please retry this capture.');
+          return true;
+        }
         const scannedUrl = resolveUploadUrl(
           (scannedFile?.url && !isPdfMedia(scannedFile.url, scannedFile.type) ? scannedFile.url : null)
           || (doc.scannedImageUrl && !isPdfMedia(doc.scannedImageUrl) ? doc.scannedImageUrl : null)
@@ -1008,12 +1137,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         const captureNumber = capturedImagesRef.current.length + 1;
         if (captureNumber > requiredCaptureCount || captureNumber > MAX_SCAN_ATTACHMENTS) {
           setIsDeviceScanning(false);
-          return true;
-        }
-        const fileKey = scannedFile?.id || scannedUrl;
-        if (fileKey && capturedImagesRef.current.some((f) => (f.id || f.url || f.previewUrl) === fileKey)) {
-          setIsDeviceScanning(false);
-          if (capturedImagesRef.current.length >= requiredCaptureCount) setStep(2);
           return true;
         }
         const captureFile = {
@@ -1146,6 +1269,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         paperGuideId: selectedPaperGuide.id,
         scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
         scanHeight: streamDims.height > 0 ? streamDims.height : (deviceStreamResolution?.height || 1080),
+        documentId: hardwareScannedDoc?.id || undefined,
         // Always 1 frame per press — multi-page = multiple button presses.
         captureFrameCount: 1,
       });
@@ -1296,7 +1420,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       if (!motorTestAbortRef.current) {
         setDeviceScanStatus(
           lastStatus === 'Executing'
-            ? 'Pi started the motor test but never reported back. Check Motor diagnostics below for the last test result.'
+            ? 'Pi started the motor test but never reported back. Check that both motors moved, then try again.'
             : 'The Pi never picked up the motor test (still Pending). Its live link is down or it runs old code — replug the USB into the Pi, restart the backend, then try again.',
         );
       }
@@ -1309,6 +1433,93 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     } finally {
       if (!motorTestAbortRef.current) setIsMotorTesting(false);
     }
+  };
+
+  useEffect(() => {
+    if (!realtime) return undefined;
+    return realtime.subscribe('camera_light', (message) => {
+      if (device?.id && message.deviceId !== device.id) return;
+      if (message.light) setLiveLight(message.light);
+      if (message.command?.id) lightResultsRef.current.set(message.command.id, message.command);
+    });
+  }, [realtime, device?.id]);
+
+  const sendCameraLight = async (payload) => {
+    if (!device?.connected) {
+      setLightStatus('Scanner is offline. Check Pi power and network, then wait for heartbeat.');
+      return;
+    }
+    setIsLightBusy(true);
+    setLightStatus('');
+    lightCommandAtRef.current = Date.now();
+    try {
+      const command = await commandService.sendCameraLight(device.id || 'DEV-001', payload);
+      const deadline = Date.now() + 15000;
+      let nextHttpCheckAt = Date.now() + 1500;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        // The Pi pushes the result over the WebSocket; HTTP polling is only the fallback.
+        let result = lightResultsRef.current.get(command.id);
+        if (!result && Date.now() >= nextHttpCheckAt) {
+          nextHttpCheckAt = Date.now() + 1500;
+          try {
+            result = await commandService.checkStatus(command.id);
+          } catch {
+            result = null;
+          }
+        }
+        if (!result) continue;
+        lightResultsRef.current.delete(command.id);
+        if (result.status === 'Executed') {
+          if (payload.scene != null) setLightStatus('Camera light colour changed.');
+          else if (payload.brightness != null) setLightStatus(`Camera light brightness ${payload.brightness}%.`);
+          else setLightStatus(payload.on === false ? 'Camera light off.' : 'Camera light on.');
+          return;
+        }
+        if (result.status === 'Failed' || result.status === 'Cancelled') {
+          setLightStatus(result.errorMessage || `Camera light command ${result.status.toLowerCase()}.`);
+          return;
+        }
+      }
+      setLightStatus('The Pi did not answer the light command. Replug the USB into the Pi so it runs the latest code.');
+    } catch (err) {
+      setLightStatus(toUserFacingError(err.message, 'Unable to send camera light command.'));
+    } finally {
+      setIsLightBusy(false);
+    }
+  };
+
+  const reportedLightOn = cameraLightState.on;
+  const reportedLightBrightness = cameraLightState.brightness;
+  useEffect(() => {
+    if (isLightBusy || lightDraggingRef.current) return;
+    // Without live pushes only heartbeats arrive (up to ~15s late), so a just-sent setting must win.
+    if (!liveLight && Date.now() - lightCommandAtRef.current < 20000) return;
+    if (typeof reportedLightOn === 'boolean') setLightOn(reportedLightOn);
+    if (typeof reportedLightBrightness === 'number') setLightBrightness(reportedLightBrightness);
+  }, [reportedLightOn, reportedLightBrightness, isLightBusy, liveLight]);
+
+  const handleLightToggle = (on) => {
+    if (isLightBusy) return;
+    setLightOn(on);
+    sendCameraLight({ on });
+  };
+
+  const commitLightBrightness = () => {
+    if (isLightBusy) return;
+    sendCameraLight({ brightness: lightBrightness });
+  };
+
+  const handleLightColourChange = () => {
+    if (isLightBusy) return;
+    // The heartbeat's mode lags a few seconds, so keep cycling from the colour we just sent.
+    const recent = Date.now() - lightCommandAtRef.current < 20000 && lightSceneIndexRef.current != null;
+    const reported = CAMERA_LIGHT_SCENES.findIndex((s) => s.mode === cameraLightState.mode);
+    // With live pushes the reported colour is current; otherwise keep cycling from the one just sent.
+    const current = recent && !liveLight ? lightSceneIndexRef.current : reported;
+    const next = (current + 1) % CAMERA_LIGHT_SCENES.length;
+    lightSceneIndexRef.current = next;
+    sendCameraLight({ scene: CAMERA_LIGHT_SCENES[next].scene });
   };
 
   // STEP 2 → STEP 3: Proceed to review
@@ -1339,11 +1550,12 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setIsSubmitting(true);
 
     try {
+      const combinedPdf = await createScannedDocumentPdf(capturedImages, selectedPaperGuide);
+      const filesToSave = [combinedPdf];
       if (hardwareScannedDoc?.id) {
         const scanOfficeId = hardwareScannedDoc.currentOfficeId
           || hardwareScannedDoc.originOfficeId
           || receptionOfficeId;
-        const filesToSave = sanitizeCapturedFiles(capturedImages);
         await onEditDocument?.({
           id: hardwareScannedDoc.id,
           subject: formData.subject,
@@ -1370,6 +1582,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             || hardwareScannedDoc.scannedImageUrl,
           intakeStatus: 'Approved',
         });
+        capturedImagesRef.current = filesToSave;
+        setCapturedImages(filesToSave);
+        setCapturedImage(combinedPdf.dataUrl);
+        setCapturedFileType(combinedPdf.type);
         // Motors run only after Confirm & Register (not on Capture).
         if (device?.connected) {
           const sortLayer = resolveSortLayer(formData.documentTypeId);
@@ -1418,8 +1634,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         senderNotificationChannels: formData.senderContact ? ['sms'] : [],
         remarks: formData.remarks,
         scannedText: extractedText,
-          scannedImageUrl: capturedImages[0]?.url || capturedImage,
-          scannedFiles: sanitizeCapturedFiles(capturedImages),
+        scannedImageUrl: combinedPdf.dataUrl,
+        scannedFiles: filesToSave,
         intakeStatus: 'Approved',
       };
 
@@ -1430,10 +1646,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         transmissionType: 'External',
       };
 
-      await onCapture?.(capturedImage, extractedText, newDoc, newTransmission);
+      await onCapture?.(null, extractedText, newDoc, newTransmission);
+      capturedImagesRef.current = filesToSave;
+      setCapturedImages(filesToSave);
+      setCapturedImage(combinedPdf.dataUrl);
+      setCapturedFileType(combinedPdf.type);
       setStep(4);
-    } catch {
-      // Shared save handler already shows the API error; stay on review step.
+    } catch (err) {
+      setFormErrorSummary(err?.message || 'Unable to create or save the combined PDF.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1640,7 +1860,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </button>
               </div>
 
-              <div className={previewShellClassName}>
+              <div className={previewShellClassName} style={previewShellStyle}>
               <canvas
                 ref={previewCanvasRef}
                 className={`scanner-live-stream scanner-live-canvas${directStreamUrl ? ' scanner-live-stream--hidden' : ''}`}
@@ -1655,6 +1875,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 alt="Physical scanner live preview"
                 onLoad={() => {
                   if (directStreamUrl) {
+                    const dimensions = {
+                      width: previewImgRef.current?.naturalWidth || 0,
+                      height: previewImgRef.current?.naturalHeight || 0,
+                    };
+                    if (dimensions.width && dimensions.height) {
+                      setStreamDims(dimensions);
+                    }
                     previewReadyRef.current = true;
                     setPreviewReady(true);
                     setPreviewMode('direct');
@@ -1825,117 +2052,78 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </div>
               )}
 
-              {isPhysicalSource && device && (() => {
-                const mech = device.payload?.mechanism;
-                const piVersion = device.payload?.piCodeVersion;
-                const test = mech?.lastTest || {};
-                const hallsAfter = test.hallsAfter && Object.keys(test.hallsAfter).length
-                  ? test.hallsAfter
-                  : test.hallsBefore || {};
-                let hint = '';
-                if (!piVersion) {
-                  hint = 'Pi is running old code. Plug the USB (VinzonsDIGIPATH-Pi) into the Pi to auto-update, then wait ~1 min.';
-                } else if (!mech?.enabled) {
-                  hint = 'Motors disabled on the Pi. Set DIGIPATH_MECH_ENABLED=1 in raspberry_pi/.env.';
-                } else if (mech.initError) {
-                  hint = 'GPIO could not start the motor drivers — check that gpiozero/lgpio is installed on the Pi.';
-                } else if (mech.pinFactory && !/^(LGPIO|RPiGPIO|PiGPIO)Factory$/.test(mech.pinFactory) && mech.pinFactory !== 'simulate') {
-                  hint = `GPIO library "${mech.pinFactory}" cannot drive real pins on this Pi — install python3-lgpio (sudo apt install python3-lgpio) so the motor pulses reach the TB6600.`;
-                } else if (/Raspberry Pi 5/i.test(mech.piModel || '') && mech.pinFactory && mech.pinFactory !== 'LGPIOFactory') {
-                  hint = `Raspberry Pi 5 needs lgpio, but "${mech.pinFactory}" is in use — install python3-lgpio.`;
-                } else if (test.ok) {
-                  hint = mech.signalMode === 'sink'
-                    ? 'Pulses were sent. If motors did not move: check motor coil pairs (A+/A−, B+/B−), 9–40V motor power, and TB6600 current DIP switches.'
-                    : 'Pulses were sent. If motors did not move: 3.3V GPIO may be too weak for the TB6600 — rewire PUL+/DIR+/ENA+ to 5V, PUL−/DIR−/ENA− to the GPIOs, and set DIGIPATH_TB6600_SIGNAL_SINK=1.';
-                }
+              {isPhysicalSource && (() => {
+                const cameraLight = cameraLightState;
                 return (
-                  <div className="scanner-motor-diag">
-                    <div className="scanner-motor-diag__title">Motor diagnostics</div>
-                    <dl>
-                      <dt>Pi code</dt>
-                      <dd>{piVersion || 'old (no version reported)'}</dd>
-                      <dt>Live link</dt>
-                      <dd className={device.payload?.websocketConnected ? 'scanner-motor-diag__ok' : 'scanner-motor-diag__bad'}>
-                        {device.payload?.websocketConnected ? 'WebSocket connected' : 'WebSocket down (HTTP backup only)'}
-                      </dd>
-                      {device.payload?.wsLastIssue && (
-                        <>
-                          <dt>Link issue</dt>
-                          <dd>{device.payload.wsLastIssue}</dd>
-                        </>
-                      )}
-                      <dt>Motors</dt>
-                      <dd>
-                        {!mech ? 'no data'
-                          : !mech.enabled ? 'disabled'
-                            : mech.initError ? 'init failed'
-                              : mech.motorsReady === false ? 'not ready' : 'ready'}
-                        {mech?.signalMode ? ` · ${mech.signalMode} wiring` : ''}
-                      </dd>
-                      {mech?.doorMode && (
-                        <>
-                          <dt>Door</dt>
-                          <dd className={mech.doorDetected ? 'scanner-motor-diag__ok' : ''}>
-                            {mech.doorDetected ? 'detected (lift → layer 2)' : 'not detected (lift → layer 1)'}
-                          </dd>
-                        </>
-                      )}
-                      {mech?.liftAt && (
-                        <>
-                          <dt>Lift</dt>
-                          <dd>
-                            {mech.liftAt}
-                            {mech.phase && mech.phase !== 'idle' ? ` · ${mech.phase.replace(/_/g, ' ')}` : ''}
-                          </dd>
-                        </>
-                      )}
-                      {(mech?.pinFactory || mech?.piModel) && (
-                        <>
-                          <dt>GPIO</dt>
-                          <dd>{[mech.pinFactory, mech.piModel].filter(Boolean).join(' · ')}</dd>
-                        </>
-                      )}
-                      {mech?.initError && (
-                        <>
-                          <dt>Error</dt>
-                          <dd className="scanner-motor-diag__bad">{mech.initError}</dd>
-                        </>
-                      )}
-                      <dt>Last test</dt>
-                      <dd className={test.at ? (test.ok ? 'scanner-motor-diag__ok' : 'scanner-motor-diag__bad') : ''}>
-                        {test.at
-                          ? `${test.ok ? 'OK' : 'FAILED'} · ${String(test.at).replace('T', ' ')}`
-                          : 'not run yet'}
-                      </dd>
-                      {test.message && (
-                        <>
-                          <dt>Result</dt>
-                          <dd>{test.message}</dd>
-                        </>
-                      )}
-                      {test.at && test.ok && (
-                        <>
-                          <dt>Pulses</dt>
-                          <dd>
-                            lift {test.liftMoved ?? 0} · sort {test.sortMoved ?? 0} @ {test.stepDelayUs}µs
-                          </dd>
-                        </>
-                      )}
-                      {Object.keys(hallsAfter).length > 0 && (
-                        <>
-                          <dt>Halls</dt>
-                          <dd>
-                            {Object.entries(hallsAfter)
-                              .map(([name, on]) => `${name}: ${on ? 'magnet' : '—'}`)
-                              .join(' · ')}
-                          </dd>
-                        </>
-                      )}
-                    </dl>
-                    {hint && <p className="scanner-motor-diag__hint">{hint}</p>}
+                  <div className="scanner-light-control">
+                    <div className="scanner-light-control__header">
+                      <span className="scanner-light-control__title">
+                        <Lightbulb size={16} />
+                        Camera light
+                      </span>
+                      <div className="scanner-light-control__toggle" role="group" aria-label="Camera light power">
+                        <button
+                          type="button"
+                          onClick={() => handleLightToggle(true)}
+                          disabled={isLightBusy}
+                          className={`btn ${lightOn ? 'btn-primary' : 'btn-secondary'}`}
+                          aria-pressed={lightOn}
+                        >
+                          On
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleLightToggle(false)}
+                          disabled={isLightBusy}
+                          className={`btn ${!lightOn ? 'btn-primary' : 'btn-secondary'}`}
+                          aria-pressed={!lightOn}
+                        >
+                          Off
+                        </button>
+                      </div>
+                    </div>
+                    <label className="scanner-light-control__slider">
+                      <span>Brightness</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="2"
+                        value={lightBrightness}
+                        disabled={isLightBusy}
+                        onChange={(e) => setLightBrightness(Number(e.target.value))}
+                        onPointerDown={() => { lightDraggingRef.current = true; }}
+                        onPointerUp={() => {
+                          lightDraggingRef.current = false;
+                          commitLightBrightness();
+                        }}
+                        onKeyUp={(e) => {
+                          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+                            commitLightBrightness();
+                          }
+                        }}
+                      />
+                      <span className="scanner-light-control__value">
+                        {isLightBusy ? <Loader2 size={14} className="animate-spin" /> : `${lightBrightness}%`}
+                      </span>
+                    </label>
+                    <div className="scanner-light-control__colors">
+                      <span>Colour</span>
+                      <button type="button" onClick={handleLightColourChange} disabled={isLightBusy} className="btn btn-secondary">
+                        Change colour
+                      </button>
+                    </div>
+                    {cameraLight && !cameraLight.mapped && (
+                      <p className="scanner-motor-diag__hint">
+                        The Pi cannot reach the camera&apos;s light control yet. Replug the USB into the Pi to update it.
+                        {cameraLight.probe?.hidError ? ` (${cameraLight.probe.hidError})` : ''}
+                      </p>
+                    )}
+                    {lightStatus && <p className="scanner-light-control__status">{lightStatus}</p>}
                   </div>
                 );
               })()}
+
             </aside>
           </div>
         </div>
@@ -2157,8 +2345,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             </h3>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-            Please verify all information below before submitting.
+            Please verify all information below before submitting. Captured pages will be combined into one PDF in capture order.
           </p>
+          {formErrorSummary && (
+            <div className="form-error-summary" role="alert">{formErrorSummary}</div>
+          )}
 
           <div className="grid-2" style={{ gap: '1.25rem', marginBottom: '1.5rem' }}>
             {/* Scanned Preview */}
