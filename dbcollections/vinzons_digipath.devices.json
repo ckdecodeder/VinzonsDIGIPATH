@@ -1,0 +1,20 @@
+[
+  {
+    "id": "DEV-001",
+    "name": "probe",
+    "model": "Raspberry Pi WS Scanner",
+    "type": "Scanner",
+    "status": "Online",
+    "ip": "127.0.0.1",
+    "location": "",
+    "lastActive": "2026-07-14T05:33:46.706Z",
+    "firmware": "bridge-1.8",
+    "serialNumber": "Digipath",
+    "resolution": "3280x2464",
+    "assignedTo": "OFF-001",
+    "scanCount": 1379,
+    "createdAt": null,
+    "updatedAt": null,
+    "bridgeUrl": "http://192.168.254.132:8080"
+  }
+]

@@ -1,0 +1,18 @@
+[Unit]
+Description=VinzonsDIGIPATH Raspberry Pi Scanner Bridge
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=digipathberry
+WorkingDirectory=/opt/digipath-scanner
+EnvironmentFile=/etc/digipath-scanner.env
+Environment=PYTHONNOUSERSITE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/digipath-scanner/.venv/bin/python /opt/digipath-scanner/pi_scanner_bridge.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

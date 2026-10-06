@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# Auto-copy VinzonsDIGIPATH-Pi from a plugged-in USB drive to Desktop, then eject.
+# Triggered by udev when a USB storage partition is inserted (see pi-install-usb-hook.sh).
+
+set -eu
+
+MARKER_NEW="pi_ws_scanner.py"
+MARKER_OLD="pi_scanner_bridge.py"
+LOG="/var/log/digipath-usb-update.log"
+LOCK="/run/digipath-usb-update.lock"
+RUN_USER="${SUDO_USER:-${DIGIPATH_USER:-digipathberry}}"
+USER_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+if [[ -z "$USER_HOME" ]]; then
+  USER_HOME="/home/$RUN_USER"
+fi
+DEST="${USER_HOME}/Desktop/VinzonsDIGIPATH-Pi"
+
+log() {
+  echo "$(date -Iseconds) $*" | tee -a "$LOG"
+}
+
+if [[ -f "$LOCK" ]]; then
+  exit 0
+fi
+touch "$LOCK"
+trap 'rm -f "$LOCK"' EXIT
+
+log "USB insert detected — waiting for mount..."
+
+resolve_usb_mount() {
+  local src="$1"
+  local mount_point=""
+
+  mount_point="$(findmnt -n -o TARGET --target "$src" 2>/dev/null || true)"
+  if [[ -n "$mount_point" ]]; then
+    echo "$mount_point"
+    return 0
+  fi
+
+  local dir="$src"
+  while [[ "$dir" != "/" ]]; do
+    if findmnt -n "$dir" &>/dev/null; then
+      echo "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+
+  return 1
+}
+
+eject_usb_source() {
+  local src="$1"
+  local mount_point=""
+  local part_dev=""
+  local disk_dev=""
+  local attempt=""
+
+  mount_point="$(resolve_usb_mount "$src" || true)"
+  if [[ -z "$mount_point" ]]; then
+    log "Could not resolve USB mount point — skip eject."
+    return 1
+  fi
+
+  part_dev="$(findmnt -n -o SOURCE --target "$mount_point" 2>/dev/null || true)"
+  log "Ejecting USB at $mount_point (${part_dev:-unknown device})..."
+
+  sync
+  sleep 1
+
+  for attempt in 1 2 3; do
+    if command -v udisksctl >/dev/null 2>&1 && [[ -n "$part_dev" ]]; then
+      if udisksctl unmount -b "$part_dev" >>"$LOG" 2>&1; then
+        log "udisksctl unmount OK (attempt $attempt)"
+        break
+      fi
+    fi
+
+    if findmnt -n "$mount_point" &>/dev/null; then
+      fuser -km "$mount_point" >>"$LOG" 2>&1 || true
+      sleep 1
+      if umount "$mount_point" >>"$LOG" 2>&1; then
+        log "umount OK (attempt $attempt)"
+        break
+      fi
+      umount -l "$mount_point" >>"$LOG" 2>&1 || true
+      sleep 1
+    else
+      break
+    fi
+  done
+
+  if findmnt -n "$mount_point" &>/dev/null; then
+    log "WARN: Failed to unmount $mount_point — USB will stay plugged in."
+    return 1
+  fi
+  log "Unmounted $mount_point"
+
+  if [[ -n "$part_dev" ]]; then
+    disk_dev="$(lsblk -n -o PKNAME "$part_dev" 2>/dev/null | head -1 || true)"
+    if [[ -n "$disk_dev" && "$disk_dev" != "$part_dev" ]]; then
+      disk_dev="/dev/$disk_dev"
+    else
+      disk_dev="$part_dev"
+    fi
+  fi
+
+  sync
+  sleep 1
+
+  if [[ -n "$disk_dev" ]] && command -v udisksctl >/dev/null 2>&1; then
+    if udisksctl power-off -b "$disk_dev" >>"$LOG" 2>&1; then
+      log "USB powered off — safe to remove."
+      return 0
+    fi
+  fi
+
+  if [[ -n "$disk_dev" ]] && command -v eject >/dev/null 2>&1; then
+    if eject "$disk_dev" >>"$LOG" 2>&1; then
+      log "USB ejected — safe to remove."
+      return 0
+    fi
+  fi
+
+  log "USB unmounted — safe to remove."
+  return 0
+}
+
+find_usb_package() {
+  local paths=(
+    /media/*/*
+    /media/*
+    /run/media/*/*
+    /run/media/*
+  )
+
+  for path in "${paths[@]}"; do
+    [[ -e "$path" ]] || continue
+    if [[ -f "$path/$MARKER_NEW" || -f "$path/$MARKER_OLD" ]]; then
+      echo "$path"
+      return 0
+    fi
+    if [[ -f "$path/VinzonsDIGIPATH-Pi/$MARKER_NEW" || -f "$path/VinzonsDIGIPATH-Pi/$MARKER_OLD" ]]; then
+      echo "$path/VinzonsDIGIPATH-Pi"
+      return 0
+    fi
+  done
+
+  while IFS= read -r mount_root; do
+    [[ -d "$mount_root" ]] || continue
+    for entry in "$mount_root"/*; do
+      [[ -e "$entry" ]] || continue
+      if [[ -f "$entry/$MARKER_NEW" || -f "$entry/$MARKER_OLD" ]]; then
+        echo "$entry"
+        return 0
+      fi
+      if [[ -f "$entry/VinzonsDIGIPATH-Pi/$MARKER_NEW" || -f "$entry/VinzonsDIGIPATH-Pi/$MARKER_OLD" ]]; then
+        echo "$entry/VinzonsDIGIPATH-Pi"
+        return 0
+      fi
+    done
+  done < <(find /media /run/media -mindepth 1 -maxdepth 2 -type d 2>/dev/null | sort -u)
+
+  return 1
+}
+
+find_usb_package_with_retry() {
+  local attempt found=""
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    found="$(find_usb_package || true)"
+    if [[ -n "$found" ]]; then
+      echo "$found"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+SRC="$(find_usb_package_with_retry || true)"
+if [[ -z "$SRC" ]]; then
+  log "No VinzonsDIGIPATH-Pi package found on USB."
+  exit 0
+fi
+
+USB_MOUNT="$(resolve_usb_mount "$SRC" || true)"
+
+log "Found USB package: $SRC"
+if [[ -n "$USB_MOUNT" ]]; then
+  log "USB mount point: $USB_MOUNT"
+fi
+log "Copying to $DEST (overwrite)..."
+log "Run user: $RUN_USER | Home: $USER_HOME"
+
+mkdir -p "$(dirname "$DEST")"
+rm -rf "$DEST"
+if command -v rsync >/dev/null 2>&1; then
+  rsync -a --delete --info=stats1 "$SRC"/ "$DEST"/ >>"$LOG" 2>&1
+else
+  cp -a "$SRC" "$DEST"
+fi
+chown -R "$RUN_USER:$RUN_USER" "$DEST" 2>/dev/null || true
+
+# .venv from Windows/USB will not work on Pi — always recreate on bootstrap.
+rm -rf "$DEST/.venv"
+log "Removed .venv from copy (Pi will recreate locally)."
+if [[ ! -d "$DEST" ]]; then
+  log "ERROR: Destination folder missing after copy: $DEST"
+  exit 1
+fi
+if [[ ! -f "$DEST/$MARKER_NEW" && ! -f "$DEST/$MARKER_OLD" ]]; then
+  log "ERROR: Marker file missing in destination after copy."
+  exit 1
+fi
+
+calc_stats() {
+  local dir="$1"
+  local file_count
+  local total_bytes
+  file_count="$(find "$dir" -type f 2>/dev/null | wc -l | tr -d ' ')"
+  total_bytes="$(find "$dir" -type f -printf '%s\n' 2>/dev/null | awk '{s+=$1} END {print s+0}')"
+  echo "${file_count}:${total_bytes}"
+}
+
+SRC_STATS="$(calc_stats "$SRC")"
+DEST_STATS="$(calc_stats "$DEST")"
+log "Source stats: ${SRC_STATS}"
+log "Dest stats:   ${DEST_STATS}"
+if [[ "$SRC_STATS" != "$DEST_STATS" ]]; then
+  log "WARN: Copy stats mismatch (src=$SRC_STATS dest=$DEST_STATS)."
+  if [[ -f "$DEST/$MARKER_NEW" || -f "$DEST/$MARKER_OLD" ]]; then
+    log "Marker file present — continuing with eject anyway."
+  else
+    log "ERROR: Copy integrity check failed. Skip eject."
+    exit 1
+  fi
+fi
+
+sync
+sleep 2
+
+if [[ -f "$DEST/fix-pi-scripts.sh" ]]; then
+  sudo -u "$RUN_USER" bash "$DEST/fix-pi-scripts.sh" >>"$LOG" 2>&1 || true
+fi
+
+log "USB copy complete (overwrite done)."
+
+# Restart from Desktop BEFORE eject — otherwise unmount kills a scanner still running from USB.
+if [[ -f "$DEST/scripts/pi-restart-ws-scanner.sh" ]]; then
+  log "Restarting scanner from Desktop (before USB eject)..."
+  DIGIPATH_USER="$RUN_USER" DIGIPATH_WS_DIR="$DEST" \
+    bash "$DEST/scripts/pi-restart-ws-scanner.sh" >>"$LOG" 2>&1 || true
+  sleep 2
+else
+  log "WARN: pi-restart-ws-scanner.sh missing — scanner not restarted."
+fi
+
+if [[ -n "$USB_MOUNT" ]]; then
+  eject_usb_source "$USB_MOUNT" || eject_usb_source "$SRC" || true
+else
+  eject_usb_source "$SRC" || true
+fi
+
+# Safety net: if unmount still killed the process, start again from Desktop.
+if [[ -f "$DEST/scripts/pi-usb-ensure-scanner.sh" ]]; then
+  sleep 2
+  DIGIPATH_USER="$RUN_USER" DIGIPATH_WS_DIR="$DEST" \
+    bash "$DEST/scripts/pi-usb-ensure-scanner.sh" >>"$LOG" 2>&1 || true
+fi

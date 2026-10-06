@@ -1,0 +1,56 @@
+[
+  {
+    "id": "DT-001",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Memorandum"
+  },
+  {
+    "id": "DT-002",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Executive Order"
+  },
+  {
+    "id": "DT-003",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Communication Letter"
+  },
+  {
+    "id": "DT-004",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Proposal"
+  },
+  {
+    "id": "DT-005",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Resolution"
+  },
+  {
+    "id": "DT-006",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Ordinance"
+  },
+  {
+    "id": "DT-007",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Report"
+  },
+  {
+    "id": "DT-008",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Request"
+  },
+  {
+    "id": "DT-009",
+    "createdAt": null,
+    "updatedAt": null,
+    "category": "Others"
+  }
+]
