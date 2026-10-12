@@ -69,21 +69,22 @@ const ReceptionistDashboard = ({
   const [receiveFormErrorSummary, setReceiveFormErrorSummary] = useState('');
 
   const finishedStatuses = ['Signed', 'Acknowledged', 'Archived', 'Returned to Sender'];
+  const incomingDocuments = documents.filter(d => d.documentDirection === 'Incoming');
   const getWorkflowStatus = (doc) => {
     if (doc?.status === 'For Signature') return 'For Signing';
     if (doc?.status === 'Acknoweledged') return 'Acknowledged';
     return doc?.status || 'Received';
   };
 
-  const todayDocs = documents.filter(d => {
+  const todayDocs = incomingDocuments.filter(d => {
     const today = new Date().toISOString().split('T')[0];
     return d.dateReceived === today;
   });
-  const forwardedToMayorDocs = documents.filter(d => d.destinationOfficeId === mayorsOfficeId || d.currentOfficeId === mayorsOfficeId);
-  const pendingDocuments = [...documents]
+  const forwardedToMayorDocs = incomingDocuments.filter(d => d.destinationOfficeId === mayorsOfficeId || d.currentOfficeId === mayorsOfficeId);
+  const pendingDocuments = [...incomingDocuments]
     .filter(doc => !finishedStatuses.includes(getWorkflowStatus(doc)) && doc.intakeStatus !== 'Returned to Sender')
     .sort((a, b) => compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']));
-  const rejectedDocs = documents.filter(d => d.intakeStatus === 'Rejected');
+  const rejectedDocs = incomingDocuments.filter(d => d.intakeStatus === 'Rejected');
 
   const statCards = [
     {
@@ -109,7 +110,7 @@ const ReceptionistDashboard = ({
     },
     {
       label: 'Total In System',
-      value: documents.length,
+      value: incomingDocuments.length,
       icon: <FileText size={26} />,
       color: 'purple',
       onClick: () => onNavigate('documents'),
@@ -234,7 +235,7 @@ const ReceptionistDashboard = ({
   };
 
   // FIFO external queue
-  const recentIncoming = [...documents]
+  const recentIncoming = [...incomingDocuments]
     .filter(d => d.documentDirection === 'Incoming')
     .sort((a, b) => compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']))
     .slice(0, 4);
@@ -409,7 +410,7 @@ const ReceptionistDashboard = ({
               </tr>
             </thead>
             <tbody>
-              {documents.filter(d => d.documentDirection === 'Incoming').map(doc => {
+              {incomingDocuments.map(doc => {
                 return (
                   <tr
                     key={doc.id}

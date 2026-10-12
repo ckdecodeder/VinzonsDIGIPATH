@@ -2,9 +2,9 @@ const { getUserOfficeId } = require('./helpers');
 
 /**
  * Admin/Mayor see everything.
- * Everyone else only sees documents currently assigned to their office:
+ * Offices see documents currently assigned to them and their own outbox history:
  * - In Transit → destination office only
- * - Otherwise → current office only
+ * - Otherwise → current office, originated documents, or documents they routed
  *
  * Flow: Reception → Selected Office → Received by Selected Office
  * Once routed forward, the previous office loses document access.
@@ -17,6 +17,8 @@ const isGlobalDocumentViewer = (req) => {
 const getOfficeDocumentVisibilityClauses = (officeId) => [
   { status: 'In Transit', destinationOfficeId: officeId },
   { status: { $ne: 'In Transit' }, currentOfficeId: officeId },
+  { originOfficeId: officeId },
+  { 'sendHistory.fromOfficeId': officeId },
 ];
 
 const getScopedDocumentQuery = (req) => {
@@ -25,9 +27,15 @@ const getScopedDocumentQuery = (req) => {
   const officeId = getUserOfficeId(req);
   if (!officeId) return { id: '__no_office__' };
 
-  return {
+  const visibilityQuery = {
     $or: getOfficeDocumentVisibilityClauses(officeId),
   };
+
+  if (req.user?.role === 'Receptionist') {
+    return { $and: [{ documentDirection: 'Incoming' }, visibilityQuery] };
+  }
+
+  return visibilityQuery;
 };
 
 const getScopedTransmissionQuery = (req) => {

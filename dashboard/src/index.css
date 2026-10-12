@@ -2610,6 +2610,12 @@ tbody tr:hover {
   width: 17%;
 }
 
+.documents-col-sender {
+  width: 10%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .documents-col-priority {
   width: 7%;
   text-align: center;
@@ -2700,6 +2706,16 @@ tbody tr:hover {
 .documents-col-priority .status-badge,
 .documents-col-priority span {
   max-width: 100%;
+}
+
+.documents-custody-badge {
+  display: inline-flex;
+  width: fit-content;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-size: 0.75rem;
 }
 
 .documents-col-status-cell {

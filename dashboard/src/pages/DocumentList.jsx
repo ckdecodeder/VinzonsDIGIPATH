@@ -13,12 +13,21 @@ import {
   documentTypes as defaultDocumentTypes,
   offices as defaultOffices,
   users as defaultUsers,
+  priorityLevels as defaultPriorityLevels,
+  getPriorityInfo,
 } from '../data/mockData';
 import { compareOldest } from '../utils/sorting';
 import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
+import {
+  canAcknowledgeDocument as canAcknowledgeByWorkflow,
+  canArchiveDocument as canArchiveByWorkflow,
+  canRejectDocument as canRejectByWorkflow,
+  canSignDocument as canSignByWorkflow,
+  canTakeDocumentAction as canActByWorkflow,
+  isOfficeReadOnlyTracking,
+} from '../utils/documentActionRules';
 
-const getPriorityInfo = () => ({ id: 'normal', label: 'Normal', color: 'var(--text-muted)', bg: 'transparent' });
-const priorityLevels = [];
+const priorityLevels = ['All', ...defaultPriorityLevels.map(level => level.label)];
 
 const OTHER_OFFICE_VALUE = '__external_source__';
 
@@ -143,7 +152,7 @@ const DocumentList = ({
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterStatus, filterDirection, filterDate]);
+  }, [search, filterStatus, filterDirection, filterPriority, filterDate]);
 
   const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
   const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
@@ -154,7 +163,7 @@ const DocumentList = ({
     : currentRole === 'office'
       ? ['All', 'Outgoing']
       : ['All', 'Incoming', 'Outgoing'];
-  const priorities = ['All'];
+  const priorities = priorityLevels;
 
   const getWorkflowStatus = (value) => {
     const status = typeof value === 'string' ? value : value?.status;
@@ -375,9 +384,11 @@ const DocumentList = ({
         getCurrentLocation(d).toLowerCase().includes(term);
       const matchStatus = filterStatus === 'All' || getWorkflowStatus(d) === filterStatus;
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
+      const priority = (d.priorityLevel || 'normal').toLowerCase();
+      const matchPriority = filterPriority === 'All' || priority === filterPriority.toLowerCase();
       const receivedDate = d.dateReceived || '';
       const matchDate = !filterDate || receivedDate === filterDate;
-      return matchSearch && matchStatus && matchDir && matchDate;
+      return matchSearch && matchStatus && matchDir && matchPriority && matchDate;
     })
     .sort((a, b) => {
       // FIFO by default: oldest registration first
@@ -580,10 +591,7 @@ const DocumentList = ({
       if (editingDoc) {
         await onEdit(payload);
       } else {
-        const saved = await onAdd(payload);
-        if (isOfficeStaff && saved?.id && normalizedFormData.destinationOfficeId) {
-          await sendDocument(saved.id, [normalizedFormData.destinationOfficeId]);
-        }
+        await onAdd(payload);
       }
       setShowForm(false);
       setEditDoc(null);
@@ -861,7 +869,9 @@ const DocumentList = ({
   const canDelete = currentRole === 'admin';
   const canCreate = currentRole === 'admin' || currentRole === 'receptionist' || isOfficeUser;
   const canEdit = currentRole === 'admin' || currentRole === 'receptionist';
-  const canManageAttachments = canEdit || isOfficeUser;
+  const canManageAttachments = (doc) => canEdit || (
+    isOfficeUser && doc?.currentOfficeId === currentUser?.officeId
+  );
   const canRoute = isApprovalUser || isOfficeUser;
   const canVerify = isApprovalUser;
   const isApprovedForWorkflow = (doc) => (doc.intakeStatus || 'Approved') === 'Approved';
@@ -879,13 +889,15 @@ const DocumentList = ({
     );
   };
   const canReceiveTransmission = () => false;
-  const canTakeDocumentAction = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && ['Received', 'For Signing', 'For Filing', ...finalWorkflowStatuses].includes(getWorkflowStatus(doc));
-  const canArchiveDocument = (doc) => isApprovalUser && isApprovedForWorkflow(doc) && finalWorkflowStatuses.includes(getWorkflowStatus(doc));
-  const canRejectDocument = (doc) => (
-    canVerify
-    && ['Approved', 'Pending Review'].includes(doc.intakeStatus || 'Approved')
-    && registrationStatuses.includes(getWorkflowStatus(doc))
-  );
+  const approvalActor = {
+    role: currentRole === 'admin' ? 'Admin' : currentRole === 'mayor' ? 'Mayor' : currentUser?.role,
+    officeId: currentUser?.officeId,
+  };
+  const canTakeDocumentAction = (doc) => canActByWorkflow(doc, approvalActor);
+  const canSignDocument = (doc) => canSignByWorkflow(doc, approvalActor);
+  const canAcknowledgeDocument = (doc) => canAcknowledgeByWorkflow(doc, approvalActor);
+  const canArchiveDocument = (doc) => canArchiveByWorkflow(doc, approvalActor);
+  const canRejectDocument = (doc) => canVerify && canRejectByWorkflow(doc, approvalActor);
   const pageTitle = isOfficeUser ? 'My Documents' : 'Documents';
   const pageSubtitle = isOfficeUser
     ? 'Send documents to other offices in chronological order and track progress'
@@ -922,12 +934,12 @@ const DocumentList = ({
             <MessageSquare size={14} /> Add Action
           </button>
         )}
-        {canTakeDocumentAction(doc) && ['Received', 'For Signing'].includes(status) && (
+        {canSignDocument(doc) && (
           <button className="btn btn-sm btn-success" onClick={() => openProcessingAction(doc, 'sign_document')}>
             <CheckCircle2 size={14} /> Signed
           </button>
         )}
-        {canTakeDocumentAction(doc) && ['Received', 'For Filing', 'For Signing', 'Signed'].includes(status) && (
+        {canAcknowledgeDocument(doc) && (
           <button className="btn btn-sm btn-success" onClick={() => openProcessingAction(doc, 'acknowledge_document')}>
             <CheckCircle2 size={14} /> Acknowledge
           </button>
@@ -1007,6 +1019,12 @@ const DocumentList = ({
                   ))}
                 </select>
               </div>
+              <div className="filter-dropdown">
+                <label>Priority</label>
+                <select className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+                  {priorities.map(priority => <option key={priority} value={priority}>{priority}</option>)}
+                </select>
+              </div>
             </div>
           </div>
         }
@@ -1018,9 +1036,8 @@ const DocumentList = ({
             <tr>
               <th className="documents-col-tracking">Tracking #</th>
               <th className="documents-col-subject">Subject</th>
-              <th className="documents-col-priority">
-                Sender
-              </th>
+              <th className="documents-col-sender">Sender</th>
+              <th className="documents-col-priority">Priority</th>
               <th className="documents-col-type">Type</th>
               <th className="documents-col-location">Location</th>
               <th className="documents-col-direction">Direction</th>
@@ -1052,8 +1069,14 @@ const DocumentList = ({
                       <span className="td-mono documents-tracking-code">{doc.trackingNumber}</span>
                     </td>
                     <td className="td-primary documents-col-subject" title={doc.subject}>{doc.subject}</td>
-                    <td className="documents-col-priority" title={doc.senderName || '-'}>
+                    <td className="documents-col-sender" title={doc.senderName || '-'}>
                       {doc.senderName || '-'}
+                    </td>
+                    <td className="documents-col-priority">
+                      {(() => {
+                        const info = getPriorityInfo((doc.priorityLevel || 'normal').toLowerCase());
+                        return <span className="documents-priority-badge" style={{ color: info.color, background: info.bg }}>{info.label}</span>;
+                      })()}
                     </td>
                     <td className="documents-col-type" title={getDocumentTypeLabel(doc)}>{getDocumentTypeLabel(doc)}</td>
                     <td className="documents-col-location" title={getCurrentLocation(doc)}>
@@ -1101,7 +1124,7 @@ const DocumentList = ({
 
                   {isExpanded && (
                     <tr>
-                      <td colSpan="10" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)' }}>
+                      <td colSpan="11" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)' }}>
                         <DocumentWorkflowPipeline
                           doc={doc}
                           hasPendingTransmission={Boolean(pendingTransmission)}
@@ -1210,7 +1233,7 @@ const DocumentList = ({
                                             ? ' PNG'
                                             : ''}
                                     </button>
-                                    {canManageAttachments && (
+                                    {canManageAttachments(doc) && (
                                       <button
                                         type="button"
                                         className="attachment-remove"
@@ -1255,7 +1278,7 @@ const DocumentList = ({
               );
             }) : (
               <tr>
-                <td colSpan="10">
+              <td colSpan="11">
                   <div className="empty-state">
                     <div className="empty-state-icon"><FileText size={24} /></div>
                     <h3>No documents found</h3>
@@ -1343,6 +1366,12 @@ const DocumentList = ({
                     <div className="detail-pair"><span>Intake Review</span><strong>{doc.intakeStatus || 'Approved'}</strong></div>
                     {workflowExplanation && <div className="detail-pair"><span>Workflow Note</span><strong>{workflowExplanation}</strong></div>}
                     {doc.rejectionReason && <div className="detail-pair"><span>Rejection Reason</span><strong>{doc.rejectionReason}</strong></div>}
+                    {isOfficeReadOnlyTracking(doc, currentUser) && (
+                      <div className="detail-pair">
+                        <span>Custody</span>
+                        <strong className="documents-custody-badge">Outgoing / In Transit</strong>
+                      </div>
+                    )}
                     <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc)}</strong></div>
                     <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
                     <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
@@ -1394,7 +1423,7 @@ const DocumentList = ({
                                     ? ' PNG'
                                     : ''}
                             </button>
-                            {canManageAttachments && (
+                            {canManageAttachments(doc) && (
                               <button
                                 type="button"
                                 className="attachment-remove"
@@ -1535,6 +1564,19 @@ const DocumentList = ({
                       )}
                     </div>
                   )}
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="document-priority-level">Priority Level</label>
+                    <select
+                      id="document-priority-level"
+                      className="form-select"
+                      value={formData.priorityLevel || 'normal'}
+                      onChange={e => setFormData({ ...formData, priorityLevel: e.target.value })}
+                    >
+                      {defaultPriorityLevels.map(level => (
+                        <option key={level.id} value={level.id}>{level.label}</option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="form-group">
                     <label className="form-label">Direction</label>
                     <select
@@ -1884,10 +1926,10 @@ const DocumentList = ({
       {previewFile && (
         <ScannedPreviewModal
           file={previewFile}
-          canEdit={canManageAttachments}
+          canEdit={canManageAttachments(previewDoc)}
           onClose={closePreview}
           onSaveRotated={handleSaveRotatedAttachment}
-          onRemove={canManageAttachments ? () => handleRemoveAttachment(previewDoc, previewFile.id) : undefined}
+          onRemove={canManageAttachments(previewDoc) ? () => handleRemoveAttachment(previewDoc, previewFile.id) : undefined}
           onNotify={onNotify}
         />
       )}

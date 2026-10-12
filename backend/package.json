@@ -11,7 +11,7 @@
     "export-db": "node scripts/export-pg-to-json.js",
     "smoke": "node scripts/workflow-smoke.js",
     "audit:roles": "node scripts/role-audit.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test test/*.test.js"
   },
   "keywords": [],
   "author": "",

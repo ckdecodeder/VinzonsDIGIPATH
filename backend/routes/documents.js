@@ -21,6 +21,7 @@ const { normalizeSenderNotificationChannels, queueSenderNotifications } = requir
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
 const { persistAttachments, removeOrphanedAttachments } = require('../utils/attachments');
+const { buildInitialOfficeRoute, normalizePriorityLevel, getStatusAfterSend } = require('../utils/documentRouting');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
@@ -226,27 +227,31 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
   }
   const requiresMayorApproval = docType?.requiresMayorApproval || false;
 
-  let routePlan = [];
-  let routeStep = 0;
   let finalStatus = registrationStatus;
+  let initialRoute = null;
 
   if (requiresMayorApproval) {
-    // Force path through Mayor's Office
-    routePlan = [originOfficeId, mayorsOfficeId];
-    if (destinationOfficeId && destinationOfficeId !== mayorsOfficeId && destinationOfficeId !== originOfficeId) {
-      routePlan.push(destinationOfficeId);
-    }
-    currentOfficeId = mayorsOfficeId;
+    initialRoute = buildInitialOfficeRoute({
+      originOfficeId,
+      destinationOfficeId,
+      mayorsOfficeId,
+      requiresMayorApproval: true,
+      sentBy: req.user?.id,
+      sentAt: now,
+    });
+    currentOfficeId = initialRoute.currentOfficeId;
     finalStatus = 'For Signing';
-    routeStep = 1; // Start at Mayor's office
   } else {
-    // Direct routing
-    routePlan = [originOfficeId];
-    if (destinationOfficeId && destinationOfficeId !== originOfficeId) {
-      routePlan.push(destinationOfficeId);
-    }
-    routeStep = 0; // Start at origin
-    // currentOfficeId remains as calculated earlier
+    initialRoute = buildInitialOfficeRoute({
+      originOfficeId,
+      destinationOfficeId,
+      mayorsOfficeId,
+      requiresMayorApproval: false,
+      sentBy: req.user?.id,
+      sentAt: now,
+    });
+    currentOfficeId = initialRoute.currentOfficeId;
+    finalStatus = initialRoute.status;
   }
 
   const channels = normalizeSenderNotificationChannels(body.senderNotificationChannels, body)
@@ -259,7 +264,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     documentDirection,
     status: finalStatus,
     intakeStatus: requestedIntakeStatus,
-    priorityLevel: 'normal',
+    priorityLevel: normalizePriorityLevel(body.priorityLevel),
     dateReceived: body.dateReceived || now.split('T')[0],
     createdAt: body.createdAt || now,
     updatedAt: now,
@@ -279,11 +284,11 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     senderNotificationConsent: body.senderNotificationConsent !== undefined ? Boolean(body.senderNotificationConsent) : true,
     scannedFiles,
     scannedImageUrl: body.scannedImageUrl || scannedFiles[0]?.url || scannedFiles[0]?.dataUrl,
-    sendHistory: Array.isArray(body.sendHistory) ? body.sendHistory : [],
-    sendQueue: Array.isArray(body.sendQueue) ? body.sendQueue : [],
-    routePlan,
-    routeStep,
-    mayorApprovalCleared: false,
+    sendHistory: isOfficeUser ? initialRoute.sendHistory : (Array.isArray(body.sendHistory) ? body.sendHistory : []),
+    sendQueue: isOfficeUser ? initialRoute.sendQueue : (Array.isArray(body.sendQueue) ? body.sendQueue : []),
+    routePlan: isOfficeUser ? initialRoute.routePlan : (Array.isArray(body.routePlan) ? body.routePlan : []),
+    routeStep: isOfficeUser ? initialRoute.routeStep : (Number(body.routeStep) || 0),
+    mayorApprovalCleared: Boolean(body.mayorApprovalCleared),
   };
 };
 
@@ -385,6 +390,19 @@ router.get('/:id', allRoles, asyncHandler(async (req, res) => {
 }));
 
 router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
+  if (req.user?.role === 'Office') {
+    const requestedDestination = normalizeText(req.body.destinationOfficeId);
+    if (!requestedDestination) {
+      return res.status(400).json({ message: 'Select a destination office before submitting the document' });
+    }
+    if (requestedDestination === getUserOfficeId(req)) {
+      return res.status(400).json({ message: 'Choose a different office than your own' });
+    }
+    const destination = await Office.findOne({ id: requestedDestination }).lean();
+    if (!destination) {
+      return res.status(400).json({ message: 'Select a valid destination office' });
+    }
+  }
   requireFields(req.body, ['subject', 'senderName']);
   const hasAttachment = Boolean(
     (Array.isArray(req.body.scannedFiles) && req.body.scannedFiles.length)
@@ -394,6 +412,23 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'A scanned file attachment is required' });
   }
   const documentPayload = await normalizeDocumentPayload(req, req.body);
+  const initialRouteTimeline = req.user?.role === 'Office'
+    ? documentPayload.sendHistory.map((event) => {
+      const destination = event.toOfficeId === documentPayload.destinationOfficeId
+        ? documentPayload.destinationOfficeId
+        : event.toOfficeId;
+      const tl = createTimelineEvent(
+        req,
+        'document_sent',
+        'Sent to office',
+        `Sent from ${event.fromOfficeId} to ${destination}`,
+        event.toOfficeId,
+        documentPayload.id,
+      );
+      tl.timestamp = event.sentAt;
+      return tl;
+    })
+    : [];
   const doc = new Document({
     ...documentPayload,
     timeline: [
@@ -405,15 +440,30 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
         req.user?.role === 'Receptionist'
           ? `External document registered and forwarded to Mayor's Office: ${documentPayload.subject}`
           : `Document registered: ${documentPayload.subject}`,
-        documentPayload.currentOfficeId,
+        req.user?.role === 'Office' ? documentPayload.originOfficeId : documentPayload.currentOfficeId,
         documentPayload.id,
       ),
+      ...initialRouteTimeline,
     ],
   });
   await doc.save();
 
   await runPostSaveSideEffects('create_log', () =>
     createLogEntry(req, 'document_received', `Registered document: ${doc.subject}`, doc.id));
+  if (req.user?.role === 'Office' && doc.sendHistory?.length) {
+    const firstRoute = doc.sendHistory[0];
+    await runPostSaveSideEffects('create_send_log', () =>
+      createLogEntry(req, 'document_sent', `Sent ${doc.subject} to ${firstRoute.toOfficeId}`, doc.id));
+    await runPostSaveSideEffects('create_send_notify', () => createNotification({
+      officeId: firstRoute.toOfficeId,
+      title: 'Document received',
+      message: `${doc.trackingNumber} was sent to your office.`,
+      type: 'info',
+      referenceType: 'document',
+      referenceId: doc.id,
+      page: 'documents',
+    }));
+  }
   await runPostSaveSideEffects('create_notify', async () => {
     if (req.user?.role === 'Receptionist') {
       await notifyApprovalUsers({
@@ -424,7 +474,7 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
         referenceId: doc.id,
         page: 'documents',
       });
-    } else {
+    } else if (req.user?.role !== 'Office') {
       await createNotification({
         officeId: doc.currentOfficeId,
         title: 'Document registered',
@@ -874,6 +924,8 @@ router.post('/:id/send', sendRoles, asyncHandler(async (req, res) => {
   });
 
   const existingTimeline = Array.isArray(doc.timeline) ? doc.timeline : [];
+  const isCompletedStatus = finalWorkflowStatuses.includes(doc.status);
+  const nextStatus = getStatusAfterSend(doc.status);
   const savedDoc = await Document.findOneAndUpdate(
     { id: doc.id },
     {
@@ -881,8 +933,9 @@ router.post('/:id/send', sendRoles, asyncHandler(async (req, res) => {
         currentOfficeId: firstOfficeId,
         destinationOfficeId: firstOfficeId,
         lastRoutedAt: now,
-        preTransitStatus: normalizeWorkflowStatus(doc.status, 'Received'),
-        status: 'Received',
+        ...(isCompletedStatus ? {} : { preTransitStatus: normalizeWorkflowStatus(doc.status, 'Received') }),
+        status: nextStatus,
+        ...(isCompletedStatus ? { mayorApprovalCleared: true } : {}),
         sendHistory: [...existingHistory, ...sendEvents],
         sendQueue: remaining,
         timeline: [...existingTimeline, ...timelineEvents],
