@@ -43,10 +43,13 @@ const UserModel = sequelize
 
 const DocumentTypeModel = sequelize
   ? sequelize.define('DocumentType', {
-      id:        { type: DataTypes.STRING, primaryKey: true },
-      category:  { type: DataTypes.STRING, allowNull: false },
-      createdAt: { type: DataTypes.STRING },
-      updatedAt: { type: DataTypes.STRING },
+      id:                    { type: DataTypes.STRING, primaryKey: true },
+      category:              { type: DataTypes.STRING, allowNull: false },
+      // Phase 1 — Workflow routing fields
+      requiresMayorApproval: { type: DataTypes.BOOLEAN, defaultValue: false },
+      routingTrack:          { type: DataTypes.STRING, defaultValue: 'direct' },
+      createdAt:             { type: DataTypes.STRING },
+      updatedAt:             { type: DataTypes.STRING },
     }, { tableName: 'document_types', timestamps: false })
   : null;
 
@@ -90,6 +93,10 @@ const DocumentModel = sequelize
       sendHistory:                  { type: DataTypes.JSONB, defaultValue: [] },
       sendQueue:                    { type: DataTypes.JSONB, defaultValue: [] },
       timeline:                     { type: DataTypes.JSONB, defaultValue: [] },
+      // Phase 1 — Workflow routing fields
+      routePlan:                    { type: DataTypes.JSONB, defaultValue: [] },
+      routeStep:                    { type: DataTypes.INTEGER, defaultValue: 0 },
+      mayorApprovalCleared:         { type: DataTypes.BOOLEAN, defaultValue: false },
       createdAt:                    { type: DataTypes.TEXT },
       updatedAt:                    { type: DataTypes.TEXT },
     }, { tableName: 'documents', timestamps: false })
@@ -292,12 +299,42 @@ const migrateSenderNotificationFields = async () => {
   `);
 };
 
+// Phase 1 — Add routing fields to document_types table
+const migrateDocumentTypeRoutingFields = async () => {
+  await sequelize.query(`
+    ALTER TABLE document_types
+    ADD COLUMN IF NOT EXISTS "requiresMayorApproval" BOOLEAN DEFAULT false;
+  `);
+  await sequelize.query(`
+    ALTER TABLE document_types
+    ADD COLUMN IF NOT EXISTS "routingTrack" TEXT DEFAULT 'direct';
+  `);
+};
+
+// Phase 1 — Add routing fields to documents table
+const migrateDocumentRoutingFields = async () => {
+  await sequelize.query(`
+    ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS "routePlan" JSONB DEFAULT '[]'::jsonb;
+  `);
+  await sequelize.query(`
+    ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS "routeStep" INTEGER DEFAULT 0;
+  `);
+  await sequelize.query(`
+    ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS "mayorApprovalCleared" BOOLEAN DEFAULT false;
+  `);
+};
+
 const syncModels = async () => {
   if (!sequelize) return;
   await migrateDocumentTypeCategory();
   await migrateDeviceBridgeUrl();
   await migrateDocumentSendFields();
   await migrateSenderNotificationFields();
+  await migrateDocumentTypeRoutingFields();
+  await migrateDocumentRoutingFields();
   // Use sync() without alter — tables were already created correctly by migrate-pg.js
   // alter:true would try to downgrade TEXT → VARCHAR(255), breaking existing data
   await sequelize.sync();

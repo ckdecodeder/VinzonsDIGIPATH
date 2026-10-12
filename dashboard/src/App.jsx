@@ -19,6 +19,7 @@ import DocumentList from './pages/DocumentList';
 import ArchiveList from './pages/ArchiveList';
 import OfficeList from './pages/OfficeList';
 import UserList from './pages/UserList';
+import DocumentTypeList from './pages/DocumentTypeList';
 import ReceptionistDashboard from './pages/ReceptionistDashboard';
 import DeviceControlPanel from './pages/DeviceControlPanel';
 import ActivityLogs from './pages/ActivityLogs';
@@ -31,6 +32,7 @@ import {
   archiveService,
   authService,
   documentService,
+  documentTypeService,
   notificationService,
   officeService,
   scannerService,
@@ -46,7 +48,7 @@ import { realtimeClient } from './ws/realtimeClient';
 const PAGE_STORAGE_KEY = 'dp_currentPage';
 
 const ROLE_PAGES = {
-  admin: ['dashboard', 'documents', 'add-document', 'archives', 'offices', 'users', 'reports', 'logs', 'device-panel', 'scan-documents', 'profile-settings'],
+  admin: ['dashboard', 'documents', 'add-document', 'archives', 'offices', 'users', 'document-types', 'reports', 'logs', 'device-panel', 'scan-documents', 'profile-settings'],
   mayor: ['dashboard', 'documents', 'add-document', 'archives', 'reports', 'logs', 'profile-settings'],
   office: ['dashboard', 'documents', 'add-document', 'reports', 'logs', 'profile-settings'],
   receptionist: ['dashboard', 'scan-documents', 'documents', 'reports', 'logs', 'profile-settings'],
@@ -715,6 +717,38 @@ function App() {
     refreshAfterMutation();
   };
 
+  // Phase 4 — Document Type CRUD handlers
+  const handleAddDocumentType = async (data) => {
+    const saved = await runMutation(() => documentTypeService.create(data));
+    setDocumentTypes((prev) => [saved, ...prev]);
+    showActionToast('created');
+    refreshAfterMutation();
+    return saved;
+  };
+
+  const handleUpdateDocumentType = async (id, data) => {
+    const saved = await runMutation(() => documentTypeService.update(id, data));
+    setDocumentTypes((prev) => prev.map((t) => (t.id === id ? saved : t)));
+    showActionToast('updated');
+    refreshAfterMutation();
+    return saved;
+  };
+
+  const handleDeleteDocumentType = async (id) => {
+    const existing = documentTypes.find((t) => t.id === id);
+    const confirmed = await confirmUser({
+      type: 'danger',
+      title: 'Delete document type?',
+      message: `Remove "${existing?.category || 'this type'}"? This cannot be undone.`,
+      confirmLabel: 'Delete',
+    });
+    if (!confirmed) return;
+    await runMutation(() => documentTypeService.delete(id));
+    setDocumentTypes((prev) => prev.filter((t) => t.id !== id));
+    showActionToast('deleted');
+    refreshAfterMutation();
+  };
+
   const canSeeDocument = (doc) => isDocumentVisibleToUser(doc, currentUser, { role: currentRole });
 
   const canSeeTransmission = (transmission) => isTransmissionVisibleToUser(transmission, currentUser, { role: currentRole });
@@ -1029,6 +1063,16 @@ function App() {
                 onAddUser={handleAddUser}
                 onUpdateUser={handleUpdateUser}
                 onDeleteUser={handleDeleteUser}
+              />
+            );
+          case 'document-types':
+            return (
+              <DocumentTypeList
+                documentTypes={documentTypes}
+                documents={visibleDocuments}
+                onAddDocumentType={handleAddDocumentType}
+                onUpdateDocumentType={handleUpdateDocumentType}
+                onDeleteDocumentType={handleDeleteDocumentType}
               />
             );
           default:

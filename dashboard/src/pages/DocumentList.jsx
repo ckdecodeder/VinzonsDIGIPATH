@@ -1108,6 +1108,60 @@ const DocumentList = ({
                           locationLabel={getCurrentLocation(doc)}
                           workflowNote={workflowExplanation}
                         />
+
+                        {/* Phase 4 — Route Progress Stepper */}
+                        {Array.isArray(doc.routePlan) && doc.routePlan.length > 1 && (
+                          <div style={{
+                            margin: '0.75rem 0 1rem',
+                            padding: '0.85rem 1.1rem',
+                            background: 'var(--surface-2)',
+                            borderRadius: '10px',
+                            border: '1px solid var(--border)',
+                          }}>
+                            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
+                              Route Progress
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.25rem' }}>
+                              {doc.routePlan.map((officeId, idx) => {
+                                const isCurrent = idx === (doc.routeStep ?? 0);
+                                const isDone = idx < (doc.routeStep ?? 0);
+                                const officeName = getOfficeName(officeId);
+                                return (
+                                  <React.Fragment key={officeId + idx}>
+                                    <div style={{
+                                      display: 'flex', alignItems: 'center', gap: '0.3rem',
+                                      padding: '0.3rem 0.65rem',
+                                      borderRadius: '999px',
+                                      fontSize: '0.78rem',
+                                      fontWeight: isCurrent ? 700 : 500,
+                                      background: isCurrent
+                                        ? 'var(--primary)'
+                                        : isDone
+                                          ? 'color-mix(in srgb, var(--success) 15%, transparent)'
+                                          : 'var(--surface)',
+                                      color: isCurrent
+                                        ? 'white'
+                                        : isDone
+                                          ? 'var(--success)'
+                                          : 'var(--text-muted)',
+                                      border: isCurrent
+                                        ? 'none'
+                                        : `1px solid ${isDone ? 'var(--success)' : 'var(--border)'}`,
+                                    }}>
+                                      {isDone && <CheckCircle2 size={11} />}
+                                      {isCurrent && <MapPin size={11} />}
+                                      {officeName}
+                                    </div>
+                                    {idx < doc.routePlan.length - 1 && (
+                                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>›</span>
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="document-detail-grid">
                           <div className="document-detail-section">
                             <h4><User size={14} /> Sender and Metadata</h4>

@@ -197,6 +197,7 @@ const Layout = ({
     { group: 'Administration', items: [
       { id: 'offices', label: 'Offices', icon: <Building2 size={18} /> },
       { id: 'users', label: 'User Management', icon: <Users size={18} /> },
+      { id: 'document-types', label: 'Document Types', icon: <FileText size={18} /> },
     ]},
     { group: 'System', items: [
       { id: 'reports', label: 'Reports', icon: <BarChart3 size={18} /> },

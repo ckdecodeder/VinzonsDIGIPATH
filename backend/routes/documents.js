@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Document, Transmission, Archive, DeviceEvent, Command, SenderNotification, Notification, Office, User } = require('../models');
+const { Document, Transmission, Archive, DeviceEvent, Command, SenderNotification, Notification, Office, User, DocumentType } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const {
   asyncHandler,
@@ -219,6 +219,36 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     documentTypeId = 'DT-INTERNAL';
   }
 
+  // Phase 2 — Mayor Gate & Route Plan Setup
+  let docType = null;
+  if (documentTypeId) {
+    docType = await DocumentType.findOne({ id: documentTypeId }).lean();
+  }
+  const requiresMayorApproval = docType?.requiresMayorApproval || false;
+
+  let routePlan = [];
+  let routeStep = 0;
+  let finalStatus = registrationStatus;
+
+  if (requiresMayorApproval) {
+    // Force path through Mayor's Office
+    routePlan = [originOfficeId, mayorsOfficeId];
+    if (destinationOfficeId && destinationOfficeId !== mayorsOfficeId && destinationOfficeId !== originOfficeId) {
+      routePlan.push(destinationOfficeId);
+    }
+    currentOfficeId = mayorsOfficeId;
+    finalStatus = 'For Signing';
+    routeStep = 1; // Start at Mayor's office
+  } else {
+    // Direct routing
+    routePlan = [originOfficeId];
+    if (destinationOfficeId && destinationOfficeId !== originOfficeId) {
+      routePlan.push(destinationOfficeId);
+    }
+    routeStep = 0; // Start at origin
+    // currentOfficeId remains as calculated earlier
+  }
+
   const channels = normalizeSenderNotificationChannels(body.senderNotificationChannels, body)
     .filter((channel) => channel !== 'email');
 
@@ -227,7 +257,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     id: body.id || generateId('DOC'),
     trackingNumber: body.trackingNumber || generateTrackingNumber(),
     documentDirection,
-    status: registrationStatus,
+    status: finalStatus,
     intakeStatus: requestedIntakeStatus,
     priorityLevel: 'normal',
     dateReceived: body.dateReceived || now.split('T')[0],
@@ -251,6 +281,9 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     scannedImageUrl: body.scannedImageUrl || scannedFiles[0]?.url || scannedFiles[0]?.dataUrl,
     sendHistory: Array.isArray(body.sendHistory) ? body.sendHistory : [],
     sendQueue: Array.isArray(body.sendQueue) ? body.sendQueue : [],
+    routePlan,
+    routeStep,
+    mayorApprovalCleared: false,
   };
 };
 

@@ -16,14 +16,30 @@ router.get('/', asyncHandler(async (req, res) => {
 
 router.post('/', adminOnly, asyncHandler(async (req, res) => {
   requireFields(req.body, ['category']);
-  const documentType = new DocumentType({ ...req.body, id: req.body.id || generateId('DT') });
+  
+  const payload = {
+    ...req.body,
+    id: req.body.id || generateId('DT'),
+    requiresMayorApproval: Boolean(req.body.requiresMayorApproval),
+    routingTrack: req.body.routingTrack || 'direct',
+  };
+  
+  const documentType = new DocumentType(payload);
   await documentType.save();
   await createLogEntry(req, 'document_type_created', `Created document type: ${documentType.category}`, documentType.id);
   res.json(documentType);
 }));
 
 router.put('/:id', adminOnly, asyncHandler(async (req, res) => {
-  const documentType = await DocumentType.findOneAndUpdate({ id: req.params.id }, req.body, updateOptions);
+  const updates = { ...req.body };
+  if (req.body.requiresMayorApproval !== undefined) {
+    updates.requiresMayorApproval = Boolean(req.body.requiresMayorApproval);
+  }
+  if (req.body.routingTrack) {
+    updates.routingTrack = req.body.routingTrack;
+  }
+
+  const documentType = await DocumentType.findOneAndUpdate({ id: req.params.id }, updates, updateOptions);
   if (!documentType) return res.status(404).json({ message: 'Document type not found' });
   await createLogEntry(req, 'document_type_updated', `Updated document type: ${documentType.category}`, documentType.id);
   res.json(documentType);

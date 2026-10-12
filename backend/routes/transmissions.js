@@ -228,6 +228,10 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
               preTransitStatus: '',
               currentOfficeId: trans.toOfficeId,
               destinationOfficeId: trans.toOfficeId,
+              // Phase 2 — Auto-advance route step
+              ...(doc.routePlan && doc.routePlan.length > 0
+                ? { routeStep: doc.routeStep < doc.routePlan.length - 1 ? doc.routeStep + 1 : doc.routeStep }
+                : {}),
             }
           );
           await createLogEntry(req, 'transmission_received', `Received transmission for "${doc.subject}" at ${toOffice}`, trans.id);
