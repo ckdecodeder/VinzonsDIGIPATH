@@ -7,7 +7,7 @@ const {
 } = require('../utils/helpers');
 const { isDeviceWsConnected, broadcastDataInvalidate } = require('../utils/realtime');
 
-const deviceHeartbeatTimeoutMs = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_MS || 12000);
+const deviceHeartbeatTimeoutMs = Number(process.env.DEVICE_HEARTBEAT_TIMEOUT_MS || 90000);
 const heartbeatPersistMs = Number(process.env.DEVICE_HEARTBEAT_PERSIST_MS || 45000);
 const scannerBridgePort = String(process.env.SCANNER_BRIDGE_PORT || '8080');
 const lastHeartbeatPersistAt = new Map();
@@ -60,7 +60,9 @@ const getDeviceSnapshot = async (deviceId = 'DEV-001') => {
   const heartbeatFresh = hasHardwareSignal
     && latestHardwareEvent?.eventType !== 'device_disconnected'
     && isFreshHardwareSignal(latestHardwareEvent);
-  const connected = streamWsConnected || heartbeatFresh;
+  // Prefer heartbeat freshness over a momentary WS drop so the UI does not
+  // flicker Offline while the Pi auto-reconnects (HTTP keepalive still flowing).
+  const connected = heartbeatFresh || streamWsConnected;
   const status = connected ? 'Online' : 'Offline';
 
   if (!device || !hasHardwareSignal) {

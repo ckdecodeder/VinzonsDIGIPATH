@@ -6,9 +6,10 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
+export default function PdfFitPreview({ src, alt = 'Scanned document PDF', allPages = false }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
+  const extraPagesRef = useRef(null);
   const renderTaskRef = useRef(null);
   const renderGenerationRef = useRef(0);
   const resizeTimerRef = useRef(null);
@@ -69,23 +70,37 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
         const doc = await pdfjs.getDocument(src).promise;
         if (cancelled || generation !== renderGenerationRef.current) return;
 
-        const page = await doc.getPage(1);
-        if (cancelled || generation !== renderGenerationRef.current) return;
+        const pageCount = allPages ? doc.numPages : 1;
+        const extraPages = extraPagesRef.current;
+        if (extraPages) extraPages.replaceChildren();
 
-        const baseViewport = page.getViewport({ scale: 1 });
-        const scale = renderWidth / baseViewport.width;
-        const viewport = page.getViewport({ scale });
+        for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+          const page = await doc.getPage(pageNumber);
+          if (cancelled || generation !== renderGenerationRef.current) return;
 
-        const canvas = canvasRef.current;
-        if (!canvas || cancelled || generation !== renderGenerationRef.current) return;
+          const baseViewport = page.getViewport({ scale: 1 });
+          const scale = renderWidth / baseViewport.width;
+          const viewport = page.getViewport({ scale });
 
-        const context = canvas.getContext('2d');
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+          let canvas = canvasRef.current;
+          if (pageNumber > 1) {
+            if (!extraPages) break;
+            canvas = document.createElement('canvas');
+            canvas.className = 'scanner-pdf-canvas';
+            extraPages.appendChild(canvas);
+          }
+          if (!canvas || cancelled || generation !== renderGenerationRef.current) return;
 
-        const task = page.render({ canvasContext: context, viewport, canvas });
-        renderTaskRef.current = task;
-        await task.promise;
+          const context = canvas.getContext('2d');
+          canvas.width = Math.floor(viewport.width);
+          canvas.height = Math.floor(viewport.height);
+
+          const task = page.render({ canvasContext: context, viewport, canvas });
+          renderTaskRef.current = task;
+          await task.promise;
+          if (cancelled || generation !== renderGenerationRef.current) return;
+          if (pageNumber === 1 && !hasRenderedRef.current) setLoading(false);
+        }
 
         if (cancelled || generation !== renderGenerationRef.current) return;
         renderTaskRef.current = null;
@@ -136,7 +151,7 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
       cancelActiveRender();
       observer?.disconnect();
     };
-  }, [src]);
+  }, [src, allPages]);
 
   return (
     <div ref={wrapRef} className="scanner-pdf-fit-wrap" aria-label={alt}>
@@ -147,6 +162,7 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF' }) {
         <div className="scanner-pdf-fit-status scanner-pdf-fit-status-error">{error}</div>
       )}
       <canvas ref={canvasRef} className="scanner-pdf-canvas" />
+      {allPages && <div ref={extraPagesRef} className="scanner-pdf-extra-pages" />}
     </div>
   );
 }

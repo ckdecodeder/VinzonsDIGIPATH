@@ -10,6 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import ModalOverlay from './ModalOverlay';
+import PdfFitPreview from './PdfFitPreview';
 import {
   downloadAttachment,
   getAttachmentSource,
@@ -246,11 +247,9 @@ const ScannedPreviewModal = ({
                 />
               </div>
             ) : isPdf ? (
-              <iframe
-                src={getAttachmentSource(file)}
-                title={file.name}
-                className="scanned-preview-frame"
-              />
+              <div className="scanned-preview-pdf-scroll">
+                <PdfFitPreview src={getAttachmentSource(file)} alt={file.name} allPages />
+              </div>
             ) : (
               <div className="empty-state" style={{ padding: '2rem' }}>
                 <FileText size={28} />

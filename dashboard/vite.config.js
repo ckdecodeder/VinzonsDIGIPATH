@@ -7,6 +7,7 @@ const sharedServer = {
   host: true,
   port: 5173,
   strictPort: true,
+  allowedHosts: ['.devtunnels.ms'],
   proxy: {
     // Proxy API to backend — browser stays same-origin (no CORS issues in dev).
     '/api': {

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { jsPDF } from "jspdf";
 import PageShell from "./PageShell";
 import PdfFitPreview from "./PdfFitPreview";
 import {
@@ -19,11 +20,13 @@ import {
   Flag,
   MessageSquare,
   Eye,
-  Image,
+  Image as ImageIcon,
   Wifi,
   WifiOff,
   RefreshCw,
+  RotateCw,
   XCircle,
+  Lightbulb,
 } from "lucide-react";
 import { resolveUploadUrl, isPdfMedia } from "../utils/mediaUrl";
 import { getReportedBridgeUrl, probeLanBridge, fetchLanSnapshotAny } from "../utils/bridgePreview";
@@ -113,6 +116,94 @@ const renderScannedDocumentPreview = (src, { alt = 'Scanned document', isPdf = f
   );
 };
 
+const MAX_SCAN_PDF_BYTES = 9 * 1024 * 1024;
+
+const blobToDataUrl = (blob, errorMessage) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => (
+    typeof reader.result === 'string'
+      ? resolve(reader.result)
+      : reject(new Error(errorMessage))
+  );
+  reader.onerror = () => reject(reader.error || new Error(errorMessage));
+  reader.readAsDataURL(blob);
+});
+
+const loadCapturedPage = async (file) => {
+  const src = resolveUploadUrl(file?.dataUrl || file?.previewUrl || file?.url);
+  if (!src) throw new Error('A captured page is missing its image URL.');
+
+  const response = await fetch(src);
+  if (!response.ok) throw new Error(`Unable to load captured page "${file.name || 'scan'}".`);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error(`Unable to read captured page "${file.name || 'scan'}".`));
+      image.src = objectUrl;
+    });
+    if (!blob.type.startsWith('image/')) {
+      throw new Error(`Captured page "${file.name || 'scan'}" is not an image.`);
+    }
+    return {
+      data: await blobToDataUrl(blob, `Unable to prepare captured page "${file.name || 'scan'}" for the PDF.`),
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+};
+
+const createScannedDocumentPdf = async (files, guide) => {
+  if (!files.length) throw new Error('Capture at least one page before creating the PDF.');
+  const pageWidth = guide.width <= 20 ? guide.width * 25.4 : guide.width;
+  const pageHeight = guide.height <= 20 ? guide.height * 25.4 : guide.height;
+  const orientation = pageWidth > pageHeight ? 'landscape' : 'portrait';
+  const pdf = new jsPDF({
+    orientation,
+    unit: 'mm',
+    format: [pageWidth, pageHeight],
+    compress: true,
+  });
+
+  for (let index = 0; index < files.length; index += 1) {
+    const page = await loadCapturedPage(files[index]);
+    if (index > 0) pdf.addPage([pageWidth, pageHeight], orientation);
+    const scale = Math.min(pageWidth / page.width, pageHeight / page.height);
+    const width = page.width * scale;
+    const height = page.height * scale;
+    pdf.addImage(
+      page.data,
+      'JPEG',
+      (pageWidth - width) / 2,
+      (pageHeight - height) / 2,
+      width,
+      height,
+      undefined,
+      'FAST',
+    );
+  }
+
+  const blob = pdf.output('blob');
+  if (blob.size > MAX_SCAN_PDF_BYTES) {
+    throw new Error('The combined PDF is larger than the 9 MB upload limit. Capture fewer pages or use a smaller scan resolution.');
+  }
+  const dataUrl = await blobToDataUrl(blob, 'Unable to prepare the combined PDF for upload.');
+  return {
+    id: `scan-pdf-${Date.now()}`,
+    name: `scanned-document-${Date.now()}.pdf`,
+    type: 'application/pdf',
+    size: blob.size,
+    dataUrl,
+    source: 'scanner',
+    uploadedAt: new Date().toISOString(),
+  };
+};
+
 const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {}) => {
   if (!canvas || !frame?.length) return;
   const fitMode = options.fitMode === 'cover' ? 'cover' : 'contain';
@@ -166,9 +257,15 @@ const paintWsFrameToCanvas = (canvas, frame, paintGenRef, onReady, options = {})
 };
 
 const WS_STREAM_TIMEOUT_MS = 15000;
-const STREAM_STALE_MS = 12000;
+const STREAM_STALE_OVERLAY_MS = 90000;
 const SNAPSHOT_POLL_MS = 3500;
-
+// Same order as the camera's own colour button. Scene = what the Pi sends; mode = what the camera reports.
+const CAMERA_LIGHT_SCENES = [
+  { scene: 0, mode: 0 },
+  { scene: 1, mode: 1 },
+  { scene: 2, mode: 2 },
+  { scene: 5, mode: 3 },
+];
 const deviceUsesWsJpegStream = (device) => (
   device?.payload?.streamMode === 'jpeg-ws'
   || device?.payload?.bridgeVersion === 'ws-jpeg-1.0'
@@ -228,6 +325,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const { device, cameOnline } = useLiveDevice(deviceProp);
   const camera = useRef(null);
   const commandPollRef = useRef(null);
+  const commandPollBusyRef = useRef(false);
+  const appliedScanCommandsRef = useRef(new Set());
   const enrichPollRef = useRef(null);
   const autoFilledRef = useRef({});
   const previewImgRef = useRef(null);
@@ -257,6 +356,43 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [step, setStep] = useState(1);
   const [cameraSource] = useState(PHYSICAL_CAMERA_VALUE);
   const [paperGuideId, setPaperGuideId] = useState('letter-landscape');
+  const [pagesToCaptureInput, setPagesToCaptureInput] = useState('1');
+  const MAX_SCAN_ATTACHMENTS = 50; // keep in sync with backend MAX_ATTACHMENTS_PER_DOCUMENT
+  const requiredCaptureCount = (() => {
+    const parsed = Number(pagesToCaptureInput);
+    if (!Number.isFinite(parsed) || parsed < 1) return 1;
+    return Math.min(MAX_SCAN_ATTACHMENTS, Math.floor(parsed));
+  })();
+  const commitPagesToCapture = () => {
+    const parsed = Number(pagesToCaptureInput);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      setPagesToCaptureInput('1');
+      return;
+    }
+    setPagesToCaptureInput(String(Math.min(MAX_SCAN_ATTACHMENTS, Math.floor(parsed))));
+  };
+  const sanitizeCapturedFiles = (files = []) => {
+    const seen = new Set();
+    const out = [];
+    for (const file of files) {
+      if (!file) continue;
+      const key = file.id || file.url || file.previewUrl || file.dataUrl || file.name;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: file.id,
+        name: file.name || 'scan.jpg',
+        type: file.type || 'image/jpeg',
+        size: file.size,
+        url: file.url || file.previewUrl || undefined,
+        dataUrl: file.dataUrl,
+        source: file.source || 'scanner',
+        uploadedAt: file.uploadedAt,
+      });
+      if (out.length >= MAX_SCAN_ATTACHMENTS) break;
+    }
+    return out;
+  };
   const [showPaperGuide, setShowPaperGuide] = useState(false);
   const [streamReloadKey, setStreamReloadKey] = useState(0);
   const [previewMode, setPreviewMode] = useState('ws');
@@ -274,10 +410,26 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [progress, setProgress] = useState(0);
   const [isDeviceScanning, setIsDeviceScanning] = useState(false);
   const [deviceScanStatus, setDeviceScanStatus] = useState('');
+  const [isMotorTesting, setIsMotorTesting] = useState(false);
+  const [lightOn, setLightOn] = useState(false);
+  const [isLightBusy, setIsLightBusy] = useState(false);
+  const [lightStatus, setLightStatus] = useState('');
+  const lightCommandAtRef = useRef(0);
+  const lightSceneIndexRef = useRef(null);
+  const [lightBrightness, setLightBrightness] = useState(50);
+  const [liveLight, setLiveLight] = useState(null);
+  const lightResultsRef = useRef(new Map());
+  const lightDraggingRef = useRef(false);
+  const cameraLightState = { ...(device?.payload?.cameraLight || {}), ...(liveLight || {}) };
+  const motorTestAbortRef = useRef(false);
+  const [sortStatus, setSortStatus] = useState(null);
+  const sortPollAbortRef = useRef(false);
 
   // Scan results
   const [capturedImage, setCapturedImage] = useState(null);
   const [capturedFileType, setCapturedFileType] = useState('');
+  const [capturedImages, setCapturedImages] = useState([]);
+  const capturedImagesRef = useRef([]);
   const [extractedText, setExtractedText] = useState('');
   const [hardwareScannedDoc, setHardwareScannedDoc] = useState(null);
 
@@ -391,11 +543,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     () => ({ fitMode: previewFitMode }),
     [previewFitMode],
   );
+  const previewAspectWidth = streamDims.width || selectedPaperGuide.width;
+  const previewAspectHeight = streamDims.height || selectedPaperGuide.height;
+  const previewAspectRatio = previewAspectWidth / previewAspectHeight;
   const previewShellClassName = [
     'scanner-preview-shell',
     paperGuideLayout.shellClass,
     previewReady ? 'scanner-preview-shell--live' : '',
   ].filter(Boolean).join(' ');
+  const previewShellStyle = {
+    aspectRatio: `${previewAspectWidth} / ${previewAspectHeight}`,
+    maxWidth: previewAspectRatio < 1 ? 'min(100%, 420px)' : '100%',
+    minHeight: 0,
+  };
   const deviceStreamResolution = parseResolutionLabel(
     device?.payload?.streamResolution || device?.payload?.previewResolution,
   );
@@ -413,6 +573,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     : (device?.payload?.streamIs2K === true || is2kResolution(deviceStreamResolution || {}));
   const adaptiveStreamFps = Number(device?.payload?.adaptiveStreamFps || device?.payload?.previewFps || 0);
   const isCapturedPdf = isPdfMedia(capturedImage, capturedFileType);
+  const renderCapturedImageGallery = (alt) => (
+    <div className="scanner-captured-gallery">
+      {capturedImages.map((file, index) => (
+        <div className="scanner-captured-gallery-item" key={file.id || `${file.url}-${index}`}>
+          {renderScannedDocumentPreview(file.previewUrl || file.url, {
+            alt: `${alt} ${index + 1}`,
+            isPdf: isPdfMedia(file.previewUrl || file.url, file.type),
+          })}
+          <span>Capture {index + 1}</span>
+        </div>
+      ))}
+    </div>
+  );
   const deviceId = device?.id || 'DEV-001';
   const streamChannel = `scanner:${deviceId}:stream`;
   const streamOnline = device?.connected || device?.streamWsConnected === true;
@@ -717,7 +890,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       const last = lastFrameAtRef.current;
       if (!last) return;
       const age = Date.now() - last;
-      if (age < STREAM_STALE_MS) {
+      // Quiet grace: keep last frame while heartbeat says Online.
+      // Only show the reconnect overlay after a long stall.
+      if (age < STREAM_STALE_OVERLAY_MS) {
         if (streamStaleRef.current) {
           streamStaleRef.current = false;
           setStreamStale(false);
@@ -922,11 +1097,37 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
   const applyPhysicalScanResult = (result, commandId) => {
     if (result.status === 'Executed') {
+      // One command → one gallery image (ignore duplicate poll responses).
+      if (commandId && appliedScanCommandsRef.current.has(commandId)) {
+        return true;
+      }
+      if (commandId) {
+        appliedScanCommandsRef.current.add(commandId);
+      }
+
       const doc = result.resultDocument;
       setHardwareScannedDoc(doc || null);
       if (doc) {
-        const scannedFile = doc.scannedFiles?.find((f) => !isPdfMedia(f?.url, f?.type))
-          || doc.scannedFiles?.[0];
+        const existingCaptureKeys = new Set(
+          capturedImagesRef.current.flatMap((file) => [
+            file.id,
+            file.url,
+            file.previewUrl,
+            file.dataUrl,
+          ]).filter(Boolean),
+        );
+        const scanPageCandidates = (doc.scannedFiles || []).flatMap((file) => (
+          Array.isArray(file?.pages) ? file.pages : [file]
+        ));
+        const scannedFile = scanPageCandidates.find((file) => (
+          !isPdfMedia(file?.url, file?.type)
+          && !existingCaptureKeys.has(file?.id || file?.url || file?.dataUrl)
+        ));
+        if (!scannedFile) {
+          setIsDeviceScanning(false);
+          setDeviceScanStatus('The scanner response did not include a new page. Please retry this capture.');
+          return true;
+        }
         const scannedUrl = resolveUploadUrl(
           (scannedFile?.url && !isPdfMedia(scannedFile.url, scannedFile.type) ? scannedFile.url : null)
           || (doc.scannedImageUrl && !isPdfMedia(doc.scannedImageUrl) ? doc.scannedImageUrl : null)
@@ -936,6 +1137,26 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           || null,
         );
         const scannedType = scannedFile?.type || (isPdfMedia(scannedUrl) ? 'application/pdf' : 'image/jpeg');
+        const captureNumber = capturedImagesRef.current.length + 1;
+        if (captureNumber > requiredCaptureCount || captureNumber > MAX_SCAN_ATTACHMENTS) {
+          setIsDeviceScanning(false);
+          return true;
+        }
+        const captureFile = {
+          id: scannedFile?.id || `${commandId || 'capture'}-${captureNumber}`,
+          name: scannedFile?.name || `scan-${captureNumber}.jpg`,
+          type: scannedType,
+          size: scannedFile?.size,
+          url: scannedFile?.url || scannedUrl,
+          previewUrl: scannedUrl,
+          source: scannedFile?.source || 'camera',
+          uploadedAt: scannedFile?.uploadedAt,
+        };
+        capturedImagesRef.current = sanitizeCapturedFiles([
+          ...capturedImagesRef.current,
+          captureFile,
+        ]);
+        setCapturedImages(capturedImagesRef.current);
         const autoSubject = resolveAutoSubject(doc);
         const autoSender = doc.senderName && doc.senderName !== 'Scanner Device' ? doc.senderName : '';
         const autoDate = normalizeDateForInput(doc.dateReceived);
@@ -946,35 +1167,44 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           documentTypeId: doc.documentTypeId || '',
           dateReceived: autoDate,
         };
-        setCapturedImage(scannedUrl);
+        if (captureNumber === 1) setCapturedImage(scannedUrl);
         setCapturedFileType(scannedType);
-        setExtractedText(doc.scannedText || '');
-        setFormData(prev => ({
-          ...prev,
-          subject: autoSubject,
-          documentDirection: doc.documentDirection || prev.documentDirection,
-          documentTypeId: doc.documentTypeId || prev.documentTypeId,
-          documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
-          status: doc.status || prev.status,
-          priorityLevel: doc.priorityLevel || prev.priorityLevel,
-          fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
-          originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
-          toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
-          dateReceived: autoDate || doc.dateReceived || prev.dateReceived,
-          senderName: autoSender,
-          senderContact: doc.senderContact || prev.senderContact,
-          senderEmail: doc.senderEmail || prev.senderEmail,
-          notifySender: doc.notifySender ?? prev.notifySender,
-          senderNotificationConsent: doc.senderNotificationConsent ?? prev.senderNotificationConsent,
-          senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
-          remarks: doc.remarks || prev.remarks,
-        }));
+        if (captureNumber === 1) {
+          setExtractedText(doc.scannedText || '');
+          setFormData(prev => ({
+            ...prev,
+            subject: autoSubject,
+            documentDirection: doc.documentDirection || prev.documentDirection,
+            documentTypeId: doc.documentTypeId || prev.documentTypeId,
+            documentTypeOther: doc.documentTypeOther || prev.documentTypeOther,
+            status: doc.status || prev.status,
+            priorityLevel: doc.priorityLevel || prev.priorityLevel,
+            fromOfficeId: doc.currentOfficeId || doc.originOfficeId || prev.fromOfficeId,
+            originOfficeOther: doc.originOfficeOther || prev.originOfficeOther,
+            toOfficeId: doc.destinationOfficeId || prev.toOfficeId,
+            dateReceived: autoDate || doc.dateReceived || prev.dateReceived,
+            senderName: autoSender,
+            senderContact: doc.senderContact || prev.senderContact,
+            senderEmail: doc.senderEmail || prev.senderEmail,
+            notifySender: doc.notifySender ?? prev.notifySender,
+            senderNotificationConsent: doc.senderNotificationConsent ?? prev.senderNotificationConsent,
+            senderNotificationChannels: doc.senderNotificationChannels?.length ? doc.senderNotificationChannels : prev.senderNotificationChannels,
+            remarks: doc.remarks || prev.remarks,
+          }));
+        }
         // AI extraction may still be running on the Pi. Poll only when the Pi flagged it.
-        if (commandId) startEnrichmentPolling(commandId, Boolean(result?.payload?.aiExtractPending));
+        if (captureNumber === 1 && commandId) startEnrichmentPolling(commandId, Boolean(result?.payload?.aiExtractPending));
       }
       setIsDeviceScanning(false);
-      setDeviceScanStatus('');
-      setStep(2);
+      if (capturedImagesRef.current.length >= requiredCaptureCount) {
+        setDeviceScanStatus(`${requiredCaptureCount} capture${requiredCaptureCount === 1 ? '' : 's'} complete. Review the captured images below.`);
+        setStep(2);
+      } else {
+        setDeviceScanStatus(
+          `Capture ${capturedImagesRef.current.length} of ${requiredCaptureCount} saved. `
+          + `Move the next page/part under the camera, then press Capture again.`,
+        );
+      }
       return true;
     }
 
@@ -1000,25 +1230,35 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       setDeviceScanStatus('Physical scanner is offline. Wait for the device heartbeat before sending a scan command.');
       return;
     }
+    if (isDeviceScanning) {
+      return;
+    }
+    if (capturedImagesRef.current.length >= requiredCaptureCount) {
+      setDeviceScanStatus(`Already captured ${requiredCaptureCount} page${requiredCaptureCount === 1 ? '' : 's'}. Continue to details or rescan.`);
+      return;
+    }
 
     setIsDeviceScanning(true);
     setDeviceScanStatus('Sending scan command to physical scanner...');
-    setIsSubjectExtracting(false);
-    setEnrichmentHint('');
-    setHardwareScannedDoc(null);
-    setExtractedText('');
-    autoFilledRef.current = {
-      subject: '',
-      senderName: '',
-      scannedText: '',
-      documentTypeId: '',
-      dateReceived: '',
-    };
-    setFormData((prev) => ({
-      ...prev,
-      subject: '',
-      senderName: '',
-    }));
+    // Only reset AI/form helpers on the first page of a multi-page session.
+    if (capturedImagesRef.current.length === 0) {
+      setIsSubjectExtracting(false);
+      setEnrichmentHint('');
+      setHardwareScannedDoc(null);
+      setExtractedText('');
+      autoFilledRef.current = {
+        subject: '',
+        senderName: '',
+        scannedText: '',
+        documentTypeId: '',
+        dateReceived: '',
+      };
+      setFormData((prev) => ({
+        ...prev,
+        subject: '',
+        senderName: '',
+      }));
+    }
 
     try {
       const command = await commandService.sendScan(device.id || 'DEV-001', {
@@ -1032,11 +1272,25 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         paperGuideId: selectedPaperGuide.id,
         scanWidth: streamDims.width > 0 ? streamDims.width : (deviceStreamResolution?.width || 1920),
         scanHeight: streamDims.height > 0 ? streamDims.height : (deviceStreamResolution?.height || 1080),
+        documentId: hardwareScannedDoc?.id || undefined,
+        // Always 1 frame per press — multi-page = multiple button presses.
+        captureFrameCount: 1,
       });
-      setDeviceScanStatus('Waiting for the physical scanner to capture and upload the document...');
+      setDeviceScanStatus(
+        requiredCaptureCount > 1
+          ? `Capturing page ${capturedImagesRef.current.length + 1} of ${requiredCaptureCount}...`
+          : 'Waiting for the physical scanner to capture and upload the document...',
+      );
 
+      if (commandPollRef.current) {
+        clearInterval(commandPollRef.current);
+        commandPollRef.current = null;
+      }
+      commandPollBusyRef.current = false;
       let attempts = 0;
       commandPollRef.current = setInterval(async () => {
+        if (commandPollBusyRef.current) return;
+        commandPollBusyRef.current = true;
         attempts += 1;
         try {
           const result = await commandService.checkStatus(command.id);
@@ -1051,11 +1305,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           }
         } catch {
           // Keep polling while the backend or device is busy.
+        } finally {
+          commandPollBusyRef.current = false;
         }
-      }, 2000);
+      }, 500);
     } catch (err) {
       setIsDeviceScanning(false);
-      const isPendingConflict = /pending command/i.test(err.message || '');
+      const isPendingConflict = /pending .*command/i.test(err.message || '');
       setDeviceScanStatus(
         isPendingConflict
           ? 'The scanner is still busy with a previous scan. Cancel it or wait a moment, then try again.'
@@ -1086,6 +1342,189 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
   };
 
+  useEffect(() => () => {
+    motorTestAbortRef.current = true;
+    sortPollAbortRef.current = true;
+  }, []);
+
+  const watchSortCommand = async (commandId, sortLayer) => {
+    sortPollAbortRef.current = false;
+    let lastStatus = 'Pending';
+    const deadline = Date.now() + 600000;
+    while (!sortPollAbortRef.current && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      let result;
+      try {
+        result = await commandService.checkStatus(commandId);
+      } catch {
+        continue;
+      }
+      if (sortPollAbortRef.current || !result?.status) continue;
+      if (result.status === 'Executing' && lastStatus !== 'Executing') {
+        setSortStatus({ state: 'running', message: `Sorter is moving the document to tray layer ${sortLayer}...` });
+      }
+      lastStatus = result.status;
+      if (result.status === 'Executed') {
+        setSortStatus({ state: 'done', message: `Document sorted into tray layer ${sortLayer}.` });
+        return;
+      }
+      if (result.status === 'Failed' || result.status === 'Cancelled') {
+        setSortStatus({ state: 'failed', message: `Sorter failed: ${result.errorMessage || result.status}` });
+        return;
+      }
+    }
+    if (!sortPollAbortRef.current) {
+      setSortStatus({
+        state: 'failed',
+        message: lastStatus === 'Executing'
+          ? 'Sorter did not report back in 10 minutes — the lift may still be searching for the tray hall sensor.'
+          : 'The Pi never picked up the sort command. Check the scanner connection.',
+      });
+    }
+  };
+
+  const handleMotorTest = async () => {
+    if (isMotorTesting || isDeviceScanning) return;
+    if (!device?.connected) {
+      setDeviceScanStatus('Scanner is offline. Check Pi power and network, then wait for heartbeat.');
+      return;
+    }
+    motorTestAbortRef.current = false;
+    setIsMotorTesting(true);
+    setDeviceScanStatus('Motor test: lift DOWN → UP, then sort one turn...');
+    try {
+      const command = await commandService.sendMotorTest(device.id || 'DEV-001');
+      if (command?.delivered === false) {
+        setDeviceScanStatus('Motor test queued — Pi live link is down, sending through the backup heartbeat link (up to ~10s)...');
+      }
+      let lastStatus = command?.status || 'Pending';
+      const deadline = Date.now() + 90000;
+      while (!motorTestAbortRef.current && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        let result;
+        try {
+          result = await commandService.checkStatus(command.id);
+        } catch {
+          continue;
+        }
+        if (result?.status) lastStatus = result.status;
+        if (result?.status === 'Executing') {
+          setDeviceScanStatus('Pi received the motor test — motors should be moving now...');
+        }
+        if (result?.status === 'Executed') {
+          setDeviceScanStatus('Motor test done — check that both motors actually moved.');
+          return;
+        }
+        if (result?.status === 'Failed' || result?.status === 'Cancelled') {
+          setDeviceScanStatus(`Motor test failed: ${result.errorMessage || result.status}`);
+          return;
+        }
+      }
+      if (!motorTestAbortRef.current) {
+        setDeviceScanStatus(
+          lastStatus === 'Executing'
+            ? 'Pi started the motor test but never reported back. Check that both motors moved, then try again.'
+            : 'The Pi never picked up the motor test (still Pending). Its live link is down or it runs old code — replug the USB into the Pi, restart the backend, then try again.',
+        );
+      }
+    } catch (err) {
+      setDeviceScanStatus(
+        /pending .*command/i.test(err.message || '')
+          ? `${err.message} Press Cancel Scan to clear it, then test again.`
+          : toUserFacingError(err.message, 'Unable to send motor test command.'),
+      );
+    } finally {
+      if (!motorTestAbortRef.current) setIsMotorTesting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!realtime) return undefined;
+    return realtime.subscribe('camera_light', (message) => {
+      if (device?.id && message.deviceId !== device.id) return;
+      if (message.light) setLiveLight(message.light);
+      if (message.command?.id) lightResultsRef.current.set(message.command.id, message.command);
+    });
+  }, [realtime, device?.id]);
+
+  const sendCameraLight = async (payload) => {
+    if (!device?.connected) {
+      setLightStatus('Scanner is offline. Check Pi power and network, then wait for heartbeat.');
+      return;
+    }
+    setIsLightBusy(true);
+    setLightStatus('');
+    lightCommandAtRef.current = Date.now();
+    try {
+      const command = await commandService.sendCameraLight(device.id || 'DEV-001', payload);
+      const deadline = Date.now() + 15000;
+      let nextHttpCheckAt = Date.now() + 1500;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        // The Pi pushes the result over the WebSocket; HTTP polling is only the fallback.
+        let result = lightResultsRef.current.get(command.id);
+        if (!result && Date.now() >= nextHttpCheckAt) {
+          nextHttpCheckAt = Date.now() + 1500;
+          try {
+            result = await commandService.checkStatus(command.id);
+          } catch {
+            result = null;
+          }
+        }
+        if (!result) continue;
+        lightResultsRef.current.delete(command.id);
+        if (result.status === 'Executed') {
+          if (payload.scene != null) setLightStatus('Camera light colour changed.');
+          else if (payload.brightness != null) setLightStatus(`Camera light brightness ${payload.brightness}%.`);
+          else setLightStatus(payload.on === false ? 'Camera light off.' : 'Camera light on.');
+          return;
+        }
+        if (result.status === 'Failed' || result.status === 'Cancelled') {
+          setLightStatus(result.errorMessage || `Camera light command ${result.status.toLowerCase()}.`);
+          return;
+        }
+      }
+      setLightStatus('The Pi did not answer the light command. Replug the USB into the Pi so it runs the latest code.');
+    } catch (err) {
+      setLightStatus(toUserFacingError(err.message, 'Unable to send camera light command.'));
+    } finally {
+      setIsLightBusy(false);
+    }
+  };
+
+  const reportedLightOn = cameraLightState.on;
+  const reportedLightBrightness = cameraLightState.brightness;
+  useEffect(() => {
+    if (isLightBusy || lightDraggingRef.current) return;
+    // Without live pushes only heartbeats arrive (up to ~15s late), so a just-sent setting must win.
+    if (!liveLight && Date.now() - lightCommandAtRef.current < 20000) return;
+    if (typeof reportedLightOn === 'boolean') setLightOn(reportedLightOn);
+    if (typeof reportedLightBrightness === 'number') setLightBrightness(reportedLightBrightness);
+  }, [reportedLightOn, reportedLightBrightness, isLightBusy, liveLight]);
+
+  const handleLightToggle = (on) => {
+    if (isLightBusy) return;
+    setLightOn(on);
+    sendCameraLight({ on });
+  };
+
+  const commitLightBrightness = () => {
+    if (isLightBusy) return;
+    sendCameraLight({ brightness: lightBrightness });
+  };
+
+  const handleLightColourChange = () => {
+    if (isLightBusy) return;
+    // The heartbeat's mode lags a few seconds, so keep cycling from the colour we just sent.
+    const recent = Date.now() - lightCommandAtRef.current < 20000 && lightSceneIndexRef.current != null;
+    const reported = CAMERA_LIGHT_SCENES.findIndex((s) => s.mode === cameraLightState.mode);
+    // With live pushes the reported colour is current; otherwise keep cycling from the one just sent.
+    const current = recent && !liveLight ? lightSceneIndexRef.current : reported;
+    const next = (current + 1) % CAMERA_LIGHT_SCENES.length;
+    lightSceneIndexRef.current = next;
+    sendCameraLight({ scene: CAMERA_LIGHT_SCENES[next].scene });
+  };
+
   // STEP 2 → STEP 3: Proceed to review
   const handleProceedToReview = (e) => {
     e.preventDefault();
@@ -1114,12 +1553,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     setIsSubmitting(true);
 
     try {
+      const combinedPdf = await createScannedDocumentPdf(capturedImages, selectedPaperGuide);
+      const filesToSave = [combinedPdf];
       if (hardwareScannedDoc?.id) {
         const scanOfficeId = hardwareScannedDoc.currentOfficeId
           || hardwareScannedDoc.originOfficeId
           || receptionOfficeId;
         await onEditDocument?.({
-          ...hardwareScannedDoc,
+          id: hardwareScannedDoc.id,
           subject: formData.subject,
           documentDirection: 'Incoming',
           documentTypeId: formData.documentTypeId,
@@ -1129,7 +1570,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           dateReceived: formData.dateReceived,
           originOfficeId: receptionOfficeId || scanOfficeId,
           originOfficeOther: formData.originOfficeOther.trim(),
-          currentOfficeId: mayorsOfficeId,
           destinationOfficeId: mayorsOfficeId,
           senderName: formData.senderName,
           senderContact: formData.senderContact,
@@ -1139,8 +1579,40 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           senderNotificationChannels: formData.senderContact ? ['sms'] : [],
           remarks: formData.remarks,
           scannedText: extractedText,
+          scannedFiles: filesToSave,
+          scannedImageUrl: filesToSave[0]?.url
+            || filesToSave[0]?.previewUrl
+            || hardwareScannedDoc.scannedImageUrl,
           intakeStatus: 'Approved',
         });
+        capturedImagesRef.current = filesToSave;
+        setCapturedImages(filesToSave);
+        setCapturedImage(combinedPdf.dataUrl);
+        setCapturedFileType(combinedPdf.type);
+        // Motors run only after Confirm & Register (not on Capture).
+        if (device?.connected) {
+          const sortLayer = resolveSortLayer(formData.documentTypeId);
+          try {
+            setDeviceScanStatus('Document registered — starting sorter motors...');
+            setSortStatus({ state: 'running', message: `Sending sort command (tray layer ${sortLayer})...` });
+            const sortCommand = await commandService.sendSort(device.id || 'DEV-001', {
+              documentId: hardwareScannedDoc.id,
+              documentTypeId: formData.documentTypeId,
+              sortLayer,
+            });
+            setDeviceScanStatus('Sort command sent to physical scanner.');
+            watchSortCommand(sortCommand.id, sortLayer);
+          } catch (sortErr) {
+            const message = toUserFacingError(
+              sortErr?.message,
+              'Document saved, but sorter command failed. Check Pi connection.',
+            );
+            setDeviceScanStatus(message);
+            setSortStatus({ state: 'failed', message });
+          }
+        } else if (isPhysicalSource) {
+          setSortStatus({ state: 'failed', message: 'Scanner is offline — the document was saved but not sorted.' });
+        }
         setStep(4);
         return;
       }
@@ -1165,8 +1637,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         senderNotificationChannels: formData.senderContact ? ['sms'] : [],
         remarks: formData.remarks,
         scannedText: extractedText,
-        scannedImageUrl: capturedImage,
-        scannedFiles: [],
+        scannedImageUrl: combinedPdf.dataUrl,
+        scannedFiles: filesToSave,
         intakeStatus: 'Approved',
       };
 
@@ -1177,10 +1649,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         transmissionType: 'External',
       };
 
-      await onCapture?.(capturedImage, extractedText, newDoc, newTransmission);
+      await onCapture?.(null, extractedText, newDoc, newTransmission);
+      capturedImagesRef.current = filesToSave;
+      setCapturedImages(filesToSave);
+      setCapturedImage(combinedPdf.dataUrl);
+      setCapturedFileType(combinedPdf.type);
       setStep(4);
-    } catch {
-      // Shared save handler already shows the API error; stay on review step.
+    } catch (err) {
+      setFormErrorSummary(err?.message || 'Unable to create or save the combined PDF.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1191,25 +1667,48 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       clearInterval(enrichPollRef.current);
       enrichPollRef.current = null;
     }
+    if (commandPollRef.current) {
+      clearInterval(commandPollRef.current);
+      commandPollRef.current = null;
+    }
+    commandPollBusyRef.current = false;
+    appliedScanCommandsRef.current = new Set();
+    setIsDeviceScanning(false);
     setIsSubjectExtracting(false);
     setEnrichmentHint('');
     setDeviceScanStatus('');
     setFormErrors({});
     setFormErrorSummary('');
+    capturedImagesRef.current = [];
+    setCapturedImages([]);
+    setCapturedImage(null);
+    setCapturedFileType('');
+    setExtractedText('');
+    setHardwareScannedDoc(null);
     setStep(1);
   };
 
   const handleReset = () => {
+    sortPollAbortRef.current = true;
+    setSortStatus(null);
     if (enrichPollRef.current) {
       clearInterval(enrichPollRef.current);
       enrichPollRef.current = null;
     }
+    if (commandPollRef.current) {
+      clearInterval(commandPollRef.current);
+      commandPollRef.current = null;
+    }
+    commandPollBusyRef.current = false;
+    appliedScanCommandsRef.current = new Set();
     autoFilledRef.current = {};
     setIsSubjectExtracting(false);
     setEnrichmentHint('');
     setStep(1);
     setCapturedImage(null);
     setCapturedFileType('');
+    capturedImagesRef.current = [];
+    setCapturedImages([]);
     setExtractedText('');
     setHardwareScannedDoc(null);
     setDeviceScanStatus('');
@@ -1309,6 +1808,39 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     ))}
                   </select>
                 </div>
+                <div className="scanner-preview-toolbar-group">
+                  <label className="form-label" htmlFor="required-capture-count">Pages to capture</label>
+                  <input
+                    id="required-capture-count"
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    max={MAX_SCAN_ATTACHMENTS}
+                    inputMode="numeric"
+                    value={pagesToCaptureInput}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      if (raw === '') {
+                        setPagesToCaptureInput('');
+                        return;
+                      }
+                      if (!/^\d{1,3}$/.test(raw)) return;
+                      const next = Number(raw);
+                      if (next > MAX_SCAN_ATTACHMENTS) {
+                        setPagesToCaptureInput(String(MAX_SCAN_ATTACHMENTS));
+                        return;
+                      }
+                      setPagesToCaptureInput(raw);
+                    }}
+                    onBlur={commitPagesToCapture}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    disabled={isDeviceScanning || isExtracting || capturedImages.length > 0}
+                  />
+                </div>
                 <label className="scanner-toggle-row scanner-toggle-row--inline">
                   <input
                     type="checkbox"
@@ -1331,7 +1863,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </button>
               </div>
 
-              <div className={previewShellClassName}>
+              <div className={previewShellClassName} style={previewShellStyle}>
               <canvas
                 ref={previewCanvasRef}
                 className={`scanner-live-stream scanner-live-canvas${directStreamUrl ? ' scanner-live-stream--hidden' : ''}`}
@@ -1346,6 +1878,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 alt="Physical scanner live preview"
                 onLoad={() => {
                   if (directStreamUrl) {
+                    const dimensions = {
+                      width: previewImgRef.current?.naturalWidth || 0,
+                      height: previewImgRef.current?.naturalHeight || 0,
+                    };
+                    if (dimensions.width && dimensions.height) {
+                      setStreamDims(dimensions);
+                    }
                     previewReadyRef.current = true;
                     setPreviewReady(true);
                     setPreviewMode('direct');
@@ -1393,7 +1932,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   {streamResolutionLabel && (
                     <>
                       <span className="scanner-stream-stats-sep">·</span>
-                      <span>{streamResolutionLabel}{streamIs2k ? '' : ' (upscaled)'}</span>
+                      <span>{streamResolutionLabel}</span>
                     </>
                   )}
                   <span className="scanner-stream-stats-sep">·</span>
@@ -1404,7 +1943,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               {isPhysicalSource && previewReady && streamStale && (
                 <div className="scanner-preview-overlay scanner-preview-overlay--reconnect">
                   <Loader2 size={28} className="animate-spin" />
-                  <span>Reconnecting stream...</span>
+                  <span>
+                    {(device?.connected || device?.streamWsConnected)
+                      ? 'Refreshing stream…'
+                      : 'Reconnecting stream...'}
+                  </span>
                 </div>
               )}
 
@@ -1457,9 +2000,10 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               </div>
 
               <ul className="scanner-scan-tips">
-                <li>Use the paper guide to match document size</li>
-                <li>Close the door to auto-move to capture position</li>
-                <li>Capture uploads the scan and triggers sorting</li>
+                <li>Close the door — the lift drops to layer 2 for capture</li>
+                <li>Align the document in the live preview, then press Capture</li>
+                <li>After Confirm &amp; Register, the lift goes to the tray layer, sorts, then returns to layer 2</li>
+                <li>Open the door when done — the lift goes back up to layer 1</li>
               </ul>
 
               <div className="scanner-scan-actions">
@@ -1476,9 +2020,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   className="btn btn-primary scanner-capture-btn scanner-capture-btn--block"
                 >
                   {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
-                  {isExtracting ? 'Processing...' : 'Capture Document'}
+                  {isExtracting
+                    ? 'Processing...'
+                    : requiredCaptureCount <= 1
+                      ? 'Capture Document'
+                      : `Capture ${Math.min(capturedImages.length + 1, requiredCaptureCount)} of ${requiredCaptureCount}`}
                 </button>
-                {(isDeviceScanning || /pending command/i.test(deviceScanStatus || '')) && (
+                {(isDeviceScanning || /pending .*command|still busy/i.test(deviceScanStatus || '')) && (
                   <button
                     onClick={handleCancelPhysicalScan}
                     disabled={isExtracting}
@@ -1486,6 +2034,16 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   >
                     <XCircle size={18} />
                     Cancel Scan
+                  </button>
+                )}
+                {isPhysicalSource && (
+                  <button
+                    onClick={handleMotorTest}
+                    disabled={isMotorTesting || isDeviceScanning || isExtracting}
+                    className="btn btn-secondary scanner-capture-btn--block"
+                  >
+                    {isMotorTesting ? <Loader2 size={18} className="animate-spin" /> : <RotateCw size={18} />}
+                    {isMotorTesting ? 'Testing Motors...' : 'Test Motors'}
                   </button>
                 )}
               </div>
@@ -1496,6 +2054,79 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   <span>{deviceScanStatus}</span>
                 </div>
               )}
+
+              {isPhysicalSource && (() => {
+                const cameraLight = cameraLightState;
+                return (
+                  <div className="scanner-light-control">
+                    <div className="scanner-light-control__header">
+                      <span className="scanner-light-control__title">
+                        <Lightbulb size={16} />
+                        Camera light
+                      </span>
+                      <div className="scanner-light-control__toggle" role="group" aria-label="Camera light power">
+                        <button
+                          type="button"
+                          onClick={() => handleLightToggle(true)}
+                          disabled={isLightBusy}
+                          className={`btn ${lightOn ? 'btn-primary' : 'btn-secondary'}`}
+                          aria-pressed={lightOn}
+                        >
+                          On
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleLightToggle(false)}
+                          disabled={isLightBusy}
+                          className={`btn ${!lightOn ? 'btn-primary' : 'btn-secondary'}`}
+                          aria-pressed={!lightOn}
+                        >
+                          Off
+                        </button>
+                      </div>
+                    </div>
+                    <label className="scanner-light-control__slider">
+                      <span>Brightness</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        step="2"
+                        value={lightBrightness}
+                        disabled={isLightBusy}
+                        onChange={(e) => setLightBrightness(Number(e.target.value))}
+                        onPointerDown={() => { lightDraggingRef.current = true; }}
+                        onPointerUp={() => {
+                          lightDraggingRef.current = false;
+                          commitLightBrightness();
+                        }}
+                        onKeyUp={(e) => {
+                          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+                            commitLightBrightness();
+                          }
+                        }}
+                      />
+                      <span className="scanner-light-control__value">
+                        {isLightBusy ? <Loader2 size={14} className="animate-spin" /> : `${lightBrightness}%`}
+                      </span>
+                    </label>
+                    <div className="scanner-light-control__colors">
+                      <span>Colour</span>
+                      <button type="button" onClick={handleLightColourChange} disabled={isLightBusy} className="btn btn-secondary">
+                        Change colour
+                      </button>
+                    </div>
+                    {cameraLight && !cameraLight.mapped && (
+                      <p className="scanner-motor-diag__hint">
+                        The Pi cannot reach the camera&apos;s light control yet. Replug the USB into the Pi to update it.
+                        {cameraLight.probe?.hidError ? ` (${cameraLight.probe.hidError})` : ''}
+                      </p>
+                    )}
+                    {lightStatus && <p className="scanner-light-control__status">{lightStatus}</p>}
+                  </div>
+                );
+              })()}
+
             </aside>
           </div>
         </div>
@@ -1509,18 +2140,15 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             <div className="card">
               <div className="card-header">
                 <h3 className="card-title">
-                  <Image size={18} style={{ color: 'var(--primary-light)' }} />
+                  <ImageIcon size={18} style={{ color: 'var(--primary-light)' }} />
                   Scanned Document
                 </h3>
               </div>
-              {capturedImage ? (
-                renderScannedDocumentPreview(capturedImage, {
-                  alt: 'Scanned document',
-                  isPdf: isCapturedPdf,
-                })
+              {capturedImages.length ? (
+                renderCapturedImageGallery('Scanned document')
               ) : (
                 <div className="scanner-preview-empty" style={{ minHeight: '220px' }}>
-                  <Image size={28} />
+                  <ImageIcon size={28} />
                   <span>No scanned preview available yet.</span>
                 </div>
               )}
@@ -1720,17 +2348,17 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             </h3>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-            Please verify all information below before submitting.
+            Please verify all information below before submitting. Captured pages will be combined into one PDF in capture order.
           </p>
+          {formErrorSummary && (
+            <div className="form-error-summary" role="alert">{formErrorSummary}</div>
+          )}
 
           <div className="grid-2" style={{ gap: '1.25rem', marginBottom: '1.5rem' }}>
             {/* Scanned Preview */}
             <div>
-              {capturedImage ? (
-                renderScannedDocumentPreview(capturedImage, {
-                  alt: 'Scanned document review',
-                  isPdf: isCapturedPdf,
-                })
+              {capturedImages.length ? (
+                renderCapturedImageGallery('Scanned document review')
               ) : null}
             </div>
 
@@ -1820,6 +2448,15 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
             The scan was saved and forwarded to the Mayor's Office (FIFO queue).
           </p>
+
+          {sortStatus && (
+            <div className={`scanner-sort-status scanner-sort-status--${sortStatus.state}`}>
+              {sortStatus.state === 'running' && <Loader2 size={16} className="animate-spin" />}
+              {sortStatus.state === 'done' && <CheckCircle2 size={16} />}
+              {sortStatus.state === 'failed' && <AlertCircle size={16} />}
+              <span>{sortStatus.message}</span>
+            </div>
+          )}
 
           <div style={{
             padding: '1rem', background: 'var(--bg-elevated)',

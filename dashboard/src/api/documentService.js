@@ -375,6 +375,27 @@ export const commandService = {
     });
   },
 
+  sendSort(deviceId = 'DEV-001', payload = {}) {
+    return apiRequest('/commands', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, command: 'SORT', payload }),
+    });
+  },
+
+  sendMotorTest(deviceId = 'DEV-001', payload = {}) {
+    return apiRequest('/commands', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, command: 'MOTOR_TEST', payload }),
+    });
+  },
+
+  sendCameraLight(deviceId = 'DEV-001', payload = {}) {
+    return apiRequest('/commands', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId, command: 'CAMERA_LIGHT', payload }),
+    });
+  },
+
   cancelPending(deviceId = 'DEV-001', reason = 'Cancelled by dashboard user.') {
     return apiRequest('/commands/cancel', {
       method: 'POST',

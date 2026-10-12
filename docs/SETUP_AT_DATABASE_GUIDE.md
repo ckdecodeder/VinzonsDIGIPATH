@@ -30,7 +30,7 @@ Parang `prisma db push` + `prisma db seed`, pero ang seed files ay nasa **`dbcol
 ### Step B — Clone at install
 
 ```powershell
-git clone https://github.com/xjmerco/VinzonsDIGIPATH.git
+git clone https://github.com/clarenceportugal/digipath.git
 cd digipath
 npm run install:all
 ```

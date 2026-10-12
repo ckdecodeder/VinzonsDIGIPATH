@@ -148,36 +148,32 @@ Then: sudo bash start.sh
 
 
 -------------------------------
-TB6600 #1 — LIFT (up/down stepper):
-  PUL- -> GPIO17   (PUL+ -> 3.3V or 5V)
-  DIR- -> GPIO18   (DIR+ -> 3.3V or 5V)
-  ENA- -> GPIO22   (optional; set DIGIPATH_LIFT_ENA_GPIO=0 if unused)
-  A+/A-/B+/B- -> lift motor
-  Pi GND -> TB6600 GND
+ACTIVE TB6600 WIRING — pi_ws_scanner.py:
+  Lift: PUL=GPIO17, DIR=GPIO27, ENA=GPIO22 (optional)
+  Sort: PUL=GPIO23, DIR=GPIO24, ENA=GPIO25 (optional)
+  A+/A-/B+/B- -> matching motor coils
+  Pi GND -> TB6600 signal GND
 
-TB6600 #2 — ROTATE (left only):
-  PUL- -> GPIO27
-  DIR- -> GPIO23
-  ENA- -> GPIO24   (optional)
-  A+/A-/B+/B- -> rotate motor
-  Pi GND -> TB6600 GND
+Default direction mapping:
+  DIGIPATH_LIFT_DOWN_DIR_HIGH=1  -> lift DOWN = DIR HIGH, UP = DIR LOW
+  DIGIPATH_SORT_FORWARD=1        -> sort forward = DIR HIGH
+  DIGIPATH_MOTOR_DIR_INVERT=0    -> do not invert DIR output
 
-On Capture (SCAN command) sequence:
-  1. Rotate driver — N steps LEFT
-  2. Lift driver   — N steps UP
-  3. Camera capture
-  4. Lift driver   — N steps DOWN
+Open-loop Capture sequence:
+  1. Lift DOWN for DIGIPATH_CAPTURE_DOWN_COUNT moves
+  2. Camera capture and upload
+  3. Sort motor forward for the configured deposit steps
+  4. Lift UP by the same total distance as the Capture descent
 
-Edit in bridge.env:
-  DIGIPATH_MOTOR_ENABLED=1
-  DIGIPATH_LIFT_UP_STEPS=800
-  DIGIPATH_LIFT_DOWN_STEPS=800
-  DIGIPATH_ROTATE_LEFT_STEPS=400
-  DIGIPATH_MOTOR_STEP_DELAY_US=800
-  DIGIPATH_LIFT_UP_DIR=1
-  DIGIPATH_ROTATE_LEFT_DIR=0
+Physical CW/CCW depends on motor coil orientation and gearbox. Verify with:
+  bash scripts/test-motors.sh lift down 50
+  bash scripts/test-motors.sh lift up 50
+  bash scripts/test-motors.sh sort cw 50
+  bash scripts/test-motors.sh sort ccw 50
 
-If direction is reversed, flip UP_DIR or LEFT_DIR (0/1).
+Use small step counts with the mechanism unloaded first. Flip
+DIGIPATH_LIFT_DOWN_DIR_HIGH for lift polarity or DIGIPATH_SORT_FORWARD for
+sort polarity when the physical direction is reversed.
 
 STEP 0 — FIX "invalid option" (after USB copy)
 ----------------------------------------------

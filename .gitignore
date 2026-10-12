@@ -2,6 +2,9 @@ node_modules/
 backend/node_modules/
 dashboard/node_modules/
 
+# Local environment files contain machine-specific settings and credentials.
+*.env
+
 dashboard/dist/
 backend/uploads/
 database-export/
@@ -18,9 +21,3 @@ scanned_files/
 .cursorignore
 AGENTS.md
 *.canvas.tsx
-
-network.env
-bridge.env
-pi_ws_scanner.env
-pi_ws_scanner.env
-*.env

@@ -69,6 +69,7 @@ class RealtimeHub {
     this.streamRelayPending = new Map();
     this.streamRelayStats = new Map();
     this.streamConsumerStats = new Map();
+    this.streamReceiveStats = new Map();
     this.streamHintAt = new Map();
   }
 
@@ -133,11 +134,18 @@ class RealtimeHub {
         client.ping();
       }
 
+      // Devices get a 2-miss grace (~60s) so a congested tunnel during scan upload
+      // does not immediately kill the WebSocket and flash Offline in the UI.
       for (const clients of this.deviceClients.values()) {
         for (const client of clients) {
           if (!client.isAlive) {
-            client.terminate();
-            continue;
+            client.missedPongs = (client.missedPongs || 0) + 1;
+            if (client.missedPongs >= 2) {
+              client.terminate();
+              continue;
+            }
+          } else {
+            client.missedPongs = 0;
           }
           client.isAlive = false;
           client.ping();
@@ -323,6 +331,7 @@ class RealtimeHub {
       sendJson(ws, { type: 'auth:ok', deviceId });
       this.recordDeviceConnected(deviceId);
       this.broadcastDevicePresence(deviceId);
+      this.resendPendingCommands(ws, deviceId);
     };
 
     ws.on('message', (data, isBinary) => {
@@ -330,6 +339,8 @@ class RealtimeHub {
       if (isBinary) {
         if (!ws.auth?.deviceId) return;
         this.relayStreamFrame(ws.auth.deviceId, data);
+        // The device keeps at most a couple of frames in flight, so frames never queue up in the tunnel.
+        sendJson(ws, { type: 'stream:ack' });
         return;
       }
 
@@ -372,6 +383,17 @@ class RealtimeHub {
 
       if (msg.type === 'heartbeat' || msg.type === 'device_connected' || msg.type === 'device_disconnected') {
         this.handlePresenceAsync(ws, msg);
+        return;
+      }
+
+      // Live camera-light state: relayed as-is (no DB write) so the dashboard follows the knob and buttons instantly.
+      if (msg.type === 'camera_light') {
+        this.broadcastToUsers({
+          type: 'camera_light',
+          deviceId: ws.auth.deviceId,
+          light: msg.payload || {},
+          command: msg.command || null,
+        });
       }
     });
 
@@ -476,12 +498,21 @@ class RealtimeHub {
     const clients = this.deviceClients.get(deviceId);
     if (!clients?.size) return;
 
+    // Frames per second that actually arrived from the device since the last hint.
+    let receiveFps = 0;
+    const received = this.streamReceiveStats.get(deviceId);
+    if (received && now - received.since >= 1000) {
+      receiveFps = Math.round((received.frames * 10000) / (now - received.since)) / 10;
+      this.streamReceiveStats.set(deviceId, { frames: 0, since: now });
+    }
+
     this.streamHintAt.set(deviceId, now);
     const payload = {
       type: 'stream:hint',
       pressure: Math.max(0, Math.min(1, pressure)),
       skipRate: Math.max(0, Math.min(1, skipRate)),
       consumerFps,
+      receiveFps,
       subscribers,
     };
     for (const client of clients) {
@@ -493,6 +524,9 @@ class RealtimeHub {
     const buf = Buffer.isBuffer(frameBuffer) ? frameBuffer : Buffer.from(frameBuffer);
     const now = Date.now();
     this.latestStreamFrames.set(deviceId, { frame: buf, at: now });
+    const received = this.streamReceiveStats.get(deviceId) || { frames: 0, since: now };
+    received.frames += 1;
+    this.streamReceiveStats.set(deviceId, received);
 
     let state = this.streamRelayPending.get(deviceId);
     if (!state) {
@@ -516,7 +550,8 @@ class RealtimeHub {
     const lastSent = this.streamThrottle.get(deviceId) || 0;
     if (minIntervalMs > 0 && now - lastSent < minIntervalMs) {
       state.flushScheduled = true;
-      setImmediate(() => this.flushStreamRelay(deviceId));
+      const waitMs = Math.max(1, minIntervalMs - (now - lastSent));
+      setTimeout(() => this.flushStreamRelay(deviceId), waitMs);
       return;
     }
     this.streamThrottle.set(deviceId, now);
@@ -549,10 +584,6 @@ class RealtimeHub {
 
     this.maybeSendStreamHint(deviceId, { sent, skipped: anySkipped ? 1 : 0, subscribers, maxBuffered });
 
-    if (anySkipped && !state.flushScheduled) {
-      state.flushScheduled = true;
-      setTimeout(() => this.flushStreamRelay(deviceId), 2);
-    }
   }
 
   relayWebRtcToDevice(userId, deviceId, payload) {
@@ -607,6 +638,24 @@ class RealtimeHub {
       sendJson(client, payload);
     }
     return true;
+  }
+
+  // Commands are only delivered over WS, so anything queued while the Pi was
+  // reconnecting would otherwise sit Pending and block new commands.
+  resendPendingCommands(ws, deviceId) {
+    setImmediate(async () => {
+      try {
+        const { Command } = require('../models');
+        const pending = await Command.find({ deviceId, status: 'Pending' })
+          .sort({ createdAt: 1 })
+          .lean();
+        for (const command of pending) {
+          sendJson(ws, { type: 'command:pending', command });
+        }
+      } catch (err) {
+        console.warn(`[RealtimeHub] Pending command resend failed for ${deviceId}: ${err.message}`);
+      }
+    });
   }
 
   isDeviceConnected(deviceId) {

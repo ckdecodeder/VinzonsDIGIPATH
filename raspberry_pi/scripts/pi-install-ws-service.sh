@@ -34,6 +34,10 @@ fi
 
 echo "[PiWS] Installing service for user=$RUN_USER dest=$DEST"
 
+# The legacy scanner service opens the same camera device. Keep only the WS scanner active.
+systemctl stop digipath-scanner.service 2>/dev/null || true
+systemctl disable digipath-scanner.service 2>/dev/null || true
+
 # WiFi + USB first so digipath-wifi-provision.service exists before scanner starts.
 if [[ -f "$DEST/scripts/pi-install-wifi-provision.sh" ]]; then
   DIGIPATH_WS_DIR="$DEST" DIGIPATH_USER="$RUN_USER" \

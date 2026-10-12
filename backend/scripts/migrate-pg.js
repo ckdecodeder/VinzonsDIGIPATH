@@ -283,7 +283,7 @@ async function main() {
 
   // ─── Sync (create tables if they don't exist) ────────────────────────────
   console.log('\n⏳ Syncing database tables...');
-  await sequelize.sync({ force: true });
+  await sequelize.sync({ alter: true });
   console.log('✓ All tables created/updated\n');
 
   // ─── Import data from dbcollections/ ─────────────────────────────────────

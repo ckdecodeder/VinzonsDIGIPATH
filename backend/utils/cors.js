@@ -1,6 +1,8 @@
+const { isIP } = require('node:net');
+
 /**
- * Automatic CORS for DigiPath clients (browser on localhost, LAN, dev tunnels).
- * No manual origin list needed for typical dev / store-network setups.
+ * Shared CORS policy for every Express HTTP route, including API and uploads.
+ * Supports localhost, tunnels, and frontends opened through any IP address.
  */
 
 const STATIC_ORIGINS = new Set([
@@ -13,6 +15,16 @@ const STATIC_ORIGINS = new Set([
   'https://digipath-zeta.vercel.app',
 ]);
 
+function isIpOrigin(origin) {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    const address = hostname.replace(/^\[|\]$/g, '');
+    return (protocol === 'http:' || protocol === 'https:') && isIP(address) !== 0;
+  } catch {
+    return false;
+  }
+}
+
 function extraOriginsFromEnv() {
   const raw = process.env.CORS_ORIGINS?.trim() || process.env.CORS_ORIGIN?.trim();
   if (!raw) return [];
@@ -23,6 +35,9 @@ function isAllowedCorsOrigin(origin) {
   if (!origin) return true;
 
   if (STATIC_ORIGINS.has(origin)) return true;
+
+  // Browsers may access the dashboard through any LAN or public IP address.
+  if (isIpOrigin(origin)) return true;
 
   for (const extra of extraOriginsFromEnv()) {
     if (origin === extra) return true;

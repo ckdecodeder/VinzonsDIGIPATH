@@ -6,15 +6,18 @@ Works on any network when Pi and dashboard share the same backend URL.
 """
 
 import base64
+import glob
 import json
 import os
 import queue
 import re
+import select
 import signal
 import socket
 import subprocess
 import threading
 import time
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -29,12 +32,12 @@ import websocket
 from digipath_mechanism import (
     get_mechanism,
     mechanism_home_on_startup,
-    mechanism_prepare_for_capture,
     mechanism_start_door_monitor,
-    mechanism_start_sort_async,
+    mechanism_startup_self_test,
     resolve_sort_layer,
 )
 
+PI_CODE_VERSION = "2026-10-04-fixed-camera-fps"
 BACKEND_BASE_URL = os.environ.get("DIGIPATH_BACKEND_BASE_URL", "").rstrip("/")
 DEVICE_ID = os.environ.get("DIGIPATH_DEVICE_ID", "DEV-001")
 DEVICE_API_KEY = os.environ.get("DIGIPATH_DEVICE_API_KEY", "dev-device-key-change-me")
@@ -68,25 +71,93 @@ JPEG_QUALITY = int(os.environ.get("DIGIPATH_STREAM_JPEG_QUALITY", "92"))
 SCAN_JPEG_QUALITY = max(75, min(100, int(os.environ.get("DIGIPATH_SCAN_JPEG_QUALITY", "98"))))
 PREVIEW_JPEG_QUALITY = int(os.environ.get("DIGIPATH_PREVIEW_JPEG_QUALITY", "76"))
 STREAM_JPEG_MAX_BYTES = max(120_000, int(os.environ.get("DIGIPATH_STREAM_JPEG_MAX_BYTES", "650000")))
-STREAM_JPEG_MIN_QUALITY = max(55, int(os.environ.get("DIGIPATH_STREAM_JPEG_MIN_QUALITY", "68")))
-WS_MAX_FPS = min(120.0, max(1.0, float(os.environ.get("DIGIPATH_STREAM_WS_MAX_FPS", "20"))))
+STREAM_JPEG_MIN_QUALITY = max(35, int(os.environ.get("DIGIPATH_STREAM_JPEG_MIN_QUALITY", "40")))
+WS_MAX_FPS = min(120.0, max(1.0, float(os.environ.get("DIGIPATH_STREAM_WS_MAX_FPS", "12"))))
 STREAM_ADAPTIVE = os.environ.get("DIGIPATH_STREAM_ADAPTIVE", "1").strip().lower() not in (
     "0",
     "false",
     "no",
     "off",
 )
-STREAM_ADAPTIVE_MIN_FPS = max(4.0, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MIN_FPS", "8")))
+STREAM_ADAPTIVE_MIN_FPS = max(4.0, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MIN_FPS", "10")))
 STREAM_ADAPTIVE_MAX_FPS = min(
     120.0,
     max(STREAM_ADAPTIVE_MIN_FPS, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_MAX_FPS", str(WS_MAX_FPS)))),
 )
 STREAM_ADAPTIVE_TICK_SECS = max(1.5, float(os.environ.get("DIGIPATH_STREAM_ADAPTIVE_TICK_SECS", "3")))
+# Live-stream JPEG widths, largest first. A slow link drops to a smaller width so fps stays up;
+# only the streamed copy shrinks (camera, auto-crop and scan capture keep full resolution).
+STREAM_SEND_WIDTHS = sorted(
+    {
+        int(width)
+        for width in os.environ.get("DIGIPATH_STREAM_SEND_WIDTHS", "1280,960,768,640").split(",")
+        if width.strip().isdigit() and int(width) >= 320
+    },
+    reverse=True,
+) or [1280]
 STREAM_SEND_INTERVAL = (1.0 / WS_MAX_FPS) if WS_MAX_FPS > 0 else 0.05
 STREAM_BUFFER_FRAMES = max(1, int(os.environ.get("DIGIPATH_STREAM_BUFFER_FRAMES", "1")))
 STREAM_DRIVER_DRAIN = max(1, int(os.environ.get("DIGIPATH_STREAM_DRIVER_DRAIN", "3")))
 CAMERA_READ_TIMEOUT_MS = max(500, int(os.environ.get("DIGIPATH_CAMERA_READ_TIMEOUT_MS", "4000")))
-CAMERA_READ_RETRIES = max(1, int(os.environ.get("DIGIPATH_CAMERA_READ_RETRIES", "4")))
+CAMERA_READ_RETRIES = max(1, int(os.environ.get("DIGIPATH_CAMERA_READ_RETRIES", "2")))
+AUTO_CROP_PAPER = os.environ.get("DIGIPATH_AUTO_CROP_PAPER", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+AUTO_CROP_MIN_AREA = max(0.08, min(0.8, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_AREA", "0.12"))))
+# Reject near-full-frame boxes (walls/room) but allow large paper close to camera.
+AUTO_CROP_MAX_AREA = max(0.35, min(0.95, float(os.environ.get("DIGIPATH_AUTO_CROP_MAX_AREA", "0.88"))))
+AUTO_CROP_DETECT_EVERY = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_DETECT_EVERY", "3")))
+# Lower = smoother live crop (less jitter). 0.10–0.15 is usually best.
+AUTO_CROP_SMOOTHING = max(0.05, min(1.0, float(os.environ.get("DIGIPATH_AUTO_CROP_SMOOTHING", "0.12"))))
+AUTO_CROP_MAX_MISSES = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_MAX_MISSES", "3")))
+AUTO_CROP_LOCK_HITS = max(1, int(os.environ.get("DIGIPATH_AUTO_CROP_LOCK_HITS", "2")))
+AUTO_CROP_PAD_RATIO = max(0.0, min(0.08, float(os.environ.get("DIGIPATH_AUTO_CROP_PAD_RATIO", "0.008"))))
+AUTO_CROP_ASPECT_MIN = max(0.35, float(os.environ.get("DIGIPATH_AUTO_CROP_ASPECT_MIN", "0.55")))
+AUTO_CROP_ASPECT_MAX = min(2.2, float(os.environ.get("DIGIPATH_AUTO_CROP_ASPECT_MAX", "1.85")))
+AUTO_CROP_MIN_BRIGHTNESS = max(40.0, min(220.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_BRIGHTNESS", "70"))))
+AUTO_CROP_REQUIRE_BRIGHT = os.environ.get("DIGIPATH_AUTO_CROP_REQUIRE_BRIGHT", "0").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Soft preference — hard-reject only when paper is darker than background.
+AUTO_CROP_MIN_CONTRAST = max(0.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_CONTRAST", "8")))
+AUTO_CROP_MIN_SCORE = max(0.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_SCORE", "2.2")))
+# HSV gates (0-255): paper must be low-saturation (white/gray) and reasonably bright.
+AUTO_CROP_MAX_SATURATION = max(10.0, min(255.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MAX_SATURATION", "70"))))
+AUTO_CROP_MIN_PAPER_VALUE = max(0.0, min(255.0, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_PAPER_VALUE", "160"))))
+AUTO_CROP_SIZE_LOCK = os.environ.get("DIGIPATH_AUTO_CROP_SIZE_LOCK", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+AUTO_CROP_SIZE_SMOOTHING = max(0.02, min(0.4, float(os.environ.get("DIGIPATH_AUTO_CROP_SIZE_SMOOTHING", "0.06"))))
+AUTO_CROP_REFINE = os.environ.get("DIGIPATH_AUTO_CROP_REFINE", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Reject tiny false locks (hand / UI tile) — document must cover enough of the camera.
+AUTO_CROP_MIN_FRAME_COVERAGE = max(0.10, min(0.9, float(os.environ.get("DIGIPATH_AUTO_CROP_MIN_FRAME_COVERAGE", "0.14"))))
+AUTO_CROP_MIN_EDGE_PX = max(200, int(os.environ.get("DIGIPATH_AUTO_CROP_MIN_EDGE_PX", "360")))
+# Live preview: crop = show the warped document (WYSIWYG). overlay = full cam + green box.
+# both = cropped view with a small border.
+AUTO_CROP_LIVE_MODE = os.environ.get("DIGIPATH_AUTO_CROP_LIVE_MODE", "crop").strip().lower()
+if AUTO_CROP_LIVE_MODE not in ("overlay", "crop", "both"):
+    AUTO_CROP_LIVE_MODE = "crop"
+PREVIEW_SHADOW_LIFT = os.environ.get("DIGIPATH_PREVIEW_SHADOW_LIFT", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+PREVIEW_SHADOW_MEAN_LIMIT = max(20.0, min(160.0, float(os.environ.get("DIGIPATH_PREVIEW_SHADOW_MEAN_LIMIT", "105"))))
 CAMERA_RECOVER_AFTER_MISSES = max(3, int(os.environ.get("DIGIPATH_CAMERA_RECOVER_AFTER_MISSES", "12")))
 CAMERA_REOPEN_AFTER_MISSES = max(
     CAMERA_RECOVER_AFTER_MISSES + 1,
@@ -99,10 +170,10 @@ SUPPRESS_LIBJPEG_WARN = os.environ.get("DIGIPATH_SUPPRESS_LIBJPEG_WARN", "1").st
     "off",
 )
 HEARTBEAT_SECS = int(os.environ.get("DIGIPATH_HEARTBEAT_INTERVAL_SECS", "5"))
-CAMERA_WARMUP_SECS = max(0.0, float(os.environ.get("DIGIPATH_CAMERA_WARMUP_SECS", "1")))
-SCAN_WARMUP_FRAMES = max(4, int(os.environ.get("DIGIPATH_SCAN_WARMUP_FRAMES", "15")))
-SCAN_BURST_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_BURST_FRAMES", "6")))
-SCAN_CAPTURE_DRAIN = max(2, int(os.environ.get("DIGIPATH_SCAN_CAPTURE_DRAIN", "8")))
+CAMERA_WARMUP_SECS = max(0.0, float(os.environ.get("DIGIPATH_CAMERA_WARMUP_SECS", "0.15")))
+SCAN_WARMUP_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_WARMUP_FRAMES", "2")))
+SCAN_BURST_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_BURST_FRAMES", "1")))
+SCAN_CAPTURE_DRAIN = max(1, int(os.environ.get("DIGIPATH_SCAN_CAPTURE_DRAIN", "2")))
 SCAN_ENHANCE = os.environ.get("DIGIPATH_SCAN_ENHANCE", "1").strip().lower() not in (
     "0",
     "false",
@@ -121,13 +192,63 @@ CAMERA_AUTOFOCUS = os.environ.get("DIGIPATH_CAMERA_AUTOFOCUS", "1").strip().lowe
     "no",
     "off",
 )
-FOCUS_SETTLE_SECS = max(0.2, float(os.environ.get("DIGIPATH_FOCUS_SETTLE_SECS", "0.8")))
-FOCUS_TRIGGER_ON_CAPTURE = os.environ.get("DIGIPATH_FOCUS_TRIGGER_ON_CAPTURE", "1").strip().lower() not in (
+CAMERA_AUTO_EXPOSURE = os.environ.get("DIGIPATH_CAMERA_AUTO_EXPOSURE", "1").strip().lower() not in (
     "0",
     "false",
     "no",
     "off",
 )
+# 1 lets the webcam stretch exposure in a dim box by dropping its own frame rate (~5 fps);
+# 0 keeps the requested fps and compensates with gain instead.
+CAMERA_EXPOSURE_PRIORITY = 1 if os.environ.get("DIGIPATH_CAMERA_EXPOSURE_PRIORITY", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+) else 0
+CAMERA_AUTO_WB = os.environ.get("DIGIPATH_CAMERA_AUTO_WB", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+CAMERA_BACKLIGHT_COMP = os.environ.get("DIGIPATH_CAMERA_BACKLIGHT_COMP", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+FOCUS_SETTLE_SECS = max(0.0, float(os.environ.get("DIGIPATH_FOCUS_SETTLE_SECS", "0.15")))
+FOCUS_TRIGGER_ON_CAPTURE = os.environ.get("DIGIPATH_FOCUS_TRIGGER_ON_CAPTURE", "0").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Instant capture: use the live preview frame already on screen (no AF wait / burst).
+CAPTURE_INSTANT = os.environ.get("DIGIPATH_CAPTURE_INSTANT", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+# Hi-res document capture: briefly switch the camera to a still resolution, crop with the
+# live green box, then return to the stream size. Falls back to the instant path on failure.
+SCAN_HIRES = os.environ.get("DIGIPATH_SCAN_HIRES", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+    "off",
+)
+SCAN_HIRES_SIZES = [
+    tuple(int(part) for part in size.lower().split("x"))
+    for size in os.environ.get("DIGIPATH_SCAN_HIRES_SIZES", "2560x1440,1920x1080").split(",")
+    if re.fullmatch(r"\s*\d+x\d+\s*", size.lower())
+]
+SCAN_HIRES_SETTLE_SECS = max(0.0, float(os.environ.get("DIGIPATH_SCAN_HIRES_SETTLE_SECS", "0.5")))
+SCAN_HIRES_BURST_FRAMES = max(1, int(os.environ.get("DIGIPATH_SCAN_HIRES_BURST_FRAMES", "2")))
+# The live stream is paused while the scan uploads, so a smaller JPEG means a shorter freeze.
+SCAN_HIRES_JPEG_QUALITY = max(75, min(100, int(os.environ.get("DIGIPATH_SCAN_HIRES_JPEG_QUALITY", "88"))))
 GROQ_API_KEY = os.environ.get("DIGIPATH_GROQ_API_KEY", "").strip()
 GROQ_API_URL = os.environ.get(
     "DIGIPATH_GROQ_API_URL", "https://api.groq.com/openai/v1/chat/completions"
@@ -164,17 +285,33 @@ active_capture_width = FRAME_WIDTH
 active_capture_height = FRAME_HEIGHT
 active_capture_cap = None
 active_v4l2_devices: list[str] = []
+active_v4l2_image_devices: list[str] = []
 camera_focus_status = "unknown"
 active_stream_width = PREVIEW_WIDTH
 active_stream_height = PREVIEW_HEIGHT
 capture_cap_lock = threading.RLock()
 _scan_in_progress = threading.Event()
+_scan_upload_busy = threading.Event()
 _preview_encode_event = threading.Event()
 _preview_encode_lock = threading.Lock()
 _last_encoded_version = -1
 _ws_frame_slot: bytes | None = None
 _ws_frame_slot_lock = threading.Lock()
 _ws_frame_send_event = threading.Event()
+# Frames sent but not yet acknowledged by the backend (send times). Capping this keeps the
+# live feed current on a slow/jittery tunnel instead of letting stale frames pile up.
+STREAM_MAX_IN_FLIGHT = max(1, int(os.environ.get("DIGIPATH_STREAM_MAX_IN_FLIGHT", "2")))
+_ws_inflight: deque = deque()
+_ws_inflight_lock = threading.Lock()
+_ws_ack_supported = False
+_ws_ack_rtt_ms = 0.0
+# Per-stage stream counters, reported as rates in the heartbeat to find where fps is lost.
+_stream_stats = {
+    "camera": 0, "readMs": 0.0, "prepMs": 0.0, "encoded": 0, "encodeMs": 0.0,
+    "sent": 0, "sendMs": 0.0, "heldInflight": 0, "skipSlowSend": 0,
+}
+_stream_stats_base = (time.monotonic(), dict(_stream_stats))
+_stream_stats_last: dict = {}
 
 ws_connected = False
 ws_authenticated = False
@@ -188,22 +325,38 @@ _active_ws_app = None
 _ws_last_activity_at = 0.0
 _ws_offline_since = None
 _ws_last_reconnect_kick_at = 0.0
+_ws_authed_at = 0.0
+WS_LIVE_GRACE_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_LIVE_GRACE_SECS", "15")))
 WS_STALE_SECS = max(15.0, float(os.environ.get("DIGIPATH_WS_STALE_SECS", "60")))
 WS_RECONNECT_MAX_SECS = max(1.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_MAX_SECS", "5")))
 WS_RECONNECT_MIN_SECS = max(0.5, float(os.environ.get("DIGIPATH_WS_RECONNECT_MIN_SECS", "1")))
-WS_OFFLINE_KICK_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_OFFLINE_KICK_SECS", "8")))
-# TCP keepalives so half-open tunnels/networks drop and the reconnect loop can run.
 WS_PING_INTERVAL = int(os.environ.get("DIGIPATH_WS_PING_INTERVAL", "20"))
 WS_PING_TIMEOUT = max(5, int(os.environ.get("DIGIPATH_WS_PING_TIMEOUT", "10")))
+# websocket-client refuses to connect at all unless ping_interval > ping_timeout.
+if WS_PING_INTERVAL > 0 and WS_PING_TIMEOUT >= WS_PING_INTERVAL:
+    WS_PING_INTERVAL = max(WS_PING_INTERVAL, 12)
+    WS_PING_TIMEOUT = WS_PING_INTERVAL // 2
+WS_OFFLINE_KICK_SECS = max(5.0, float(os.environ.get("DIGIPATH_WS_OFFLINE_KICK_SECS", "15")))
 STREAM_HTTP_UPLOAD_RAW = os.environ.get("DIGIPATH_STREAM_HTTP_UPLOAD", "auto").strip().lower()
 STREAM_HTTP_UPLOAD = STREAM_HTTP_UPLOAD_RAW not in ("0", "false", "no", "off")
 STREAM_HTTP_WS_PRIORITY = STREAM_HTTP_UPLOAD_RAW in ("auto", "ws", "1", "true", "yes", "on")
 _last_http_frame_upload_at = 0.0
 _http_frame_upload_boot = 0
 _http_upload_session = None
+_http_upload_lock = threading.Lock()
+_http_upload_inflight = False
+_http_upload_pending: bytes | None = None
 _last_ws_frame_sent_at = 0.0
 _last_ws_jpeg_sent: bytes | None = None
 _last_ws_jpeg_lock = threading.Lock()
+_auto_crop_frame_count = 0
+_last_paper_quad = None
+_last_paper_shape = None
+_last_paper_output_size = None
+_auto_crop_misses = 0
+_auto_crop_hits = 0
+_auto_crop_last_log_at = 0.0
+_auto_crop_was_locked = False
 _adaptive_lock = threading.Lock()
 _adaptive_fps = WS_MAX_FPS
 _adaptive_jpeg_quality = PREVIEW_JPEG_QUALITY
@@ -212,8 +365,19 @@ _backend_pressure = 0.0
 _consumer_paint_fps = 0.0
 _ws_send_samples = 0
 _ws_send_slow = 0
+_ws_frames_sent_tick = 0
+_backend_receive_fps = 0.0
+_backend_receive_at = 0.0
+_adaptive_send_tier = 0
+_tier_bad_ticks = 0
+_tier_good_ticks = 0
+_tier_up_needed = 5
+_tier_last_up_at = 0.0
+_stream_delivered_fps = 0.0
 _last_adaptive_tick_at = 0.0
 _last_adaptive_log_at = 0.0
+_adaptive_hold_until = 0.0
+STREAM_POST_SCAN_HOLD_SECS = 10.0
 _last_http_upload_error_log_at = 0.0
 
 
@@ -425,6 +589,7 @@ def local_ip() -> str:
 
 def device_payload(event_type: str) -> dict:
     ip = local_ip()
+    _ensure_camera_hw_info()
     resolution = f"{active_capture_width}x{active_capture_height}"
     return {
         "deviceId": DEVICE_ID,
@@ -458,13 +623,42 @@ def device_payload(event_type: str) -> dict:
             "previewFps": _effective_stream_fps(),
             "adaptiveStream": STREAM_ADAPTIVE,
             "adaptiveStreamFps": _effective_stream_fps(),
+            "streamSendWidth": _effective_send_width(),
+            "streamDeliveredFps": round(_stream_delivered_fps, 1),
+            "streamAckRttMs": round(_ws_ack_rtt_ms) if _ws_ack_supported else None,
+            "wifi": _wifi_signal(),
+            "streamStages": _stream_stats_snapshot() if event_type == "device_heartbeat" else None,
             "autofocus": camera_focus_status,
-            "mechanism": get_mechanism().status_dict(),
+            "mechanism": _safe_mechanism_status(),
+            "piCodeVersion": PI_CODE_VERSION,
+            "wsLastIssue": _ws_last_issue,
+            "cameraHw": _camera_hw_info,
+            "cameraXu": _safe_camera_xu_snapshot(),
+            "cameraLight": _camera_light_status(),
         },
     }
 
 
+def _safe_camera_xu_snapshot() -> dict:
+    if latest_bgr is None:
+        return {}
+    try:
+        return _camera_xu_snapshot()
+    except Exception as err:
+        return {"error": str(err)}
+
+
+def _safe_mechanism_status() -> dict:
+    try:
+        return get_mechanism().status_dict()
+    except Exception as err:
+        return {"enabled": False, "initError": f"mechanism status error: {err}"}
+
+
 def _effective_stream_fps() -> float:
+    # Free tunnel bandwidth for heartbeats/pings while a scan JPEG uploads.
+    if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+        return 1.0
     if not STREAM_ADAPTIVE:
         return WS_MAX_FPS
     with _adaptive_lock:
@@ -485,27 +679,81 @@ def _effective_jpeg_max_bytes() -> int:
         return int(_adaptive_jpeg_max_bytes)
 
 
+_last_ws_send_ms = 0.0
+_last_ws_send_done_at = 0.0
+
+
 def _record_ws_send_sample(elapsed_ms: float):
-    global _ws_send_samples, _ws_send_slow
+    global _ws_send_samples, _ws_send_slow, _last_ws_send_ms, _last_ws_send_done_at, _ws_frames_sent_tick
+    _last_ws_send_ms = elapsed_ms
+    _last_ws_send_done_at = time.monotonic()
     with _adaptive_lock:
         _ws_send_samples = min(_ws_send_samples + 1, 40)
-        if elapsed_ms > 80.0:
+        _ws_frames_sent_tick += 1
+        if elapsed_ms > 60.0:
             _ws_send_slow = min(_ws_send_slow + 1, 40)
 
 
 def _apply_stream_hint(data: dict):
-    global _backend_pressure, _consumer_paint_fps
+    global _backend_pressure, _consumer_paint_fps, _backend_receive_fps, _backend_receive_at
     with _adaptive_lock:
         _backend_pressure = max(0.0, min(1.0, float(data.get("pressure") or 0)))
         consumer = float(data.get("consumerFps") or 0)
         if consumer > 0:
             _consumer_paint_fps = consumer
+        received = float(data.get("receiveFps") or 0)
+        if received > 0:
+            _backend_receive_fps = received
+            _backend_receive_at = time.monotonic()
+
+
+def _effective_send_width() -> int:
+    if not STREAM_ADAPTIVE:
+        return STREAM_SEND_WIDTHS[0]
+    with _adaptive_lock:
+        return STREAM_SEND_WIDTHS[min(_adaptive_send_tier, len(STREAM_SEND_WIDTHS) - 1)]
+
+
+def _adaptive_send_tier_step(now: float, prev_tick_at: float, link_score: float):
+    """Pick the stream width from frames the backend actually received. Caller holds _adaptive_lock."""
+    global _adaptive_send_tier, _tier_bad_ticks, _tier_good_ticks, _tier_up_needed, _tier_last_up_at
+    global _stream_delivered_fps
+    if _backend_receive_at > 0 and now - _backend_receive_at < 6.0:
+        delivered = _backend_receive_fps
+    elif prev_tick_at > 0:
+        delivered = _ws_frames_sent_tick / max(0.5, now - prev_tick_at)
+    else:
+        return
+    _stream_delivered_fps = delivered
+    if len(STREAM_SEND_WIDTHS) < 2:
+        return
+    target = _adaptive_fps
+    if delivered < target * 0.7:
+        _tier_bad_ticks += 1
+        _tier_good_ticks = 0
+    elif delivered >= target * 0.9 and link_score >= -0.05:
+        _tier_good_ticks += 1
+        _tier_bad_ticks = 0
+    else:
+        _tier_bad_ticks = 0
+        _tier_good_ticks = 0
+    if _tier_bad_ticks >= 2 and _adaptive_send_tier < len(STREAM_SEND_WIDTHS) - 1:
+        # Stepping straight back down after a step up means the link can't hold it: wait longer next time.
+        if _tier_last_up_at and now - _tier_last_up_at < 30.0:
+            _tier_up_needed = min(40, _tier_up_needed * 2)
+        _adaptive_send_tier += 1
+        _tier_bad_ticks = 0
+    elif _tier_good_ticks >= _tier_up_needed and _adaptive_send_tier > 0:
+        _adaptive_send_tier -= 1
+        _tier_good_ticks = 0
+        _tier_last_up_at = now
 
 
 def _adaptive_stream_tick():
     """Raise/lower fps + JPEG size based on WS health and backend backpressure."""
     global _adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes
     global _ws_send_samples, _ws_send_slow, _last_adaptive_tick_at, _last_adaptive_log_at
+    global _ws_frames_sent_tick, _backend_receive_at
 
     if not STREAM_ADAPTIVE:
         return
@@ -513,59 +761,78 @@ def _adaptive_stream_tick():
     now = time.monotonic()
     if now - _last_adaptive_tick_at < STREAM_ADAPTIVE_TICK_SECS:
         return
+    prev_tick_at = _last_adaptive_tick_at
     _last_adaptive_tick_at = now
 
+    # The scan upload deliberately throttles the stream to 1 fps; judging the link
+    # during that window (or right after) would permanently blur the live feed.
+    if _scan_upload_busy.is_set() or _scan_in_progress.is_set() or now < _adaptive_hold_until:
+        with _adaptive_lock:
+            _ws_send_samples = 0
+            _ws_send_slow = 0
+            _ws_frames_sent_tick = 0
+            _backend_receive_at = 0.0
+        return
+
     with _adaptive_lock:
-        score = 0.0
+        # link_score: real transport trouble (slow WS sends, backend backlog, stalls).
+        link_score = 0.0
         if _ws_send_samples > 0:
             slow_ratio = _ws_send_slow / _ws_send_samples
-            score -= slow_ratio * 0.45
-        score -= _backend_pressure * 0.4
+            link_score -= slow_ratio * 0.45
+        link_score -= _backend_pressure * 0.4
+        if _last_ws_frame_sent_at > 0 and (now - _last_ws_frame_sent_at) > 2.5:
+            link_score -= 0.35
 
+        utilization = None
         target_fps = _adaptive_fps
         if _consumer_paint_fps > 0 and target_fps > 0:
             utilization = _consumer_paint_fps / target_fps
-            if utilization >= 0.9:
-                score += 0.22
-            elif utilization < 0.55:
-                score -= 0.28
-
-        if _last_ws_frame_sent_at > 0 and (now - _last_ws_frame_sent_at) > 2.5:
-            score -= 0.35
 
         prev_fps = _adaptive_fps
         prev_q = _adaptive_jpeg_quality
         prev_bytes = _adaptive_jpeg_max_bytes
+        prev_tier = _adaptive_send_tier
 
-        if score > 0.12:
-            _adaptive_fps = min(STREAM_ADAPTIVE_MAX_FPS, _adaptive_fps + 1.0)
+        if link_score < -0.2:
+            _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 4)
+            _adaptive_jpeg_max_bytes = max(
+                max(60_000, int(STREAM_JPEG_MAX_BYTES * 0.6)),
+                int(_adaptive_jpeg_max_bytes * 0.85),
+            )
+        elif link_score >= -0.05:
             _adaptive_jpeg_quality = min(PREVIEW_JPEG_QUALITY, _adaptive_jpeg_quality + 2)
             _adaptive_jpeg_max_bytes = min(
                 STREAM_JPEG_MAX_BYTES,
                 int(_adaptive_jpeg_max_bytes * 1.06) + 8000,
             )
-        elif score < -0.12:
+
+        # A slow viewer only costs fps, never sharpness.
+        if link_score < -0.35 or (utilization is not None and utilization < 0.55):
             _adaptive_fps = max(STREAM_ADAPTIVE_MIN_FPS, _adaptive_fps - 1.0)
-            _adaptive_jpeg_quality = max(STREAM_JPEG_MIN_QUALITY, _adaptive_jpeg_quality - 3)
-            _adaptive_jpeg_max_bytes = max(
-                max(120_000, int(STREAM_JPEG_MAX_BYTES * 0.45)),
-                int(_adaptive_jpeg_max_bytes * 0.9),
-            )
+        elif link_score >= -0.05 and (utilization is None or utilization >= 0.9):
+            _adaptive_fps = min(STREAM_ADAPTIVE_MAX_FPS, _adaptive_fps + 1.0)
+
+        _adaptive_send_tier_step(now, prev_tick_at, link_score)
 
         _ws_send_samples = 0
         _ws_send_slow = 0
+        _ws_frames_sent_tick = 0
 
         changed = (
             int(prev_fps) != int(_adaptive_fps)
             or prev_q != _adaptive_jpeg_quality
             or abs(prev_bytes - _adaptive_jpeg_max_bytes) > 12_000
+            or prev_tier != _adaptive_send_tier
         )
-        if changed and (now - _last_adaptive_log_at) > 8.0:
+        if changed and (prev_tier != _adaptive_send_tier or (now - _last_adaptive_log_at) > 8.0):
             _last_adaptive_log_at = now
             print(
                 f"[PiWS] Adaptive stream -> {_adaptive_fps:.0f}fps "
+                f"width={STREAM_SEND_WIDTHS[_adaptive_send_tier]} "
                 f"q{_adaptive_jpeg_quality} max={_adaptive_jpeg_max_bytes // 1000}KB "
-                f"(pressure={_backend_pressure:.2f} consumer={_consumer_paint_fps:.0f}fps)"
+                f"(delivered={_stream_delivered_fps:.1f}fps pressure={_backend_pressure:.2f} "
+                f"consumer={_consumer_paint_fps:.0f}fps)"
             )
 
 
@@ -590,6 +857,14 @@ def encode_stream_jpeg(frame) -> bytes | None:
     """Fast preview JPEG — adaptive quality/size cap for network conditions."""
     if frame is None:
         return None
+    send_width = _effective_send_width()
+    if frame.shape[1] > send_width:
+        scale = send_width / frame.shape[1]
+        frame = cv2.resize(
+            frame,
+            (_even_dim(send_width), _even_dim(frame.shape[0] * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
     max_bytes = _effective_jpeg_max_bytes()
     base_quality = _effective_preview_jpeg_quality()
     jpeg = encode_jpeg(frame, base_quality, optimize=False)
@@ -606,19 +881,538 @@ def _frame_pace_sleep(remaining_secs: float):
     time.sleep(min(max(remaining_secs, 0.0), 0.008 if _effective_stream_fps() >= 45 else 0.02))
 
 
-def _prepare_preview_frame(frame):
-    oriented = _apply_preview_rotation(frame)
-    if oriented is None:
+def _order_paper_points(points):
+    points = np.asarray(points, dtype=np.float32).reshape(4, 2)
+    total = points.sum(axis=1)
+    diff = np.diff(points, axis=1).reshape(4)
+    return np.array(
+        [points[np.argmin(total)], points[np.argmin(diff)], points[np.argmax(total)], points[np.argmax(diff)]],
+        dtype=np.float32,
+    )
+
+
+def _quad_from_contour(contour, image_area: float):
+    """Return ordered 4-point quad + score extras, or None."""
+    area = float(cv2.contourArea(contour))
+    area_ratio = area / image_area if image_area else 0.0
+    if area_ratio < AUTO_CROP_MIN_AREA or area_ratio > AUTO_CROP_MAX_AREA:
+        return None
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter <= 0:
+        return None
+
+    polygon = None
+    used_min_area_rect = False
+    for eps in (0.015, 0.02, 0.028, 0.04):
+        approx = cv2.approxPolyDP(contour, eps * perimeter, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            polygon = approx.reshape(4, 2).astype(np.float32)
+            break
+    if polygon is None:
+        # Near-rectangle fallback — only for mid-sized blobs (not whole-room edges).
+        if area_ratio > 0.70:
+            return None
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect).astype(np.float32)
+        rect_area = max(1.0, float(abs(rect[1][0] * rect[1][1])))
+        if area / rect_area < 0.80:
+            return None
+        polygon = box
+        used_min_area_rect = True
+
+    if not cv2.isContourConvex(polygon.astype(np.float32)):
+        return None
+
+    ordered = _order_paper_points(polygon)
+    top_left, top_right, bottom_right, bottom_left = ordered
+    width = float(max(np.linalg.norm(top_right - top_left), np.linalg.norm(bottom_right - bottom_left)))
+    height = float(max(np.linalg.norm(bottom_left - top_left), np.linalg.norm(bottom_right - top_right)))
+    if width < 80 or height < 80:
+        return None
+    aspect = width / max(1.0, height)
+    aspect_ok = (AUTO_CROP_ASPECT_MIN <= aspect <= AUTO_CROP_ASPECT_MAX) or (
+        AUTO_CROP_ASPECT_MIN <= (1.0 / aspect) <= AUTO_CROP_ASPECT_MAX
+    )
+    if not aspect_ok:
+        return None
+
+    x, y, box_w, box_h = cv2.boundingRect(ordered.astype(np.int32))
+    rectangularity = area / max(1.0, float(box_w * box_h))
+    min_rect = 0.62 if used_min_area_rect else 0.55
+    if rectangularity < min_rect:
+        return None
+
+    return {
+        "quad": ordered,
+        "area": area,
+        "area_ratio": area_ratio,
+        "rectangularity": rectangularity,
+        "aspect": aspect,
+        "width": width,
+        "height": height,
+    }
+
+
+def _paper_brightness_score(gray_small, quad) -> float:
+    """Prefer bright paper interiors vs darker desk/room background."""
+    mask = np.zeros(gray_small.shape, dtype=np.uint8)
+    cv2.fillConvexPoly(mask, np.round(quad).astype(np.int32), 255)
+    inside = gray_small[mask > 0]
+    if inside.size < 80:
+        return 0.0
+    mean_in = float(np.mean(inside))
+    outside = gray_small[mask == 0]
+    coverage = float(inside.size) / float(max(1, gray_small.size))
+    # Near-full-frame "paper" (room walls) — hard reject.
+    if coverage > AUTO_CROP_MAX_AREA or outside.size < max(80, int(gray_small.size * 0.06)):
+        return 0.0
+    mean_out = float(np.mean(outside))
+    contrast = mean_in - mean_out
+    # Hard reject only if the region is darker than its surroundings (not paper).
+    if contrast < -8.0:
+        return 0.0
+    if AUTO_CROP_REQUIRE_BRIGHT and mean_in < AUTO_CROP_MIN_BRIGHTNESS and contrast < AUTO_CROP_MIN_CONTRAST:
+        return 0.0
+    score = mean_in + max(0.0, contrast) * 1.4
+    if mean_in < AUTO_CROP_MIN_BRIGHTNESS:
+        score *= 0.72
+    if contrast < AUTO_CROP_MIN_CONTRAST:
+        score *= 0.78
+    return max(1.0, score)
+
+
+def _paper_color_ok(hsv_small, quad) -> bool:
+    """Paper is bright and nearly colorless; wood, boards and desks are not."""
+    if hsv_small is None:
+        return True
+    mask = np.zeros(hsv_small.shape[:2], dtype=np.uint8)
+    cv2.fillConvexPoly(mask, np.round(quad).astype(np.int32), 255)
+    inside = hsv_small[mask > 0]
+    if inside.size < 80:
+        return False
+    mean_sat = float(np.mean(inside[:, 1]))
+    mean_val = float(np.mean(inside[:, 2]))
+    return mean_sat <= AUTO_CROP_MAX_SATURATION and mean_val >= AUTO_CROP_MIN_PAPER_VALUE
+
+
+def _paper_center_score(quad, width: int, height: int) -> float:
+    center = quad.mean(axis=0)
+    dx = abs((center[0] / max(1.0, width)) - 0.5)
+    dy = abs((center[1] / max(1.0, height)) - 0.5)
+    return max(0.0, 1.0 - (dx + dy) * 1.6)
+
+
+def _collect_edge_maps(gray):
+    """Fewer maps = much lower CPU on Pi (was 7 maps/frame → laggy feed)."""
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    kernel = np.ones((5, 5), dtype=np.uint8)
+    maps = []
+    for low, high in ((30, 110), (45, 150)):
+        edges = cv2.Canny(blurred, low, high)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+        maps.append(edges)
+    # Bright-paper mask helps when desk is dark
+    adaptive = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, -6
+    )
+    _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    bright = cv2.bitwise_or(adaptive, otsu)
+    bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, kernel, iterations=2)
+    bright = cv2.morphologyEx(bright, cv2.MORPH_OPEN, kernel, iterations=1)
+    maps.append(bright)
+    return maps
+
+
+def _detect_paper_quad_simple(gray, image_area: float, scale: float, hsv=None):
+    """Reliable fallback — largest convex 4-gon that still looks like paper."""
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edges = cv2.Canny(blurred, 45, 150)
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((5, 5), dtype=np.uint8), iterations=2)
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_area = 0.0
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:25]:
+        area = float(cv2.contourArea(contour))
+        area_ratio = area / image_area if image_area else 0.0
+        if area_ratio < AUTO_CROP_MIN_AREA or area_ratio > AUTO_CROP_MAX_AREA:
+            continue
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter <= 0:
+            continue
+        for eps in (0.02, 0.03, 0.04):
+            polygon = cv2.approxPolyDP(contour, eps * perimeter, True)
+            if len(polygon) != 4 or not cv2.isContourConvex(polygon):
+                continue
+            ordered = _order_paper_points(polygon.reshape(4, 2).astype(np.float32))
+            x, y, box_w, box_h = cv2.boundingRect(ordered.astype(np.int32))
+            if box_w < 80 or box_h < 80:
+                continue
+            if area / max(1.0, float(box_w * box_h)) < 0.55:
+                continue
+            aspect = float(box_w) / max(1.0, float(box_h))
+            aspect_ok = (AUTO_CROP_ASPECT_MIN <= aspect <= AUTO_CROP_ASPECT_MAX) or (
+                AUTO_CROP_ASPECT_MIN <= (1.0 / aspect) <= AUTO_CROP_ASPECT_MAX
+            )
+            if not aspect_ok:
+                continue
+            if _paper_brightness_score(gray, ordered) <= 0:
+                continue
+            if not _paper_color_ok(hsv, ordered):
+                continue
+            if area > best_area:
+                best = ordered
+                best_area = area
+            break
+    if best is None:
+        return None
+    return _order_paper_points(best / scale)
+
+
+def _is_plausible_paper_quad(quad, frame_shape) -> bool:
+    """Reject tiny false locks and giant room-edge locks."""
+    if quad is None:
+        return False
+    height, width = frame_shape[:2]
+    frame_area = float(max(1, width * height))
+    qw, qh = _quad_dims(quad)
+    coverage = (qw * qh) / frame_area
+    if coverage < AUTO_CROP_MIN_FRAME_COVERAGE:
+        return False
+    if coverage > AUTO_CROP_MAX_AREA:
+        return False
+    if max(qw, qh) < AUTO_CROP_MIN_EDGE_PX:
+        return False
+    if min(qw, qh) < max(160, int(AUTO_CROP_MIN_EDGE_PX * 0.45)):
+        return False
+    # Must not be a thin strip
+    aspect = qw / max(1, qh)
+    if aspect < 0.4 or aspect > 2.5:
+        return False
+    return True
+
+
+def _detect_paper_quad(frame):
+    if not AUTO_CROP_PAPER or frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    height, width = frame.shape[:2]
+    scale = min(1.0, 960.0 / max(height, width))
+    small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale < 1 else frame
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    image_area = float(small.shape[0] * small.shape[1])
+    sh, sw = gray.shape[:2]
+
+    best = None
+    best_score = -1.0
+    seen = set()
+
+    for edge_map in _collect_edge_maps(gray):
+        contours, _ = cv2.findContours(edge_map, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:40]
+        for contour in contours:
+            candidate = _quad_from_contour(contour, image_area)
+            if candidate is None:
+                continue
+            key = tuple(np.round(candidate["quad"]).astype(int).reshape(-1).tolist())
+            if key in seen:
+                continue
+            seen.add(key)
+            brightness = _paper_brightness_score(gray, candidate["quad"])
+            if brightness <= 0:
+                continue
+            if not _paper_color_ok(hsv, candidate["quad"]):
+                continue
+            center = _paper_center_score(candidate["quad"], sw, sh)
+            aspect_bonus = 1.0 - min(abs(candidate["aspect"] - 0.77), abs(candidate["aspect"] - 1.29)) * 0.35
+            score = (
+                candidate["area_ratio"] * 3.2
+                + candidate["rectangularity"] * 2.4
+                + (brightness / 255.0) * 2.0
+                + center * 1.3
+                + max(0.0, aspect_bonus)
+            )
+            if score > best_score:
+                best_score = score
+                best = candidate["quad"]
+
+    if best is None or best_score < AUTO_CROP_MIN_SCORE:
+        simple = _detect_paper_quad_simple(gray, image_area, scale, hsv)
+        if simple is None or not _is_plausible_paper_quad(simple, frame.shape):
+            return None
+        # Re-check brightness on full-res-ish gray for the simple path too
+        simple_small = (simple * scale).astype(np.float32) if scale < 1 else simple
+        if _paper_brightness_score(gray, simple_small) <= 0:
+            return None
+        return _refine_paper_corners(frame, simple)
+
+    full_quad = _order_paper_points(best / scale)
+    refined = _refine_paper_corners(frame, full_quad)
+    if not _is_plausible_paper_quad(refined, frame.shape):
+        return None
+    return refined
+
+
+def _refine_paper_corners(frame, quad):
+    """Snap corners to true edges (sub-pixel) for exact crop borders."""
+    if quad is None or not AUTO_CROP_REFINE:
+        return quad
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        corners = np.asarray(quad, dtype=np.float32).reshape(-1, 1, 2)
+        win = max(5, min(21, int(min(frame.shape[0], frame.shape[1]) * 0.02) | 1))
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001)
+        refined = cv2.cornerSubPix(gray, corners, (win, win), (-1, -1), criteria)
+        refined = refined.reshape(4, 2).astype(np.float32)
+        refined[:, 0] = np.clip(refined[:, 0], 0, frame.shape[1] - 1)
+        refined[:, 1] = np.clip(refined[:, 1], 0, frame.shape[0] - 1)
+        return _order_paper_points(refined)
+    except Exception:
+        return _order_paper_points(quad)
+
+
+def _expand_paper_quad(points, frame_shape, pad_ratio: float = AUTO_CROP_PAD_RATIO):
+    """Slight padding so text near edges is not clipped."""
+    if points is None or pad_ratio <= 0:
+        return points
+    height, width = frame_shape[:2]
+    center = points.mean(axis=0)
+    expanded = center + (points - center) * (1.0 + pad_ratio)
+    expanded[:, 0] = np.clip(expanded[:, 0], 0, width - 1)
+    expanded[:, 1] = np.clip(expanded[:, 1], 0, height - 1)
+    return expanded.astype(np.float32)
+
+
+def _even_dim(value: int) -> int:
+    value = max(2, int(value))
+    return value if value % 2 == 0 else value + 1
+
+
+def _quad_dims(points):
+    top_left, top_right, bottom_right, bottom_left = points
+    width = int(round(max(np.linalg.norm(bottom_right - bottom_left), np.linalg.norm(top_right - top_left))))
+    height = int(round(max(np.linalg.norm(top_right - bottom_right), np.linalg.norm(top_left - bottom_left))))
+    return _even_dim(width), _even_dim(height)
+
+
+def _warp_paper_quad(frame, points, output_size=None):
+    if points is None:
         return frame
-    height, width = oriented.shape[:2]
-    if PREVIEW_WIDTH == width and PREVIEW_HEIGHT == height:
-        return oriented
-    downscale = PREVIEW_WIDTH < width or PREVIEW_HEIGHT < height
+    points = _expand_paper_quad(points, frame.shape)
+    if output_size is None:
+        target_width, target_height = _quad_dims(points)
+    else:
+        target_width, target_height = _even_dim(output_size[0]), _even_dim(output_size[1])
+    if target_width < 100 or target_height < 100:
+        return frame
+    destination = np.array(
+        [[0, 0], [target_width - 1, 0], [target_width - 1, target_height - 1], [0, target_height - 1]],
+        dtype=np.float32,
+    )
+    matrix = cv2.getPerspectiveTransform(points.astype(np.float32), destination)
+    return cv2.warpPerspective(
+        frame,
+        matrix,
+        (target_width, target_height),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+
+def _crop_paper(frame, *, exact: bool = False):
+    """Live crop (smooth) or exact crop (scan)."""
+    global _auto_crop_frame_count, _last_paper_quad, _last_paper_shape, _last_paper_output_size, _auto_crop_misses
+    global _auto_crop_last_log_at, _auto_crop_was_locked, _auto_crop_hits
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return frame
+    shape = frame.shape[:2]
+    _auto_crop_frame_count += 1
+
+    if exact:
+        detected = _detect_paper_quad(frame)
+        points = detected if detected is not None else _last_paper_quad
+        if points is None:
+            return frame
+        # Prefer locked live size for stable scan aspect; else use detected dims.
+        out_size = _last_paper_output_size if (AUTO_CROP_SIZE_LOCK and _last_paper_output_size) else _quad_dims(points)
+        return _warp_paper_quad(frame, points, out_size)
+
+    if shape != _last_paper_shape:
+        _last_paper_output_size = None
+        _last_paper_quad = None
+        _auto_crop_misses = 0
+        _auto_crop_hits = 0
+
+    if shape != _last_paper_shape or _auto_crop_frame_count % AUTO_CROP_DETECT_EVERY == 1:
+        detected_quad = _detect_paper_quad(frame)
+        has_doc = detected_quad is not None and _is_plausible_paper_quad(detected_quad, frame.shape)
+        if not has_doc:
+            _auto_crop_misses += 1
+            _auto_crop_hits = 0
+            # Unlock immediately — never keep a stale zoomed crop when paper is gone.
+            if _last_paper_quad is not None:
+                print("[PiWS] Auto-crop UNLOCKED (no document) — full preview")
+                _last_paper_quad = None
+                _last_paper_output_size = None
+                _auto_crop_was_locked = False
+        elif _last_paper_quad is None:
+            _auto_crop_hits += 1
+            _auto_crop_misses = 0
+            # Require consecutive hits so a one-frame room false-positive does not zoom in.
+            if _auto_crop_hits >= AUTO_CROP_LOCK_HITS:
+                _last_paper_quad = detected_quad
+                w, h = _quad_dims(detected_quad)
+                print(f"[PiWS] Auto-crop LOCKED ({w}x{h})")
+                _auto_crop_was_locked = True
+        else:
+            jump = float(np.mean(np.linalg.norm(detected_quad - _last_paper_quad, axis=1)))
+            diag = float(np.hypot(shape[1], shape[0]))
+            # Huge jump = lost document / wrong object → drop crop right away
+            if jump > diag * 0.18:
+                _auto_crop_misses += 1
+                _auto_crop_hits = 0
+                print("[PiWS] Auto-crop UNLOCKED (unstable) — full preview")
+                _last_paper_quad = None
+                _last_paper_output_size = None
+                _auto_crop_was_locked = False
+            else:
+                alpha = AUTO_CROP_SMOOTHING
+                if jump < diag * 0.01:
+                    alpha = max(0.04, AUTO_CROP_SMOOTHING * 0.45)
+                elif jump < diag * 0.03:
+                    alpha = max(0.06, AUTO_CROP_SMOOTHING * 0.7)
+                _last_paper_quad = (
+                    (1.0 - alpha) * _last_paper_quad + alpha * detected_quad
+                ).astype(np.float32)
+                _auto_crop_misses = 0
+                _auto_crop_hits = AUTO_CROP_LOCK_HITS
+        _last_paper_shape = shape
+
+    if _last_paper_quad is not None and not _is_plausible_paper_quad(_last_paper_quad, frame.shape):
+        print("[PiWS] Auto-crop UNLOCKED (implausible) — full preview")
+        _last_paper_quad = None
+        _last_paper_output_size = None
+        _auto_crop_was_locked = False
+        _auto_crop_hits = 0
+
+    # No document → original camera frame (later resized to PREVIEW_WIDTH x PREVIEW_HEIGHT)
+    if _last_paper_quad is None:
+        return frame
+
+    detected_width, detected_height = _quad_dims(_last_paper_quad)
+    if _last_paper_output_size is None:
+        target_width, target_height = detected_width, detected_height
+    elif AUTO_CROP_SIZE_LOCK:
+        # Keep output size almost fixed so live feed does not "breathe"
+        size_alpha = AUTO_CROP_SIZE_SMOOTHING
+        prev_w, prev_h = _last_paper_output_size
+        # Ignore tiny size noise completely
+        if abs(detected_width - prev_w) / max(1, prev_w) < 0.02 and abs(detected_height - prev_h) / max(1, prev_h) < 0.02:
+            target_width, target_height = prev_w, prev_h
+        else:
+            target_width = _even_dim((1.0 - size_alpha) * prev_w + size_alpha * detected_width)
+            target_height = _even_dim((1.0 - size_alpha) * prev_h + size_alpha * detected_height)
+    else:
+        size_alpha = min(0.12, AUTO_CROP_SMOOTHING)
+        prev_w, prev_h = _last_paper_output_size
+        target_width = _even_dim((1.0 - size_alpha) * prev_w + size_alpha * detected_width)
+        target_height = _even_dim((1.0 - size_alpha) * prev_h + size_alpha * detected_height)
+    _last_paper_output_size = (target_width, target_height)
+    preview_scale = min(
+        1.0,
+        PREVIEW_WIDTH / target_width,
+        PREVIEW_HEIGHT / target_height,
+    )
+    preview_size = (
+        _even_dim(round(target_width * preview_scale)),
+        _even_dim(round(target_height * preview_scale)),
+    )
+    return _warp_paper_quad(frame, _last_paper_quad, preview_size)
+
+
+def _lift_preview_shadows(frame):
+    """Brighten only very dark preview frames; keep the camera/scan frame unchanged."""
+    if not PREVIEW_SHADOW_LIFT or frame is None or not getattr(frame, "size", 0):
+        return frame
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if float(np.mean(gray)) >= PREVIEW_SHADOW_MEAN_LIMIT:
+            return frame
+        gamma = 0.72
+        lut = np.array([((value / 255.0) ** gamma) * 255 for value in range(256)], dtype=np.uint8)
+        return cv2.LUT(frame, lut)
+    except Exception:
+        return frame
+
+
+def _draw_paper_overlay(frame, quad):
+    """Draw green document outline so auto-crop detection is visible on live preview."""
+    if frame is None or quad is None:
+        return frame
+    out = frame.copy()
+    pts = np.round(quad).astype(np.int32).reshape(-1, 1, 2)
+    cv2.polylines(out, [pts], True, (0, 220, 80), 3, cv2.LINE_AA)
+    for point in pts.reshape(-1, 2):
+        cv2.circle(out, (int(point[0]), int(point[1])), 6, (0, 255, 120), -1, cv2.LINE_AA)
+    label = "DOCUMENT DETECTED"
+    cv2.putText(out, label, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(out, label, (16, 36), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 120), 2, cv2.LINE_AA)
+    return out
+
+
+def _fit_to_preview(frame, *, letterbox: bool = False):
+    """Always emit PREVIEW_WIDTH x PREVIEW_HEIGHT. Default fills the canvas (no black bars)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return frame
+    height, width = frame.shape[:2]
+    if width == PREVIEW_WIDTH and height == PREVIEW_HEIGHT:
+        return frame
+    # letterbox kept only for rare callers — live crop/full preview always fill.
+    if letterbox:
+        scale = min(float(PREVIEW_WIDTH) / float(max(1, width)), float(PREVIEW_HEIGHT) / float(max(1, height)))
+        new_w = _even_dim(max(2, int(width * scale)))
+        new_h = _even_dim(max(2, int(height * scale)))
+        resized = cv2.resize(
+            frame,
+            (new_w, new_h),
+            interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR,
+        )
+        canvas = np.zeros((PREVIEW_HEIGHT, PREVIEW_WIDTH, 3), dtype=frame.dtype)
+        x0 = max(0, (PREVIEW_WIDTH - new_w) // 2)
+        y0 = max(0, (PREVIEW_HEIGHT - new_h) // 2)
+        canvas[y0 : y0 + new_h, x0 : x0 + new_w] = resized
+        return canvas
+    downscale = width > PREVIEW_WIDTH or height > PREVIEW_HEIGHT
     return cv2.resize(
-        oriented,
+        frame,
         (PREVIEW_WIDTH, PREVIEW_HEIGHT),
         interpolation=cv2.INTER_AREA if downscale else cv2.INTER_LINEAR,
     )
+
+
+def _prepare_preview_frame(frame):
+    """Live preview: cropped document fills view when locked; full camera when unlocked."""
+    if frame is None:
+        return frame
+    rotated = _apply_preview_rotation(frame)
+    if AUTO_CROP_LIVE_MODE == "crop":
+        cropped = _crop_paper(rotated, exact=False)
+        if _last_paper_quad is not None and cropped is not None and cropped is not rotated:
+            return _lift_preview_shadows(cropped)  # already PREVIEW_WxH, edge-to-edge
+        return _fit_to_preview(_lift_preview_shadows(rotated), letterbox=False)
+    if AUTO_CROP_LIVE_MODE == "both":
+        cropped = _crop_paper(rotated, exact=False)
+        if _last_paper_quad is not None and cropped is not None and cropped is not rotated:
+            # No green border / no black pad — just the filled crop.
+            return _lift_preview_shadows(cropped)
+        return _fit_to_preview(_lift_preview_shadows(rotated), letterbox=False)
+
+    # overlay: keep full frame, draw green document box when locked
+    _crop_paper(rotated, exact=False)
+    oriented = _lift_preview_shadows(rotated)
+    if _last_paper_quad is not None:
+        oriented = _draw_paper_overlay(oriented, _last_paper_quad)
+    return _fit_to_preview(oriented, letterbox=False)
 
 
 def configure_capture(cap, width: int, height: int):
@@ -717,6 +1511,697 @@ def _run_v4l2_ctl(device: str, *args) -> subprocess.CompletedProcess | None:
         return None
 
 
+_camera_hw_info: dict = {}
+_camera_hw_info_started = False
+
+
+def _run_text(cmd: list[str], limit: int = 2500) -> str:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=8, check=False)
+        return ((proc.stdout or "") + (proc.stderr or "")).strip()[:limit]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as err:
+        return f"unavailable: {err}"
+
+
+def _collect_camera_hw_info():
+    """One-shot report of the webcam's identity and every control it exposes (for remote debugging)."""
+    global _camera_hw_info
+    info: dict = {}
+    idx = active_camera_index if isinstance(active_camera_index, int) else 0
+    dev = f"/dev/video{idx}"
+    info["device"] = dev
+    info["listDevices"] = _run_text(["v4l2-ctl", "--list-devices"], 800)
+    info["controls"] = _run_text(["v4l2-ctl", "-d", dev, "-L"], 3500)
+    usb_id = ""
+    try:
+        usb_dir = os.path.realpath(f"/sys/class/video4linux/video{idx}/device/..")
+        with open(os.path.join(usb_dir, "idVendor")) as f:
+            vendor = f.read().strip()
+        with open(os.path.join(usb_dir, "idProduct")) as f:
+            product = f.read().strip()
+        usb_id = f"{vendor}:{product}"
+        for name in ("manufacturer", "product"):
+            path = os.path.join(usb_dir, name)
+            if os.path.exists(path):
+                with open(path) as f:
+                    info[f"usb_{name}"] = f.read().strip()
+    except OSError:
+        pass
+    info["usbId"] = usb_id
+    if usb_id:
+        verbose = _run_text(["lsusb", "-v", "-d", usb_id], 200000)
+        keep = [
+            line.strip()
+            for line in verbose.splitlines()
+            if any(k in line for k in ("guidExtensionCode", "bUnitID", "bNumControls", "bmControls",
+                                       "iExtension", "VideoControl Interface Descriptor",
+                                       "EXTENSION_UNIT", "bInterfaceClass", "iProduct", "iManufacturer"))
+        ]
+        info["uvcExtensionUnits"] = "\n".join(keep)[:3000]
+    hid = []
+    for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        try:
+            with open(os.path.join(node, "device", "uevent")) as f:
+                fields = dict(line.strip().split("=", 1) for line in f if "=" in line)
+            hid.append(f"{os.path.basename(node)}: {fields.get('HID_NAME', '?')} ({fields.get('HID_ID', '?')})")
+        except OSError:
+            continue
+    info["hidraw"] = hid
+    descriptors = {}
+    for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        try:
+            with open(os.path.join(node, "device", "report_descriptor"), "rb") as f:
+                descriptors[os.path.basename(node)] = f.read().hex()[:1200]
+        except OSError:
+            continue
+    info["hidReportDescriptors"] = descriptors
+    _camera_hw_info = info
+    print(f"[PiWS] Camera hardware: {info.get('usbId')} {info.get('usb_product', '')} — report added to heartbeat")
+
+
+UVC_XU_UNIT = int(os.environ.get("DIGIPATH_CAMERA_XU_UNIT", "2"))
+_UVC_GET_CUR, _UVC_GET_LEN, _UVC_GET_INFO = 0x81, 0x85, 0x86
+
+
+def _uvc_xu_query(fd: int, unit: int, selector: int, query: int, size: int,
+                  data: bytes | None = None) -> bytes | None:
+    """UVC extension-unit query (UVCIOC_CTRL_QUERY); pass data only for SET_CUR."""
+    import ctypes
+    import fcntl
+
+    buf = ctypes.create_string_buffer(size)
+    if data:
+        ctypes.memmove(buf, data, min(size, len(data)))
+
+    class _Query(ctypes.Structure):
+        _fields_ = [
+            ("unit", ctypes.c_uint8),
+            ("selector", ctypes.c_uint8),
+            ("query", ctypes.c_uint8),
+            ("size", ctypes.c_uint16),
+            ("data", ctypes.c_void_p),
+        ]
+
+    q = _Query(unit, selector, query, size, ctypes.cast(buf, ctypes.c_void_p))
+    # _IOWR('u', 0x21, struct uvc_xu_control_query)
+    request = (3 << 30) | (ctypes.sizeof(_Query) << 16) | (ord("u") << 8) | 0x21
+    try:
+        fcntl.ioctl(fd, request, q)
+    except OSError:
+        return None
+    return buf.raw[:size]
+
+
+def _camera_xu_snapshot() -> dict:
+    """Current value of every vendor extension-unit control, to spot which one tracks the ring light."""
+    idx = active_camera_index if isinstance(active_camera_index, int) else 0
+    dev = f"/dev/video{idx}"
+    out: dict = {"unit": UVC_XU_UNIT, "at": datetime.now().strftime("%H:%M:%S")}
+    try:
+        fd = os.open(dev, os.O_RDWR | os.O_NONBLOCK)
+    except OSError as err:
+        out["error"] = str(err)
+        return out
+    try:
+        for selector in range(1, 17):
+            raw_len = _uvc_xu_query(fd, UVC_XU_UNIT, selector, _UVC_GET_LEN, 2)
+            if not raw_len:
+                continue
+            length = int.from_bytes(raw_len, "little")
+            if length <= 0 or length > 512:
+                continue
+            info = _uvc_xu_query(fd, UVC_XU_UNIT, selector, _UVC_GET_INFO, 1)
+            cur = _uvc_xu_query(fd, UVC_XU_UNIT, selector, _UVC_GET_CUR, length) if info and info[0] & 0x01 else None
+            out[str(selector)] = {
+                "len": length,
+                "info": info[0] if info else None,
+                "cur": cur.hex()[:128] if cur else None,
+            }
+    finally:
+        os.close(fd)
+    return out
+
+
+def _ensure_camera_hw_info():
+    global _camera_hw_info_started
+    if _camera_hw_info_started or latest_bgr is None:
+        return
+    _camera_hw_info_started = True
+    threading.Thread(target=_collect_camera_hw_info, daemon=True, name="camera-hw-info").start()
+
+
+# ─── Camera built-in light (EMEET ring/fill light) ─────────────────────────────
+# EMEET vendor HID (report ID 0x09): 09 <group> <sub> <op> 00 <len> 00 <len> <data...>.
+# The light is group 02 / sub 02. Even ops are host commands and the next odd op is the
+# camera's report: 00/01 power [ff, on], 04/05 level [mode, 0-100], 06/07 scene [00, n].
+# Which host command works is confirmed against those reports at runtime, then remembered.
+CAMERA_LIGHT_HID_REPORT_LEN = 32
+CAMERA_LIGHT_PROBE_SECS = float(os.environ.get("DIGIPATH_CAMERA_LIGHT_PROBE_SECS", "1") or 0)
+CAMERA_LIGHT_PUSH_SECS = 0.15
+CAMERA_LIGHT_HID_GROUP = (0x02, 0x02)
+CAMERA_LIGHT_HID_FILE = os.path.expanduser(
+    os.environ.get("DIGIPATH_CAMERA_LIGHT_HID_FILE", "~/.digipath_camera_light_hid.json")
+)
+CAMERA_LIGHT_HID_FILE_VERSION = 4
+# Tried in order until the camera confirms; MM = current mode, LL = level 0-100, SS = scene.
+# Even ops set silently (ACK only); the odd op is a query the camera answers with its current state,
+# whatever data it carries. So every power/level command is confirmed by querying right after it.
+_LIGHT_LEVEL_FORMATS = ["0902020400020002MMLL", "0902020400010001LL"]
+CAMERA_LIGHT_HID_CANDIDATES = {
+    "on": [
+        "0902020000020002ff01", "090202000001000101", "09020200000200020001", "09020200000200020101",
+        "09020206000200020000",
+    ],
+    "off": [
+        "0902020000020002ff00", "090202000001000100", "09020200000200020000", "09020200000200020100",
+        "09020206000200020003", "0902020400020002MM00", "090202040001000100",
+    ],
+    "level": _LIGHT_LEVEL_FORMATS,
+    "up": _LIGHT_LEVEL_FORMATS + ["090202040001000101", "09020204000200020001", "090202080001000101", "0902020a0001000101"],
+    "down": _LIGHT_LEVEL_FORMATS + ["0902020400010001ff", "090202040002000200ff", "090202080001000100", "0902020a0001000100"],
+    "scene": ["0902020600020002" + "00SS"],
+}
+_LIGHT_POWER_QUERY = "0902020100020002ff00"
+_LIGHT_LEVEL_QUERY = "0902020500020002MM00"
+CAMERA_LIGHT_HID_QUERIES = {
+    "on": _LIGHT_POWER_QUERY, "off": _LIGHT_POWER_QUERY,
+    "level": _LIGHT_LEVEL_QUERY, "up": _LIGHT_LEVEL_QUERY, "down": _LIGHT_LEVEL_QUERY,
+}
+# Scenes from the camera's own colour button (op 07) and the mode each one reports (op 05).
+CAMERA_LIGHT_SCENE_MODES = {0: 0, 1: 1, 2: 2, 5: 3}
+CAMERA_LIGHT_DIMMABLE_SCENE = 0
+CAMERA_LIGHT_BRIGHTNESS_STEP = 20
+# Dashboard training names -> HID action. Each one is recorded and tested on its own.
+CAMERA_LIGHT_TRAIN_ACTIONS = {"on": "on", "off": "off", "up": "up", "down": "down", "color": "scene"}
+CAMERA_LIGHT_RECORD_SECS = float(os.environ.get("DIGIPATH_CAMERA_LIGHT_RECORD_SECS", "12") or 12)
+CAMERA_LIGHT_RECORD_QUIET_SECS = 2.5
+for _action, _env in (("on", "ON"), ("off", "OFF"), ("level", "LEVEL")):
+    _override = os.environ.get(f"DIGIPATH_CAMERA_LIGHT_HID_{_env}", "").replace(" ", "")
+    if _override:
+        CAMERA_LIGHT_HID_CANDIDATES[_action] = [_override]
+
+_camera_light_state: dict = {"on": None, "brightness": None, "lastError": "", "at": ""}
+_camera_light_probe: dict = {"xuChanges": [], "hidInput": [], "hidError": ""}
+_camera_light_lock = threading.Lock()
+_camera_light_hid_seq = 0
+_camera_light_hid_events: list = []
+_camera_light_hid_mode = 0
+_camera_light_hid_confirmed: dict = {}
+_camera_light_hid_signatures: dict = {}
+
+
+def _load_camera_light_hid() -> None:
+    global _camera_light_hid_confirmed, _camera_light_hid_signatures
+    try:
+        with open(CAMERA_LIGHT_HID_FILE) as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("v") == CAMERA_LIGHT_HID_FILE_VERSION:
+            _camera_light_hid_confirmed = dict(data.get("commands") or {})
+            _camera_light_hid_signatures = dict(data.get("signatures") or {})
+            print(f"[PiWS] Camera light HID commands loaded: {_camera_light_hid_confirmed}")
+    except (OSError, ValueError):
+        pass
+
+
+def _write_camera_light_hid() -> None:
+    try:
+        with open(CAMERA_LIGHT_HID_FILE, "w") as f:
+            json.dump({
+                "v": CAMERA_LIGHT_HID_FILE_VERSION,
+                "commands": _camera_light_hid_confirmed,
+                "signatures": _camera_light_hid_signatures,
+            }, f)
+    except OSError as err:
+        print(f"[PiWS] Could not save camera light HID commands: {err}")
+
+
+def _save_camera_light_hid(action: str, template: str) -> None:
+    _camera_light_hid_confirmed[action] = template
+    _write_camera_light_hid()
+    print(f"[PiWS] Camera light '{action}' confirmed with HID {template}")
+
+
+def _find_camera_hidraw() -> str | None:
+    for node in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        try:
+            with open(os.path.join(node, "device", "uevent")) as f:
+                if "EMEET" in f.read().upper():
+                    return f"/dev/{os.path.basename(node)}"
+        except OSError:
+            continue
+    return None
+
+
+def _hid_send(report_hex: str) -> None:
+    path = _find_camera_hidraw()
+    if not path:
+        raise RuntimeError("EMEET HID device (/dev/hidraw*) not found")
+    report = bytes.fromhex(report_hex)[:CAMERA_LIGHT_HID_REPORT_LEN].ljust(CAMERA_LIGHT_HID_REPORT_LEN, b"\x00")
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        os.write(fd, report)
+    finally:
+        os.close(fd)
+
+
+def _append_capped(items: list, entry, cap: int) -> None:
+    items.append(entry)
+    del items[:-cap]
+
+
+def _on_camera_hid_report(data: bytes) -> None:
+    global _camera_light_hid_seq, _camera_light_hid_mode
+    _camera_light_hid_seq += 1
+    if len(data) < 9 or data[0] != 0x09 or (data[1], data[2]) != CAMERA_LIGHT_HID_GROUP:
+        return
+    op, size = data[3], data[7]
+    payload = data[8:8 + size]
+    _append_capped(_camera_light_hid_events, {"seq": _camera_light_hid_seq, "op": op, "data": payload}, 50)
+    # Only [ff, state, ...] is the power report; the camera follows it with an unrelated [03, 01, 01, 01].
+    if op == 0x01 and len(payload) >= 2 and payload[0] == 0xFF:
+        _camera_light_state["on"] = payload[1] == 0x01
+        _camera_light_state["offByLevel"] = False
+    elif op == 0x05 and len(payload) >= 2:
+        _camera_light_hid_mode = payload[0]
+        _camera_light_state["mode"] = payload[0]
+        if payload[1] <= 100:
+            _camera_light_state["brightness"] = payload[1]
+        # Level 0 is the knob's dark end; raising it lights again. A power-off (op 01) is not undone here
+        # because the camera also sends level reports while powered off.
+        if payload[1] == 0:
+            _camera_light_state["on"] = False
+            _camera_light_state["offByLevel"] = True
+        elif payload[1] <= 100 and _camera_light_state.get("offByLevel"):
+            _camera_light_state["on"] = True
+            _camera_light_state["offByLevel"] = False
+
+
+def _wait_camera_hid_events(after_seq: int, timeout: float, confirm) -> tuple[bool, list]:
+    deadline = time.monotonic() + timeout
+    seen: list = []
+    while time.monotonic() < deadline:
+        seen = [e for e in _camera_light_hid_events if e["seq"] > after_seq]
+        if any(confirm(e) for e in seen):
+            return True, seen
+        time.sleep(0.1)
+    return False, seen
+
+
+def _camera_light_confirmer(action: str, level: int | None, scene: int | None, before: int | None = None):
+    if action in ("up", "down"):
+        def moved(e) -> bool:
+            if e["op"] != 0x05 or len(e["data"]) < 2 or e["data"][1] > 100 or before is None:
+                return False
+            return e["data"][1] > before if action == "up" else e["data"][1] < before
+        return moved
+
+    def is_power(event, on_value: int) -> bool:
+        data = event["data"]
+        return event["op"] == 0x01 and len(data) >= 2 and data[0] == 0xFF and data[1] == on_value
+
+    def is_level(event, check) -> bool:
+        return event["op"] == 0x05 and len(event["data"]) >= 2 and check(event["data"][1])
+
+    # A recorded physical on/off also counts: match its power report (or first report) exactly.
+    signature = _camera_light_hid_signatures.get(action) if action in ("on", "off") else None
+    recorded = None
+    if signature:
+        sig_op, sig_data = next((s for s in signature if s.startswith("01:")), signature[0]).split(":")
+        recorded = lambda e: f"{e['op']:02x}" == sig_op and e["data"].hex() == sig_data
+    # Only the camera's power report proves on/off; a mode/level report alone does not.
+    if action == "on":
+        return lambda e: is_power(e, 0x01) or bool(recorded and recorded(e))
+    if action == "off":
+        return lambda e: is_power(e, 0x00) or is_level(e, lambda v: v == 0) or bool(recorded and recorded(e))
+    if action == "scene":
+        mode = CAMERA_LIGHT_SCENE_MODES.get(scene)
+        return lambda e: (e["op"] == 0x07 and e["data"][-1:] == bytes([scene])) or (
+            e["op"] == 0x05 and len(e["data"]) >= 1 and e["data"][0] == mode
+        )
+    # The camera moves brightness in steps of 2, so it may report a neighbouring value.
+    return lambda e: is_level(e, lambda v: v <= 100 and abs(v - (level or 0)) <= 3)
+
+
+def _hid_event_text(event) -> str:
+    return f"{event['op']:02x}:{event['data'].hex()}"
+
+
+def _hid_light_try(
+    action: str, templates: list, level: int | None, scene: int | None, before: int | None = None
+) -> tuple[str | None, list]:
+    confirm = _camera_light_confirmer(action, level, scene, before)
+    if level is not None:
+        # The camera only uses even brightness steps.
+        level = max(0, min(100, int(level))) & ~1
+    def fill(template: str) -> str:
+        return (
+            template.replace("MM", f"{_camera_light_hid_mode & 0xFF:02x}")
+            .replace("LL", f"{(level or 0) & 0xFF:02x}")
+            .replace("SS", f"{(scene or 0) & 0xFF:02x}")
+        )
+
+    query = CAMERA_LIGHT_HID_QUERIES.get(action)
+    results = []
+    for template in templates:
+        report = fill(template)
+        start = _camera_light_hid_seq
+        _hid_send(report)
+        if query:
+            ok, events = _wait_camera_hid_events(start, 0.3, confirm)
+            if not ok:
+                _hid_send(fill(query))
+                ok, events = _wait_camera_hid_events(start, 1.5, confirm)
+        else:
+            ok, events = _wait_camera_hid_events(start, 2.5, confirm)
+        replies = ", ".join(_hid_event_text(e) for e in events) or "no reply"
+        results.append({"command": report, "replies": replies, "ok": ok})
+        if ok:
+            return template, results
+    return None, results
+
+
+def _hid_light_do(action: str, level: int | None = None, scene: int | None = None, before: int | None = None) -> None:
+    known = _camera_light_hid_confirmed.get(action)
+    candidates = CAMERA_LIGHT_HID_CANDIDATES[action]
+    templates = [known] + [c for c in candidates if c != known] if known else candidates
+    template, results = _hid_light_try(action, templates, level, scene, before)
+    if template is None:
+        tried = "; ".join(f"{r['command']} -> {r['replies']}" for r in results)
+        raise RuntimeError(f"Camera did not confirm light {action} ({tried})")
+    if template != known:
+        _save_camera_light_hid(action, template)
+
+
+def _camera_light_set_level(target: int) -> None:
+    current = _camera_light_state.get("brightness")
+    if not isinstance(current, int):
+        raise RuntimeError("Brightness unknown yet. Turn the camera's brightness knob a little first.")
+    # The camera sometimes answers a level command with only its stored level, so retry until it lands.
+    last_error = None
+    for _ in range(3):
+        current = _camera_light_state.get("brightness")
+        # An unchanged level produces no report from the camera, so there is nothing to confirm.
+        if abs(current - target) <= 2:
+            return
+        try:
+            # Raising and lowering are learned separately, like turning the camera's knob either way.
+            _hid_light_do("up" if target > current else "down", level=target, before=current)
+            last_error = None
+        except RuntimeError as err:
+            last_error = err
+        time.sleep(0.3)
+    if abs(_camera_light_state.get("brightness") - target) <= 2:
+        return
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"Camera light stopped at {_camera_light_state.get('brightness')}% (asked for {target}%)")
+
+
+def _camera_light_turn_on(level: int | None) -> None:
+    try:
+        _hid_light_do("on")
+    except RuntimeError:
+        # Without a power command, "off" is brightness 0, so "on" means restoring a level.
+        if _camera_light_state.get("brightness") != 0:
+            raise
+        _camera_light_set_level(level or 70)
+        _camera_light_state["on"] = True
+
+
+def _camera_light_step_target(direction: str) -> tuple[int, int]:
+    current = _camera_light_state.get("brightness")
+    if not isinstance(current, int):
+        raise RuntimeError("Brightness unknown yet. Turn the camera's brightness knob a little first.")
+    if direction == "up" and current >= 100:
+        raise RuntimeError("Already at 100%. Turn the knob down a little first.")
+    if direction == "down" and current <= 2:
+        raise RuntimeError("Already at the lowest brightness. Turn the knob up a little first.")
+    step = CAMERA_LIGHT_BRIGHTNESS_STEP if direction == "up" else -CAMERA_LIGHT_BRIGHTNESS_STEP
+    return current, max(2, min(100, current + step))
+
+
+def set_camera_light(
+    on: bool | None, brightness: int | None, scene: int | None = None, brightness_step: str | None = None
+) -> str:
+    if not _find_camera_hidraw():
+        raise RuntimeError("Camera light needs the EMEET HID device — replug the USB into the Pi to update it")
+    with _camera_light_lock:
+        if on is False:
+            _hid_light_do("off")
+        else:
+            known_on = _camera_light_state.get("on")
+            # Raising the level from 0 lights it again, like the knob, so no power command is needed then.
+            level_change = brightness is not None or brightness_step is not None
+            # "On" is confirmed by querying the power state, so it is safe to send even if already on.
+            if on is True or (on is None and known_on is False and not level_change):
+                _camera_light_turn_on(None if brightness is None else max(1, min(100, int(brightness))))
+            if scene is not None:
+                _hid_light_do("scene", scene=int(scene))
+            if brightness is not None:
+                _camera_light_set_level(max(0, min(100, int(brightness))))
+            if brightness_step in ("up", "down"):
+                current, target = _camera_light_step_target(brightness_step)
+                _hid_light_do(brightness_step, level=target, before=current)
+        _camera_light_state["lastError"] = ""
+        _camera_light_state["at"] = datetime.now().strftime("%H:%M:%S")
+    if on is False:
+        return "Camera light OFF"
+    level = _camera_light_state.get("brightness")
+    return f"Camera light ON {level}%" if level else "Camera light ON"
+
+
+def _camera_report_events(after_seq: int) -> list:
+    # Odd ops are the camera's own reports; even ops are ACKs of commands the Pi sent.
+    return [e for e in _camera_light_hid_events if e["seq"] > after_seq and e["op"] % 2 == 1]
+
+
+def _set_camera_light_training(name: str, entry: dict) -> None:
+    training = dict(_camera_light_state.get("training") or {})
+    training[name] = {**(training.get(name) or {}), **entry}
+    _camera_light_state["training"] = training
+
+
+def record_camera_light_action(name: str) -> list[str]:
+    """Capture only what the camera reports while the user does `name` with the camera's own button."""
+    action = CAMERA_LIGHT_TRAIN_ACTIONS[name]
+    _set_camera_light_training(name, {"phase": "recording", "recorded": [], "seconds": CAMERA_LIGHT_RECORD_SECS})
+    start = _camera_light_hid_seq
+    deadline = time.monotonic() + CAMERA_LIGHT_RECORD_SECS
+    count, changed_at = 0, time.monotonic()
+    while time.monotonic() < deadline:
+        events = _camera_report_events(start)
+        if len(events) != count:
+            count, changed_at = len(events), time.monotonic()
+        # Stop once the camera goes quiet so a later, different button press is not mixed in.
+        if events and time.monotonic() - changed_at >= CAMERA_LIGHT_RECORD_QUIET_SECS:
+            break
+        time.sleep(0.2)
+    recorded = [_hid_event_text(e) for e in _camera_report_events(start)]
+    if recorded:
+        _camera_light_hid_signatures[action] = recorded
+        _write_camera_light_hid()
+    _set_camera_light_training(name, {
+        "phase": "recorded" if recorded else "nothing recorded",
+        "recorded": recorded,
+        "at": datetime.now().strftime("%H:%M:%S"),
+    })
+    return recorded
+
+
+def test_camera_light_action(name: str, value: int | None = None) -> str | None:
+    """Try every candidate command for `name` only and keep the first one the camera confirms."""
+    action = CAMERA_LIGHT_TRAIN_ACTIONS[name]
+    level = scene = before = None
+    # The camera only reports a power change, so testing "on" on a lit light proves nothing.
+    if action == "on" and _camera_light_state.get("on") is True:
+        raise RuntimeError("The light is already ON. Turn it OFF with the camera button, then press Test.")
+    if action == "off" and _camera_light_state.get("on") is False:
+        raise RuntimeError("The light is already OFF. Turn it ON with the camera button, then press Test.")
+    if action in ("up", "down"):
+        before, level = _camera_light_step_target(action)
+    elif action == "scene":
+        order = [0, 1, 2, 5]
+        current_scene = next((s for s, m in CAMERA_LIGHT_SCENE_MODES.items() if m == _camera_light_hid_mode), 0)
+        scene = int(value) if value is not None else order[(order.index(current_scene) + 1) % len(order)]
+    _set_camera_light_training(name, {"phase": "testing", "tests": [], "learned": None})
+    with _camera_light_lock:
+        _camera_light_hid_confirmed.pop(action, None)
+        template, results = _hid_light_try(action, CAMERA_LIGHT_HID_CANDIDATES[action], level, scene, before)
+        if template:
+            _camera_light_hid_confirmed[action] = template
+            print(f"[PiWS] Camera light '{action}' confirmed with HID {template}")
+        _write_camera_light_hid()
+    _set_camera_light_training(name, {
+        "phase": "learned" if template else "no command worked",
+        "tests": results,
+        "learned": template,
+        "target": scene if action == "scene" else level,
+        "at": datetime.now().strftime("%H:%M:%S"),
+    })
+    return template
+
+
+def _camera_light_live_state() -> dict:
+    return {key: _camera_light_state.get(key) for key in ("on", "brightness", "mode", "lastError", "at")}
+
+
+def push_camera_light_state(command: dict | None = None) -> bool:
+    """Send the light state (and a finished command) straight to the dashboard over the WebSocket."""
+    ws = realtime_ws
+    if not (ws_connected and ws_authenticated and ws is not None):
+        return False
+    message = {"type": "camera_light", "payload": _camera_light_live_state()}
+    if command:
+        message["command"] = command
+    try:
+        ws.send(json.dumps(message))
+        return True
+    except Exception as err:
+        print(f"[PiWS] Camera light WS push failed: {err}")
+        return False
+
+
+def camera_light_probe_worker():
+    """Track vendor XU changes for diagnostics."""
+    _load_camera_light_hid()
+    if CAMERA_LIGHT_PROBE_SECS <= 0:
+        return
+    prev: dict = {}
+    while not stop_event.wait(CAMERA_LIGHT_PROBE_SECS):
+        if latest_bgr is None:
+            continue
+        try:
+            snap = _camera_xu_snapshot()
+            for sel, value in snap.items():
+                if not isinstance(value, dict):
+                    continue
+                cur = value.get("cur")
+                old = prev.get(sel)
+                if old is not None and cur != old:
+                    change = {"at": snap.get("at"), "sel": int(sel), "from": old, "to": cur}
+                    _append_capped(_camera_light_probe["xuChanges"], change, 30)
+                prev[sel] = cur
+        except Exception as err:
+            _camera_light_probe["xuError"] = str(err)[:200]
+
+
+def camera_light_hid_reader():
+    """Read the camera's light reports as they arrive and push state changes to the dashboard at once."""
+    hid_fd = None
+    pushed: dict = {}
+    push_due = 0.0
+    while not stop_event.is_set():
+        if hid_fd is None:
+            path = _find_camera_hidraw()
+            try:
+                if not path:
+                    raise OSError("no EMEET hidraw node")
+                hid_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                _camera_light_probe["hidError"] = ""
+            except OSError as err:
+                _camera_light_probe["hidError"] = str(err)[:200]
+                stop_event.wait(10)
+                continue
+        try:
+            readable, _, _ = select.select([hid_fd], [], [], CAMERA_LIGHT_PUSH_SECS)
+            while readable:
+                try:
+                    data = os.read(hid_fd, 64)
+                except BlockingIOError:
+                    break
+                if not data:
+                    break
+                _on_camera_hid_report(data)
+                report_hex = data.rstrip(b"\x00").hex()
+                recent = _camera_light_probe["hidInput"]
+                if recent and recent[-1]["hex"] == report_hex:
+                    recent[-1]["n"] = recent[-1].get("n", 1) + 1
+                else:
+                    _append_capped(recent, {"at": datetime.now().strftime("%H:%M:%S"), "hex": report_hex}, 40)
+        except OSError as err:
+            _camera_light_probe["hidError"] = str(err)[:200]
+            try:
+                os.close(hid_fd)
+            except OSError:
+                pass
+            hid_fd = None
+            stop_event.wait(2)
+            continue
+        state = _camera_light_live_state()
+        state.pop("lastError", None)
+        state.pop("at", None)
+        # Turning the knob streams many reports; one push per interval keeps the dashboard live without flooding.
+        now = time.monotonic()
+        if state != pushed and now >= push_due and push_camera_light_state():
+            pushed = state
+            push_due = now + CAMERA_LIGHT_PUSH_SECS
+
+
+def _camera_light_status() -> dict:
+    return {
+        **_camera_light_state,
+        "mapped": bool(_find_camera_hidraw()),
+        "method": "hid",
+        "confirmed": _camera_light_hid_confirmed,
+        "signatures": _camera_light_hid_signatures,
+        "hidMode": _camera_light_hid_mode,
+        "probe": {
+            "xuChanges": _camera_light_probe["xuChanges"][-15:],
+            "hidInput": _camera_light_probe["hidInput"][-30:],
+            "hidError": _camera_light_probe.get("hidError", ""),
+        },
+    }
+
+
+def _run_camera_light_command(cmd_id: str, payload: dict | None = None):
+    payload = payload or {}
+    on = payload.get("on")
+    brightness = payload.get("brightness")
+    scene = payload.get("scene")
+    try:
+        train = payload.get("train")
+        if train is not None:
+            if train not in CAMERA_LIGHT_TRAIN_ACTIONS:
+                raise RuntimeError(f"Unknown light training action: {train}")
+            if not _find_camera_hidraw():
+                raise RuntimeError("Camera light needs the EMEET HID device — replug the USB into the Pi")
+            if payload.get("step") == "record":
+                recorded = record_camera_light_action(train)
+                print(f"[PiWS] CAMERA_LIGHT {cmd_id}: recorded {train}: {recorded or 'nothing'}")
+                if not recorded:
+                    raise RuntimeError(f"Nothing recorded. Do the {train} action on the camera within {int(CAMERA_LIGHT_RECORD_SECS)} s.")
+            else:
+                value = payload.get("value")
+                learned = test_camera_light_action(train, None if value is None else int(value))
+                print(f"[PiWS] CAMERA_LIGHT {cmd_id}: tested {train}: learned {learned or 'nothing'}")
+                if not learned:
+                    raise RuntimeError(f"No command made the camera confirm {train}.")
+        else:
+            message = set_camera_light(
+                None if on is None else bool(on),
+                None if brightness is None else int(brightness),
+                None if scene is None else int(scene),
+                payload.get("brightnessStep"),
+            )
+            print(f"[PiWS] CAMERA_LIGHT {cmd_id}: {message}")
+        status, error = "Executed", ""
+    except Exception as err:
+        _camera_light_state["lastError"] = str(err)[:240]
+        print(f"[PiWS] CAMERA_LIGHT {cmd_id} failed: {err}")
+        status, error = "Failed", str(err)
+    # The dashboard hears the WS push right away; HTTP keeps the stored command and full heartbeat in sync.
+    push_camera_light_state({"id": cmd_id, "status": status, "errorMessage": error[:300]})
+
+    def report():
+        try:
+            update_command_status(cmd_id, status, error)
+        except Exception as report_err:
+            print(f"[PiWS] CAMERA_LIGHT {cmd_id}: could not report {status} ({report_err})")
+        _send_presence_now("camera_light")
+
+    threading.Thread(target=report, daemon=True, name="camera-light-report").start()
+
+
 def _v4l2_control_names(device: str) -> set[str]:
     proc = _run_v4l2_ctl(device, "-l")
     if not proc or proc.returncode != 0:
@@ -778,9 +2263,56 @@ def discover_v4l2_focus_devices(preferred_index=None) -> list[str]:
     return found
 
 
+def discover_v4l2_image_devices(preferred_index=None) -> list[str]:
+    """Find video nodes exposing exposure or white-balance controls."""
+    candidates: list[str] = []
+    if preferred_index is not None:
+        candidates.append(f"/dev/video{preferred_index}")
+        candidates.extend(
+            f"/dev/video{preferred_index + offset}"
+            for offset in (1, -1, 2, -2, 3)
+            if preferred_index + offset >= 0
+        )
+    candidates.extend(f"/dev/video{idx}" for idx in range(0, CAMERA_SCAN_MAX + 4))
+
+    image_keys = {
+        "exposure_auto",
+        "auto_exposure",
+        "exposure_auto_priority",
+        "white_balance_temperature_auto",
+        "white_balance_automatic",
+        "backlight_compensation",
+    }
+    found: list[str] = []
+    for dev in dict.fromkeys(candidates):
+        if os.path.exists(dev) and _v4l2_control_names(dev) & image_keys:
+            found.append(dev)
+    return found
+
+
 def _v4l2_set_ctrl(device: str, control: str, value) -> bool:
     proc = _run_v4l2_ctl(device, f"--set-ctrl={control}={value}")
     return bool(proc and proc.returncode == 0)
+
+
+def force_v4l2_capture_mode(device_index, width: int, height: int) -> bool:
+    """Request the camera's native MJPEG mode before OpenCV negotiates a fallback."""
+    if device_index is None or not isinstance(device_index, int):
+        return False
+    device = f"/dev/video{device_index}"
+    if not os.path.exists(device):
+        return False
+    format_proc = _run_v4l2_ctl(
+        device,
+        f"--set-fmt-video=width={int(width)},height={int(height)},pixelformat=MJPG",
+    )
+    fps_proc = _run_v4l2_ctl(device, f"--set-parm={CAMERA_FPS:g}")
+    return bool(
+        format_proc
+        and format_proc.returncode == 0
+        and fps_proc
+        and fps_proc.returncode == 0
+    )
 
 
 def enable_v4l2_continuous_autofocus(devices: list[str]) -> bool:
@@ -794,6 +2326,36 @@ def enable_v4l2_continuous_autofocus(devices: list[str]) -> bool:
                     break
         elif "focus_auto" in names:
             if _v4l2_set_ctrl(dev, "focus_auto", 1):
+                enabled = True
+    return enabled
+
+
+def enable_v4l2_auto_image_controls(devices: list[str]) -> bool:
+    enabled = False
+    for dev in devices:
+        names = _v4l2_control_names(dev)
+        # Newer kernels renamed exposure_auto -> auto_exposure; 3 = aperture priority (auto).
+        for exposure_ctrl in ("exposure_auto", "auto_exposure"):
+            if CAMERA_AUTO_EXPOSURE and exposure_ctrl in names:
+                if _v4l2_set_ctrl(dev, exposure_ctrl, 3):
+                    enabled = True
+        if "exposure_auto_priority" in names:
+            if _v4l2_set_ctrl(dev, "exposure_auto_priority", CAMERA_EXPOSURE_PRIORITY):
+                enabled = True
+        if "exposure_dynamic_framerate" in names:
+            _v4l2_set_ctrl(dev, "exposure_dynamic_framerate", CAMERA_EXPOSURE_PRIORITY)
+        if CAMERA_AUTO_EXPOSURE and "gain_automatic" in names:
+            if _v4l2_set_ctrl(dev, "gain_automatic", 1):
+                enabled = True
+        if CAMERA_AUTO_EXPOSURE and "gain_auto" in names:
+            if _v4l2_set_ctrl(dev, "gain_auto", 1):
+                enabled = True
+        for wb_ctrl in ("white_balance_temperature_auto", "white_balance_automatic"):
+            if CAMERA_AUTO_WB and wb_ctrl in names:
+                if _v4l2_set_ctrl(dev, wb_ctrl, 1):
+                    enabled = True
+        if CAMERA_BACKLIGHT_COMP and "backlight_compensation" in names:
+            if _v4l2_set_ctrl(dev, "backlight_compensation", 1):
                 enabled = True
     return enabled
 
@@ -833,13 +2395,14 @@ def _opencv_autofocus_enabled(cap) -> bool:
 
 def initialize_camera_autofocus(cap, device_index=None) -> str:
     """Detect focus controls and enable continuous AF when supported."""
-    global active_v4l2_devices, camera_focus_status
+    global active_v4l2_devices, active_v4l2_image_devices, camera_focus_status
 
     if not CAMERA_AUTOFOCUS:
         camera_focus_status = "disabled"
         return camera_focus_status
 
     active_v4l2_devices = discover_v4l2_focus_devices(device_index)
+    active_v4l2_image_devices = discover_v4l2_image_devices(device_index)
     opencv_af = _opencv_autofocus_enabled(cap)
     v4l2_af = False
     if active_v4l2_devices:
@@ -901,11 +2464,11 @@ def apply_usb_camera_tuning(cap, device_index=None):
             pass
 
     auto_exp_prop = _cap_prop("CAP_PROP_AUTO_EXPOSURE")
-    if auto_exp_prop is not None:
+    if auto_exp_prop is not None and CAMERA_AUTO_EXPOSURE:
         try:
-            # 0.75 = auto on many V4L2 USB drivers; 1 = auto on others.
+            # V4L2 backend passes the raw menu value: 3 = auto (aperture priority), 1 = MANUAL.
             if not cap.set(auto_exp_prop, 0.75):
-                cap.set(auto_exp_prop, 1)
+                cap.set(auto_exp_prop, 3)
         except Exception:
             pass
 
@@ -913,6 +2476,10 @@ def apply_usb_camera_tuning(cap, device_index=None):
         active_v4l2_devices[:] = discover_v4l2_focus_devices(device_index)
     if active_v4l2_devices:
         enable_v4l2_continuous_autofocus(active_v4l2_devices)
+    if device_index is not None and not active_v4l2_image_devices:
+        active_v4l2_image_devices[:] = discover_v4l2_image_devices(device_index)
+    if active_v4l2_image_devices:
+        enable_v4l2_auto_image_controls(active_v4l2_image_devices)
 
 
 def warmup_camera_frames(cap, frames: int = 8, min_secs: float = 0.0):
@@ -945,7 +2512,10 @@ def _frame_sharpness_score(frame) -> float:
 
 
 def _frame_looks_corrupt(frame) -> bool:
-    """Detect torn MJPEG frames (horizontal seam / doubled image)."""
+    """Detect torn MJPEG frames (horizontal seam).
+
+    No left-vs-right half comparison: a page on a dark desk always differs between halves.
+    """
     try:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
         height, width = gray.shape
@@ -954,17 +2524,7 @@ def _frame_looks_corrupt(frame) -> bool:
         row_jump = np.mean(np.abs(gray[1:, :] - gray[:-1, :]), axis=1)
         median_jump = float(np.median(row_jump))
         peak_jump = float(np.max(row_jump))
-        if peak_jump > max(30.0, median_jump * 5.5):
-            return True
-        half = width // 2
-        left = gray[:, :half]
-        right = gray[:, half : half + left.shape[1]]
-        if right.shape[1] != left.shape[1]:
-            right = cv2.resize(right, (left.shape[1], height))
-        seam_diff = float(np.mean(np.abs(left - right)))
-        if seam_diff > 28.0 and seam_diff > float(np.mean(np.abs(np.diff(gray, axis=1)))) * 2.2:
-            return True
-        return False
+        return peak_jump > max(30.0, median_jump * 5.5)
     except Exception:
         return False
 
@@ -1030,6 +2590,34 @@ def _bgr_from_jpeg(jpeg: bytes):
         return None
 
 
+def _copy_raw_camera_frame():
+    """Copy the latest raw camera frame (no green overlay) — never blocks USB."""
+    with frame_lock:
+        if latest_bgr is not None and getattr(latest_bgr, "size", 0):
+            return latest_bgr.copy()
+    return None
+
+
+def _crop_locked_paper(frame):
+    """Warp using the live-locked green-box region only — no re-detect (keeps stream smooth)."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return None
+    points = _last_paper_quad
+    if points is None:
+        return None
+    try:
+        if not _is_plausible_paper_quad(points, frame.shape):
+            return None
+        out_size = (
+            _last_paper_output_size
+            if (AUTO_CROP_SIZE_LOCK and _last_paper_output_size)
+            else _quad_dims(points)
+        )
+        return _warp_paper_quad(frame, points, out_size)
+    except Exception:
+        return None
+
+
 def _copy_wysiwyg_preview_frame():
     """Exact pixels from live preview — BGR buffer first, then last WS JPEG sent."""
     preview = _copy_latest_scan_frame()
@@ -1066,24 +2654,29 @@ def _enhance_document_frame(frame):
 def _scan_profile_from_payload(payload: dict | None = None) -> dict:
     """Per-scan size from dashboard paper guide — landscape output only."""
     payload = payload or {}
-    if CAPTURE_MATCH_PREVIEW:
+    if CAPTURE_MATCH_PREVIEW or CAPTURE_INSTANT:
         width, height = PREVIEW_WIDTH, PREVIEW_HEIGHT
     else:
         width = int(payload.get("scanWidth") or SCAN_WIDTH)
         height = int(payload.get("scanHeight") or SCAN_HEIGHT)
     if height > width:
         width, height = height, width
+    capture_frame_count = max(
+        1,
+        min(12, int(payload.get("captureFrameCount") or SCAN_BURST_FRAMES)),
+    )
     return {
         "portrait": False,
         "width": max(320, width),
         "height": max(320, height),
         "orientation": "landscape",
         "paperGuideId": str(payload.get("paperGuideId") or "").strip(),
+        "captureFrameCount": capture_frame_count,
     }
 
 
 def _scan_output_dims(profile: dict | None = None) -> tuple[int, int]:
-    if CAPTURE_MATCH_PREVIEW:
+    if CAPTURE_MATCH_PREVIEW or CAPTURE_INSTANT:
         return PREVIEW_WIDTH, PREVIEW_HEIGHT
     if profile is not None:
         return int(profile["width"]), int(profile["height"])
@@ -1139,33 +2732,53 @@ def _scan_capture_candidates(profile: dict | None = None) -> list[tuple[int, int
     return candidates
 
 
-def _finalize_scan_frame(frame, profile: dict | None = None) -> bytes | None:
-    """Encode scan JPEG — same pixels as live preview (no rotation)."""
+def _finalize_scan_frame(
+    frame,
+    profile: dict | None = None,
+    *,
+    already_cropped: bool = False,
+    preserve_size: bool = False,
+    quality: int | None = None,
+) -> bytes | None:
+    """Encode scan JPEG. preserve_size keeps the document crop aspect (no stretch)."""
     if frame is None:
         return None
-    target_w, target_h = _scan_output_dims(profile)
-    oriented = frame
-    if oriented.shape[1] != target_w or oriented.shape[0] != target_h:
-        upscaling = oriented.shape[1] < target_w or oriented.shape[0] < target_h
-        oriented = cv2.resize(
-            oriented,
-            (target_w, target_h),
-            interpolation=cv2.INTER_LANCZOS4 if upscaling else cv2.INTER_AREA,
-        )
+    oriented = frame if already_cropped else _crop_paper(frame, exact=True)
+    if oriented is None:
+        return None
+    if not preserve_size:
+        target_w, target_h = _scan_output_dims(profile)
+        if oriented.shape[1] != target_w or oriented.shape[0] != target_h:
+            upscaling = oriented.shape[1] < target_w or oriented.shape[0] < target_h
+            oriented = cv2.resize(
+                oriented,
+                (target_w, target_h),
+                interpolation=cv2.INTER_LANCZOS4 if upscaling else cv2.INTER_AREA,
+            )
     oriented = _enhance_document_frame(oriented)
-    jpeg = encode_jpeg(oriented, SCAN_JPEG_QUALITY, optimize=False)
+    jpeg = encode_jpeg(oriented, quality or SCAN_JPEG_QUALITY, optimize=False)
     if not _jpeg_is_complete(jpeg):
         return None
     return jpeg
 
 
-def _capture_still_frame(cap, *, for_2k: bool = False, for_preview: bool = False):
+def _capture_still_frame(
+    cap,
+    *,
+    for_2k: bool = False,
+    for_preview: bool = False,
+    burst_frames: int | None = None,
+):
     """Exclusive still capture — preview worker must be paused."""
     if for_preview:
         # Light path — same frames as live stream; no heavy AF drain that stalls USB.
         warmup_camera_frames(cap, max(2, SCAN_BURST_FRAMES // 2), min_secs=0.06)
         _drain_capture_buffer(cap, 2)
-        frame = read_sharpest_frame(cap, attempts=max(4, SCAN_BURST_FRAMES), reject_corrupt=False)
+        frame = read_sharpest_frame(
+            cap,
+            attempts=max(1, burst_frames or SCAN_BURST_FRAMES),
+            reject_corrupt=False,
+        )
         if frame is None:
             ok, frame = _camera_read(cap, retries=3)
             if not ok or frame is None:
@@ -1175,7 +2788,7 @@ def _capture_still_frame(cap, *, for_2k: bool = False, for_preview: bool = False
     autofocus_settle(cap, active_camera_index, for_capture=True)
     drain_reads = max(SCAN_CAPTURE_DRAIN, 12 if for_2k else SCAN_CAPTURE_DRAIN)
     _drain_capture_buffer(cap, drain_reads)
-    burst = max(SCAN_BURST_FRAMES, 10 if for_2k else SCAN_BURST_FRAMES)
+    burst = max(1, burst_frames or SCAN_BURST_FRAMES)
     frame = read_sharpest_frame(cap, attempts=burst)
     if frame is None:
         _drain_capture_buffer(cap, max(6, drain_reads // 2))
@@ -1191,7 +2804,11 @@ def _try_scan_capture_at(cap, cam_w: int, cam_h: int, profile: dict | None) -> t
         warmup_camera_frames(cap, max(SCAN_WARMUP_FRAMES, 12), min_secs=max(0.45, FOCUS_SETTLE_SECS * 0.5))
     else:
         warmup_camera_frames(cap, max(4, SCAN_BURST_FRAMES // 2), min_secs=0.12)
-    frame = _capture_still_frame(cap, for_2k=is_2k_target)
+    frame = _capture_still_frame(
+        cap,
+        for_2k=is_2k_target,
+        burst_frames=(profile or {}).get("captureFrameCount"),
+    )
     if frame is None:
         return None, None
     actual_h, actual_w = frame.shape[:2]
@@ -1231,9 +2848,125 @@ def capture_scan_snapshot(profile: dict | None = None) -> bytes | None:
         return _finalize_scan_frame(frame, profile)
 
 
+def _crop_hires_with_locked_quad(frame, quad, quad_shape):
+    """Scale the live green-box quad (stream coords) onto a hi-res frame and warp at full detail."""
+    if quad is None or not quad_shape:
+        return frame, False
+    stream_h, stream_w = quad_shape[:2]
+    frame_h, frame_w = frame.shape[:2]
+    scaled = (quad * np.array([frame_w / stream_w, frame_h / stream_h], dtype=np.float32)).astype(np.float32)
+    if not _is_plausible_paper_quad(scaled, frame.shape):
+        return frame, False
+    cropped = _warp_paper_quad(frame, scaled)
+    return cropped, cropped is not frame
+
+
+def capture_hires_document(profile: dict | None = None) -> bytes | None:
+    """Pause the stream, grab one hi-res frame, crop it with the live green box, resume."""
+    cap = active_capture_cap
+    if not SCAN_HIRES or cap is None or not cap.isOpened():
+        return None
+    started = time.monotonic()
+    quad = None if _last_paper_quad is None else np.array(_last_paper_quad, dtype=np.float32)
+    quad_shape = _last_paper_shape
+    stream_w, stream_h = active_capture_width, active_capture_height
+    frame = None
+    _scan_in_progress.set()
+    try:
+        with capture_cap_lock:
+            try:
+                for cam_w, cam_h in SCAN_HIRES_SIZES:
+                    if cam_w <= stream_w:
+                        continue
+                    configure_capture_for_scan(cap, cam_w, cam_h)
+                    warmup_camera_frames(cap, 3, min_secs=SCAN_HIRES_SETTLE_SECS)
+                    candidate = read_sharpest_frame(cap, attempts=SCAN_HIRES_BURST_FRAMES)
+                    if candidate is not None and candidate.shape[1] > stream_w:
+                        frame = candidate
+                        break
+                    got = "no frame" if candidate is None else f"{candidate.shape[1]}x{candidate.shape[0]}"
+                    print(f"[PiWS] Hi-res capture at {cam_w}x{cam_h} gave {got} — trying next size")
+            finally:
+                if stream_w > 0 and stream_h > 0:
+                    configure_capture(cap, stream_w, stream_h)
+                    warmup_camera_frames(cap, 3, min_secs=0.08)
+    finally:
+        _scan_in_progress.clear()
+    if frame is None:
+        return None
+    rotated = _apply_preview_rotation(frame)
+    cropped, used_crop = _crop_hires_with_locked_quad(rotated, quad, quad_shape)
+    if not used_crop and cropped.shape[1] > 2560:
+        # Keeps the JPEG under the AI vision upload limit when no page is locked.
+        scale = 2560.0 / cropped.shape[1]
+        cropped = cv2.resize(
+            cropped,
+            (_even_dim(cropped.shape[1] * scale), _even_dim(cropped.shape[0] * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
+    jpeg = _finalize_scan_frame(
+        cropped, profile, already_cropped=True, preserve_size=True, quality=SCAN_HIRES_JPEG_QUALITY
+    )
+    if jpeg:
+        h, w = cropped.shape[:2]
+        mode = "document-crop" if used_crop else "full-frame"
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        print(
+            f"[PiWS] Hi-res capture {w}x{h} ({mode}) from {frame.shape[1]}x{frame.shape[0]} in {elapsed_ms}ms"
+        )
+    return jpeg
+
+
 def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
-    """WYSIWYG still capture — use live preview pixels; never fail if stream is visible."""
-    if not CAPTURE_MATCH_PREVIEW:
+    """Hi-res still when enabled; otherwise instant capture from the live buffer."""
+    started = time.monotonic()
+
+    if SCAN_HIRES:
+        try:
+            jpeg = capture_hires_document(profile)
+        except Exception as err:
+            print(f"[PiWS] Hi-res capture error: {err}")
+            jpeg = None
+        if jpeg:
+            return jpeg
+        print("[PiWS] Hi-res capture failed — using the live frame instead")
+
+    # Instant path (default): copy raw camera frame, crop to green-box region, enhance.
+    # Stream keeps running — no _scan_in_progress, no capture_cap_lock.
+    if CAPTURE_INSTANT or CAPTURE_MATCH_PREVIEW:
+        raw = _copy_raw_camera_frame()
+        source = "raw buffer"
+        if raw is None:
+            # Last resort: decode last WS JPEG (may include overlay — crop strips edges)
+            preview, source = _copy_wysiwyg_preview_frame()
+            raw = preview
+        if raw is not None:
+            rotated = _apply_preview_rotation(raw) if source == "raw buffer" else raw
+            cropped = _crop_locked_paper(rotated)
+            used_crop = cropped is not None and cropped is not rotated
+            frame_out = cropped if used_crop else rotated
+            # Strip accidental overlay pixels if we fell back to preview buffer
+            if source != "raw buffer" and not used_crop:
+                # Preview may have green box drawn — prefer raw-only path next time
+                pass
+            jpeg = _finalize_scan_frame(
+                frame_out,
+                profile,
+                already_cropped=True,
+                preserve_size=used_crop,
+            )
+            if jpeg:
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                h, w = frame_out.shape[:2]
+                mode = "document-crop" if used_crop else "full-frame"
+                print(
+                    f"[PiWS] Instant capture {w}x{h} ({mode}) from {source} in {elapsed_ms}ms — "
+                    "stream uninterrupted"
+                )
+                return jpeg
+
+    # Opt-in slow hi-res path only when instant is disabled
+    if not CAPTURE_MATCH_PREVIEW and not CAPTURE_INSTANT:
         cap = active_capture_cap
         if cap is None or not cap.isOpened():
             return None
@@ -1243,66 +2976,21 @@ def capture_scan_bytes(profile: dict | None = None) -> bytes | None:
         finally:
             _scan_in_progress.clear()
 
-    preview_frame, source = _copy_wysiwyg_preview_frame()
-    if preview_frame is not None:
-        print(
-            f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
-            f"(WYSIWYG {source} — same as live preview)"
-        )
-        return _finalize_scan_frame(preview_frame, profile)
-
-    # Stream not ready yet — brief USB read attempt.
-    _scan_in_progress.set()
-    try:
-        cap = active_capture_cap
-        frame = None
-        preview_frame = None
-        with capture_cap_lock:
-            if cap is not None and cap.isOpened():
-                frame = _capture_still_frame(cap, for_preview=True)
-            if frame is not None:
-                preview_frame = _prepare_preview_frame(frame)
-                _store_camera_frames(frame, preview_frame)
-        if preview_frame is None:
-            print("[PiWS] Scan capture miss — no preview buffer and USB read failed")
-            return None
-        print(
-            f"[PiWS] Scan frame {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} "
-            f"(USB fallback, cam {frame.shape[1]}x{frame.shape[0]})"
-        )
-        return _finalize_scan_frame(preview_frame, profile)
-    finally:
-        _scan_in_progress.clear()
+    print("[PiWS] Scan capture miss — no live frame buffer yet (wait for stream)")
+    return None
 
 
 def _run_scan_command(cmd_id: str, payload: dict | None = None):
-    """Background scan — lift/sort mechanism, camera capture, upload, then sort."""
+    """Capture only — motors stay idle until Confirm & Register sends SORT."""
+    payload = payload or {}
     profile = _scan_profile_from_payload(payload)
-    sort_layer = resolve_sort_layer(payload)
-    mech = get_mechanism()
     try:
         guide_label = f" ({profile['paperGuideId']})" if profile.get("paperGuideId") else ""
         print(
-            f"[PiWS] Scan {cmd_id} capture "
+            f"[PiWS] Scan {cmd_id} capture-only "
             f"{profile['width']}x{profile['height']} {profile['orientation']}{guide_label} "
-            f"sort_layer={sort_layer}"
+            "(motors wait for SORT / Confirm & Register)"
         )
-        if mech.enabled:
-            try:
-                print(f"[PiWS] Scan {cmd_id} — starting NEMA prepare (same pins as test-motors)")
-                mechanism_prepare_for_capture()
-            except Exception as mech_err:
-                update_command_status(
-                    cmd_id,
-                    "Failed",
-                    f"Lift/hall prep failed: {mech_err}",
-                )
-                return
-        else:
-            print(
-                f"[PiWS] Scan {cmd_id} — *** NEMA SKIPPED (MECH_ENABLED=0) *** "
-                "Camera will still capture. Fix: DIGIPATH_MECH_ENABLED=1 + restart"
-            )
 
         snap = capture_scan_bytes(profile)
         if not snap:
@@ -1313,20 +3001,72 @@ def _run_scan_command(cmd_id: str, payload: dict | None = None):
             )
             return
         update_command_status(cmd_id, "Executing")
-        upload_scan(snap, cmd_id)
+        upload_scan(snap, cmd_id, str(payload.get("documentId") or "").strip())
         update_command_status(cmd_id, "Executed")
-        print(f"[PiWS] Scan {cmd_id} uploaded — sending upload_done → sort")
-        if mech.enabled:
-            print(f"[PiWS] SIGNAL to mechanism: upload_done sort_layer={sort_layer}")
-            mechanism_start_sort_async(sort_layer)
-        else:
-            print(
-                "[PiWS] Mechanism OFF — no NEMA after upload. "
-                "Set DIGIPATH_MECH_ENABLED=1"
-            )
+        print(f"[PiWS] Scan {cmd_id} uploaded — motors NOT started (wait for Confirm & Register)")
     except Exception as err:
         print(f"[PiWS] Scan {cmd_id} failed: {err}")
         update_command_status(cmd_id, "Failed", str(err))
+
+
+def _run_sort_command(cmd_id: str, payload: dict | None = None):
+    """Confirm & Register → lift to layer → sort deposit → return main."""
+    payload = payload or {}
+    sort_layer = resolve_sort_layer(payload)
+    mech = get_mechanism()
+    try:
+        print(f"[PiWS] SORT {cmd_id} layer={sort_layer} (Confirm & Register)")
+        if not mech.enabled:
+            update_command_status(
+                cmd_id,
+                "Failed",
+                "Mechanism disabled — set DIGIPATH_MECH_ENABLED=1",
+            )
+            return
+        update_command_status(cmd_id, "Executing")
+        # Block until sort finishes so command status is accurate.
+        mech.sort_and_return(sort_layer)
+        update_command_status(cmd_id, "Executed")
+        print(f"[PiWS] SORT {cmd_id} done (layer {sort_layer})")
+    except Exception as err:
+        print(f"[PiWS] SORT {cmd_id} failed: {err}")
+        update_command_status(cmd_id, "Failed", str(err))
+
+
+def _run_motor_test_command(cmd_id: str, payload: dict | None = None):
+    """Dashboard Test Motors button — same jog as the startup test."""
+    mech = get_mechanism()
+    try:
+        print(f"[PiWS] MOTOR_TEST {cmd_id}")
+        if not mech.enabled:
+            update_command_status(
+                cmd_id,
+                "Failed",
+                "Mechanism disabled — set DIGIPATH_MECH_ENABLED=1",
+            )
+            return
+        try:
+            update_command_status(cmd_id, "Executing")
+        except Exception as err:
+            print(f"[PiWS] MOTOR_TEST {cmd_id}: could not report Executing ({err}) — running test anyway")
+        ok = mech.startup_self_test()
+        _send_presence_now("motor_test")
+        if ok:
+            update_command_status(cmd_id, "Executed")
+        else:
+            update_command_status(
+                cmd_id,
+                "Failed",
+                (mech.last_test or {}).get("message")
+                or mech.status_dict().get("lastError")
+                or "Motor test failed — check Pi log",
+            )
+    except Exception as err:
+        print(f"[PiWS] MOTOR_TEST {cmd_id} failed: {err}")
+        try:
+            update_command_status(cmd_id, "Failed", str(err))
+        except Exception as report_err:
+            print(f"[PiWS] MOTOR_TEST {cmd_id}: could not report failure ({report_err})")
 
 
 def _is_ws_closed_error(err) -> bool:
@@ -1374,13 +3114,17 @@ def send_ws_frame(frame: bytes):
 def upload_stream_frame_http(jpeg: bytes):
     """HTTPS preview cache — skipped when WS is actively sending (avoids duplicate tunnel load)."""
     global _last_http_frame_upload_at, _http_frame_upload_boot, _last_http_upload_error_log_at
+    global _http_upload_inflight, _http_upload_pending
     if not STREAM_HTTP_UPLOAD or not jpeg or not BACKEND_BASE_URL:
         return
     if _scan_in_progress.is_set():
         return
+    if _scan_upload_busy.is_set():
+        # Don't fight the scan JPEG upload for tunnel bandwidth — keep WS stream only.
+        return
     if STREAM_HTTP_WS_PRIORITY and ws_authenticated:
         # WS is the live path — skip HTTPS preview cache while frames are flowing.
-        if _last_ws_frame_sent_at > 0 and (time.monotonic() - _last_ws_frame_sent_at) < 90.0:
+        if _last_ws_frame_sent_at > 0 and (time.monotonic() - _last_ws_frame_sent_at) < 3.0:
             return
     now = time.monotonic()
     min_gap = 1.0 / max(1.0, _effective_stream_fps())
@@ -1389,35 +3133,113 @@ def upload_stream_frame_http(jpeg: bytes):
     _last_http_frame_upload_at = now
     _http_frame_upload_boot += 1
 
+    with _http_upload_lock:
+        _http_upload_pending = jpeg
+        if _http_upload_inflight:
+            return
+        _http_upload_inflight = True
+
     def _worker():
-        global _last_http_upload_error_log_at
-        try:
-            response = _http_upload_session_get().post(
-                f"{BACKEND_BASE_URL}/devices/stream/frame",
-                params={"deviceId": DEVICE_ID},
-                data=jpeg,
-                headers={"Content-Type": "image/jpeg"},
-                timeout=12,
-            )
-            if response.status_code >= 400:
+        global _last_http_upload_error_log_at, _http_upload_inflight, _http_upload_pending
+        while not stop_event.is_set():
+            with _http_upload_lock:
+                current = _http_upload_pending
+                _http_upload_pending = None
+            if not current:
+                with _http_upload_lock:
+                    _http_upload_inflight = False
+                return
+            try:
+                response = _http_upload_session_get().post(
+                    f"{BACKEND_BASE_URL}/devices/stream/frame",
+                    params={"deviceId": DEVICE_ID},
+                    data=current,
+                    headers={"Content-Type": "image/jpeg"},
+                    timeout=12,
+                )
+                if response.status_code >= 400:
+                    if time.monotonic() - _last_http_upload_error_log_at > 30:
+                        print(f"[PiWS] HTTP frame upload {response.status_code}: {response.text[:120]}")
+                        _last_http_upload_error_log_at = time.monotonic()
+                elif _http_frame_upload_boot <= 3:
+                    print(f"[PiWS] HTTP frame upload OK ({len(current)} bytes)")
+            except Exception as err:
                 if time.monotonic() - _last_http_upload_error_log_at > 30:
-                    print(f"[PiWS] HTTP frame upload {response.status_code}: {response.text[:120]}")
+                    err_text = str(err)
+                    if "name resolution" in err_text.lower() or "failed to resolve" in err_text.lower():
+                        print(
+                            "[PiWS] HTTP frame upload DNS fail (WS preview still works) — "
+                            "check Pi internet/DNS or set nameserver 8.8.8.8"
+                        )
+                    else:
+                        print(f"[PiWS] HTTP frame upload failed: {err_text[:160]}")
                     _last_http_upload_error_log_at = time.monotonic()
-            elif _http_frame_upload_boot <= 3:
-                print(f"[PiWS] HTTP frame upload OK ({len(jpeg)} bytes)")
-        except Exception as err:
-            if time.monotonic() - _last_http_upload_error_log_at > 30:
-                err_text = str(err)
-                if "name resolution" in err_text.lower() or "failed to resolve" in err_text.lower():
-                    print(
-                        "[PiWS] HTTP frame upload DNS fail (WS preview still works) — "
-                        "check Pi internet/DNS or set nameserver 8.8.8.8"
-                    )
-                else:
-                    print(f"[PiWS] HTTP frame upload failed: {err_text[:160]}")
-                _last_http_upload_error_log_at = time.monotonic()
 
     threading.Thread(target=_worker, daemon=True).start()
+
+
+def _on_stream_ack():
+    global _ws_ack_supported, _ws_ack_rtt_ms
+    with _ws_inflight_lock:
+        _ws_ack_supported = True
+        if _ws_inflight:
+            rtt_ms = (time.monotonic() - _ws_inflight.popleft()) * 1000.0
+            _ws_ack_rtt_ms = rtt_ms if _ws_ack_rtt_ms <= 0 else _ws_ack_rtt_ms * 0.8 + rtt_ms * 0.2
+    _ws_frame_send_event.set()
+
+
+def _reset_stream_inflight():
+    with _ws_inflight_lock:
+        _ws_inflight.clear()
+
+
+def _stream_stats_snapshot() -> dict:
+    """Rates/averages since the previous snapshot."""
+    global _stream_stats_base, _stream_stats_last
+    now = time.monotonic()
+    started, base = _stream_stats_base
+    if now - started < 5.0 and _stream_stats_last:
+        return _stream_stats_last
+    current = dict(_stream_stats)
+    _stream_stats_base = (now, current)
+    secs = max(0.5, now - started)
+    delta = {key: current[key] - base.get(key, 0) for key in current}
+
+    def avg(total_key, count_key):
+        return round(delta[total_key] / delta[count_key], 1) if delta[count_key] else None
+
+    _stream_stats_last = {
+        "windowSecs": round(secs),
+        "cameraFps": round(delta["camera"] / secs, 1),
+        "readMs": avg("readMs", "camera"),
+        "prepMs": avg("prepMs", "camera"),
+        "encodedFps": round(delta["encoded"] / secs, 1),
+        "encodeMs": avg("encodeMs", "encoded"),
+        "sentFps": round(delta["sent"] / secs, 1),
+        "sendMs": avg("sendMs", "sent"),
+        "heldInflightPerSec": round(delta["heldInflight"] / secs, 1),
+        "skipSlowSendPerSec": round(delta["skipSlowSend"] / secs, 1),
+    }
+    return _stream_stats_last
+
+
+def _wifi_signal() -> dict:
+    """Wi-Fi link quality from /proc/net/wireless (Linux only)."""
+    try:
+        with open("/proc/net/wireless", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()[2:]
+        for line in lines:
+            name, _, rest = line.partition(":")
+            parts = rest.split()
+            if len(parts) >= 3:
+                return {
+                    "iface": name.strip(),
+                    "quality": float(parts[1].rstrip(".")),
+                    "levelDbm": float(parts[2].rstrip(".")),
+                }
+    except Exception:
+        pass
+    return {}
 
 
 def ws_frame_sender_worker():
@@ -1435,10 +3257,28 @@ def ws_frame_sender_worker():
             _ws_frame_slot = None
         if not jpeg or not ws_connected or not ws_authenticated or not realtime_ws:
             continue
+        if _ws_ack_supported:
+            now = time.monotonic()
+            with _ws_inflight_lock:
+                if _ws_inflight and now - _ws_inflight[0] > 2.0:
+                    _ws_inflight.clear()
+                busy = len(_ws_inflight) >= STREAM_MAX_IN_FLIGHT
+            if busy:
+                _stream_stats["heldInflight"] += 1
+                # Wait for an ack; keep this frame only if nothing newer has arrived meanwhile.
+                with _ws_frame_slot_lock:
+                    if _ws_frame_slot is None:
+                        _ws_frame_slot = jpeg
+                continue
         try:
             started = time.perf_counter()
+            with _ws_inflight_lock:
+                _ws_inflight.append(time.monotonic())
             realtime_ws.send(jpeg, opcode=websocket.ABNF.OPCODE_BINARY)
-            _record_ws_send_sample((time.perf_counter() - started) * 1000.0)
+            send_ms = (time.perf_counter() - started) * 1000.0
+            _stream_stats["sendMs"] += send_ms
+            _stream_stats["sent"] += 1
+            _record_ws_send_sample(send_ms)
             _touch_ws_activity()
             _last_ws_frame_sent_at = time.monotonic()
             with _last_ws_jpeg_lock:
@@ -1446,7 +3286,12 @@ def ws_frame_sender_worker():
         except Exception as err:
             if _is_ws_closed_error(err):
                 print(f"[PiWS] WS closed during frame send: {err}")
-                _force_ws_reconnect(f"frame send: {err}")
+                # Large scan uploads saturate the tunnel — don't tear down WS
+                # on a single failed frame; heartbeat + watchdog will recover.
+                if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+                    print("[PiWS] Deferring reconnect during scan/upload")
+                    continue
+                _force_ws_reconnect_debounced(f"frame send: {err}")
 
 
 def _signal_preview_encode():
@@ -1461,7 +3306,20 @@ def preview_encode_send_worker():
             continue
         _preview_encode_event.clear()
 
-        if _scan_in_progress.is_set():
+        if _scan_in_progress.is_set() or _scan_upload_busy.is_set():
+            # Keep encoding paused during capture/upload so WS keepalive can breathe.
+            continue
+
+        # Tunnel congested — skip this encode tick so we only ship the newest frame later.
+        # Time-bounded: _last_ws_send_ms only refreshes after a new send, so an unbounded
+        # check would stop encoding forever after a single slow frame.
+        if (
+            not _ws_ack_supported
+            and _last_ws_send_ms > 120.0
+            and (time.monotonic() - _last_ws_send_done_at) < 0.35
+        ):
+            _stream_stats["skipSlowSend"] += 1
+            time.sleep(0.02)
             continue
 
         drained = True
@@ -1483,7 +3341,10 @@ def preview_encode_send_worker():
                     continue
                 preview = latest_preview_bgr
 
+            encode_started = time.perf_counter()
             jpeg = encode_stream_jpeg(preview)
+            _stream_stats["encodeMs"] += (time.perf_counter() - encode_started) * 1000.0
+            _stream_stats["encoded"] += 1
             if not jpeg:
                 continue
 
@@ -1518,7 +3379,9 @@ def ws_sender_worker():
         except Exception as err:
             print(f"[PiWS] WS outbound failed (text): {err}")
             if _is_ws_closed_error(err):
-                _force_ws_reconnect(f"outbound text: {err}")
+                if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+                    continue
+                _force_ws_reconnect_debounced(f"outbound text: {err}")
 
 
 def send_ws_signal(payload: dict):
@@ -1567,7 +3430,10 @@ def send_ws_presence(event_type: str) -> bool:
             return True
         except Exception as err:
             if _is_ws_closed_error(err):
-                _force_ws_reconnect(f"presence send: {err}")
+                # Prefer HTTP keepalive over tearing the socket mid-upload/blip.
+                if _scan_upload_busy.is_set() or _scan_in_progress.is_set():
+                    return False
+                _force_ws_reconnect_debounced(f"presence send: {err}")
             return False
     return send_ws_json({"type": message_type, "payload": device_payload(event_type)})
 
@@ -1608,8 +3474,25 @@ def _close_ws_socket(ws) -> None:
         pass
 
 
+_last_force_reconnect_at = 0.0
+WS_RECONNECT_DEBOUNCE_SECS = max(2.0, float(os.environ.get("DIGIPATH_WS_RECONNECT_DEBOUNCE_SECS", "4")))
+
+
+_ws_last_issue = ""
+
+
+def _note_ws_issue(text: str):
+    global _ws_last_issue
+    _ws_last_issue = f"{time.strftime('%H:%M:%S')} {text}"[:240]
+
+
 def _force_ws_reconnect(reason: str):
     global ws_connected, ws_authenticated, realtime_ws, _active_ws_app, _ws_last_reconnect_kick_at
+    global _last_force_reconnect_at
+    # Keep the underlying connect error visible instead of the generic supervisor kick.
+    if not (reason.startswith("offline supervisor") and _ws_last_issue and "offline supervisor" not in _ws_last_issue):
+        _note_ws_issue(f"reconnect: {reason}")
+    _last_force_reconnect_at = time.monotonic()
     ws_connected = False
     ws_authenticated = False
     _mark_ws_offline()
@@ -1621,6 +3504,15 @@ def _force_ws_reconnect(reason: str):
     if app is not None and app is not ws:
         _close_ws_socket(app)
     print(f"[PiWS] Auto-reconnect: {reason}")
+
+
+def _force_ws_reconnect_debounced(reason: str):
+    """Avoid reconnect storms when the tunnel blips for a second."""
+    global _last_force_reconnect_at
+    now = time.monotonic()
+    if now - _last_force_reconnect_at < WS_RECONNECT_DEBOUNCE_SECS:
+        return
+    _force_ws_reconnect(reason)
 
 
 def extract_text_with_groq(image_bytes: bytes) -> tuple[str, str]:
@@ -1886,7 +3778,28 @@ def start_ai_enrich_async(document_id: str, command_id: str, image_bytes: bytes)
     threading.Thread(target=_worker, daemon=True).start()
 
 
-def upload_scan(image_bytes: bytes, command_id: str):
+def upload_scan(image_bytes: bytes, command_id: str, document_id: str = ""):
+    """Upload the captured JPEG — this exact file becomes the document attachment."""
+    global _adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes
+    global _ws_send_samples, _ws_send_slow, _adaptive_hold_until
+    with _adaptive_lock:
+        saved = (_adaptive_fps, _adaptive_jpeg_quality, _adaptive_jpeg_max_bytes)
+    _scan_upload_busy.set()
+    try:
+        return _upload_scan_body(image_bytes, command_id, document_id)
+    finally:
+        with _adaptive_lock:
+            _adaptive_fps = max(_adaptive_fps, saved[0])
+            _adaptive_jpeg_quality = max(_adaptive_jpeg_quality, saved[1])
+            _adaptive_jpeg_max_bytes = max(_adaptive_jpeg_max_bytes, saved[2])
+            _ws_send_samples = 0
+            _ws_send_slow = 0
+            _adaptive_hold_until = time.monotonic() + STREAM_POST_SCAN_HOLD_SECS
+        _scan_upload_busy.clear()
+
+
+def _upload_scan_body(image_bytes: bytes, command_id: str, document_id: str = ""):
+    is_continuation = bool(document_id)
     encoded = base64.b64encode(image_bytes).decode("ascii")
     payload = {
         "deviceId": DEVICE_ID,
@@ -1900,10 +3813,12 @@ def upload_scan(image_bytes: bytes, command_id: str):
             "dataUrl": f"data:image/jpeg;base64,{encoded}",
         },
     }
+    if document_id:
+        payload["documentId"] = document_id
 
     extracted = False
     ai_extract_pending = False
-    if AI_EXTRACT_ENABLED and GROQ_API_KEY:
+    if AI_EXTRACT_ENABLED and GROQ_API_KEY and not document_id:
         if AI_EXTRACT_BACKGROUND:
             ai_extract_pending = True
             print("[PiWS] Uploading scan first — AI field extraction will run in background")
@@ -1932,9 +3847,19 @@ def upload_scan(image_bytes: bytes, command_id: str):
     response.raise_for_status()
     result = response.json()
     document_id = result.get("documentId") or (result.get("document") or {}).get("id")
-    if AI_EXTRACT_ENABLED and GROQ_API_KEY and document_id and (ai_extract_pending or not extracted):
+    if (
+        not is_continuation
+        and AI_EXTRACT_ENABLED
+        and GROQ_API_KEY
+        and document_id
+        and (ai_extract_pending or not extracted)
+    ):
         print("[PiWS] Scheduling background AI enrich...")
         start_ai_enrich_async(document_id, command_id, image_bytes)
+    print(
+        f"[PiWS] Saved attachment = captured JPEG ({len(image_bytes)} bytes) "
+        f"→ document {document_id or '?'}"
+    )
     return result
 
 
@@ -1962,11 +3887,26 @@ def update_command_status(command_id: str, status: str, error: str = ""):
     body = {"status": status}
     if error:
         body["errorMessage"] = _user_scan_error_message(error)
-    requests.put(
-        f"{BACKEND_BASE_URL}/devices/commands/{command_id}",
-        json=body,
-        headers=DEVICE_HEADERS,
-    ).raise_for_status()
+    last_err = None
+    # Without a timeout a stalled tunnel request blocks the command thread forever.
+    for attempt in range(3):
+        try:
+            requests.put(
+                f"{BACKEND_BASE_URL}/devices/commands/{command_id}",
+                json=body,
+                headers=DEVICE_HEADERS,
+                timeout=10,
+            ).raise_for_status()
+            return
+        except Exception as err:
+            last_err = err
+            print(f"[PiWS] Command {command_id} → {status} update failed (try {attempt + 1}/3): {err}")
+            time.sleep(1.0 + attempt)
+    raise last_err
+
+
+_handled_command_ids: deque = deque(maxlen=200)
+_handled_command_lock = threading.Lock()
 
 
 def handle_command_message(message: str):
@@ -1981,15 +3921,43 @@ def handle_command_message(message: str):
     cmd_id = command.get("id")
     if not cmd_id:
         return
-    if command.get("command") != "SCAN":
-        update_command_status(cmd_id, "Failed", "Unsupported command")
+    # Backend re-sends Pending commands on reconnect; never run one twice.
+    with _handled_command_lock:
+        if cmd_id in _handled_command_ids:
+            return
+        _handled_command_ids.append(cmd_id)
+    cmd_name = str(command.get("command") or "").strip().upper()
+    payload = command.get("payload") or {}
+    if cmd_name == "SCAN":
+        threading.Thread(
+            target=_run_scan_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
+        return
+    if cmd_name == "SORT":
+        threading.Thread(
+            target=_run_sort_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
+        return
+    if cmd_name == "MOTOR_TEST":
+        threading.Thread(
+            target=_run_motor_test_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
+        return
+    if cmd_name == "CAMERA_LIGHT":
+        threading.Thread(
+            target=_run_camera_light_command,
+            args=(cmd_id, payload),
+            daemon=True,
+        ).start()
         return
 
-    threading.Thread(
-        target=_run_scan_command,
-        args=(cmd_id, command.get("payload") or {}),
-        daemon=True,
-    ).start()
+    update_command_status(cmd_id, "Failed", f"Unsupported command: {cmd_name}")
 
 
 def _store_camera_frames(frame, preview):
@@ -2010,6 +3978,7 @@ def stream_producer_worker():
     global active_capture_width, active_capture_height, active_capture_cap, _camera_frame_version
 
     def try_open_index(index: int, backend):
+        force_v4l2_capture_mode(index, PREVIEW_WIDTH, PREVIEW_HEIGHT)
         cap = cv2.VideoCapture(index, backend)
         try:
             cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 3000)
@@ -2215,6 +4184,7 @@ def stream_producer_worker():
                 reopen_camera = True
                 continue
 
+            read_started = time.perf_counter()
             ok, frame = _drain_latest_frame(cap)
             if not ok or frame is None:
                 miss_reads += 1
@@ -2268,7 +4238,11 @@ def stream_producer_worker():
                 continue
 
             miss_reads = 0
+            prep_started = time.perf_counter()
             preview = _prepare_preview_frame(frame)
+            _stream_stats["prepMs"] += (time.perf_counter() - prep_started) * 1000.0
+            _stream_stats["readMs"] += (prep_started - read_started) * 1000.0
+            _stream_stats["camera"] += 1
             _store_camera_frames(frame, preview)
             last_capture_at = time.perf_counter()
 
@@ -2291,19 +4265,70 @@ def _http_presence_heartbeat() -> bool:
         if response.status_code >= 400:
             print(f"[PiWS] HTTP heartbeat failed: {response.status_code} {response.text[:160]}")
             return False
+        _dispatch_http_pending_commands(response)
+        _check_backend_ws_live(response)
         return True
     except Exception as err:
         print(f"[PiWS] HTTP heartbeat error: {err}")
         return False
 
 
-def heartbeat_worker():
-    while not stop_event.wait(HEARTBEAT_SECS):
+def _dispatch_http_pending_commands(response):
+    """Backup command channel: the WS link can be down while HTTP heartbeats still work."""
+    try:
+        commands = (response.json() or {}).get("pendingCommands") or []
+    except Exception:
+        return
+    for command in commands:
+        if isinstance(command, dict) and command.get("id"):
+            print(f"[PiWS] Command {command.get('id')} ({command.get('command')}) received via HTTP heartbeat")
+            handle_command_message(json.dumps({"type": "command:pending", "command": command}))
+
+
+def _check_backend_ws_live(response):
+    """Sends into a half-open socket still "succeed", so ask the backend whether it really sees our WS."""
+    try:
+        ws_live = (response.json() or {}).get("wsLive")
+    except Exception:
+        return
+    if ws_live is not False or not ws_authenticated:
+        return
+    authed_for = time.monotonic() - _ws_authed_at
+    if authed_for < WS_LIVE_GRACE_SECS:
+        return
+    _force_ws_reconnect(f"backend has no WS for this Pi (half-open link, authed {authed_for:.0f}s ago)")
+
+
+def _send_presence_now(reason: str):
+    """Push mechanism/test status right away instead of waiting for the next heartbeat."""
+    ok = False
+    try:
         if ws_authenticated:
-            send_ws_presence("device_heartbeat")
-        else:
-            # Keep trying to look alive while WS auto-reconnects.
+            ok = send_ws_presence("device_heartbeat")
+    except Exception as err:
+        print(f"[PiWS] Presence push ({reason}) failed: {err}")
+    if not ok:
+        _http_presence_heartbeat()
+
+
+def heartbeat_worker():
+    """WS heartbeat every tick; HTTP backup only when needed (avoids tunnel lag)."""
+    http_tick = 0
+    while not stop_event.wait(HEARTBEAT_SECS):
+        ws_ok = False
+        if ws_authenticated:
+            ws_ok = send_ws_presence("device_heartbeat")
+        http_tick += 1
+        need_http = (
+            not ws_ok
+            or _scan_upload_busy.is_set()
+            or _scan_in_progress.is_set()
+            or (http_tick % 3 == 0)
+        )
+        if need_http:
             _http_presence_heartbeat()
+        if ws_ok:
+            _touch_ws_activity()
 
 
 def handle_realtime_control_message(message: str):
@@ -2315,10 +4340,12 @@ def handle_realtime_control_message(message: str):
 
     msg_type = data.get("type")
     if msg_type == "auth:ok":
-        global _ws_reconnect_delay
+        global _ws_reconnect_delay, _ws_authed_at
         _clear_auth_timer()
         _stop_auth_retry()
+        _ws_authed_at = time.monotonic()
         ws_authenticated = True
+        _reset_stream_inflight()
         _ws_reconnect_delay = WS_RECONNECT_MIN_SECS
         _mark_ws_online()
         _touch_ws_activity()
@@ -2329,6 +4356,7 @@ def handle_realtime_control_message(message: str):
     if msg_type == "auth:error":
         _clear_auth_timer()
         _stop_auth_retry()
+        _note_ws_issue(f"auth failed: {data.get('message')} (check DIGIPATH_DEVICE_API_KEY)")
         print(f"[PiWS] Backend auth failed: {data.get('message')}")
         print(f"[PiWS] Check DIGIPATH_DEVICE_API_KEY matches backend DEVICE_API_KEY (got {_mask_secret(DEVICE_API_KEY)})")
         _force_ws_reconnect("auth failed")
@@ -2342,6 +4370,9 @@ def handle_realtime_control_message(message: str):
     if msg_type == "stream:hint":
         _apply_stream_hint(data)
         return
+    if msg_type == "stream:ack":
+        _on_stream_ack()
+        return
 
 
 def on_realtime_open(ws):
@@ -2353,6 +4384,10 @@ def on_realtime_open(ws):
     ws.send(json.dumps({"type": "auth", "deviceId": DEVICE_ID, "apiKey": DEVICE_API_KEY}))
     print(f"[PiWS] WebSocket connected to {ws_url()} — waiting for auth:ok")
     print(f"[PiWS] Device {DEVICE_ID}, apiKey={_mask_secret(DEVICE_API_KEY)}")
+    print(
+        f"[PiWS] Auto-crop={'ON' if AUTO_CROP_PAPER else 'OFF'} "
+        f"live_mode={AUTO_CROP_LIVE_MODE} (crop=show document; overlay=green box; capture always crops)"
+    )
     if DEVTUNNEL_TOKEN:
         print("[PiWS] Using DIGIPATH_DEVTUNNEL_TOKEN for tunnel authorization")
     _start_auth_timer()
@@ -2379,6 +4414,7 @@ def on_realtime_close(_ws, close_status_code, close_msg):
     ws_authenticated = False
     realtime_ws = None
     _mark_ws_offline()
+    _note_ws_issue(f"closed ({close_status_code or 'n/a'}): {close_msg or 'closed'}")
     print(
         f"[PiWS] WebSocket disconnected ({close_status_code or 'n/a'}): "
         f"{close_msg or 'closed'} — auto-reconnect pending"
@@ -2386,6 +4422,7 @@ def on_realtime_close(_ws, close_status_code, close_msg):
 
 
 def on_realtime_error(_ws, error):
+    _note_ws_issue(f"error: {error}")
     print(f"[PiWS] WebSocket error: {error} — auto-reconnect pending")
     _mark_ws_offline()
     _close_ws_socket(_ws)
@@ -2397,7 +4434,11 @@ def ws_health_watchdog():
         now = time.monotonic()
         if ws_connected and ws_authenticated:
             idle = now - _ws_last_activity_at
-            if idle > WS_STALE_SECS:
+            # Uploads saturate the tunnel — give more slack before declaring stale.
+            stale_limit = WS_STALE_SECS * 2 if (
+                _scan_upload_busy.is_set() or _scan_in_progress.is_set()
+            ) else WS_STALE_SECS
+            if idle > stale_limit:
                 _force_ws_reconnect(f"stale link ({idle:.0f}s idle)")
             continue
 
@@ -2434,6 +4475,7 @@ def realtime_worker():
                 run_kwargs["ping_timeout"] = WS_PING_TIMEOUT
             ws_app.run_forever(**run_kwargs)
         except Exception as err:
+            _note_ws_issue(f"connect loop error: {err}")
             print(f"[PiWS] Connection loop error: {err}")
 
         _active_ws_app = None
@@ -2478,6 +4520,7 @@ def run():
         f"JPEG-WS preview {PREVIEW_WIDTH}x{PREVIEW_HEIGHT} @ {WS_MAX_FPS:.0f}fps"
         f"{' adaptive' if STREAM_ADAPTIVE else ''}, "
         f"preview_rotate={PREVIEW_ROTATE}, "
+        f"capture_instant={int(CAPTURE_INSTANT)}, "
         f"capture_match_preview={int(CAPTURE_MATCH_PREVIEW)}, "
         f"heartbeat={HEARTBEAT_SECS}s"
     )
@@ -2488,6 +4531,13 @@ def run():
     threading.Thread(target=ws_sender_worker, daemon=True).start()
     threading.Thread(target=ws_health_watchdog, daemon=True).start()
     threading.Thread(target=heartbeat_worker, daemon=True).start()
+    threading.Thread(target=camera_light_probe_worker, daemon=True, name="camera-light-probe").start()
+    threading.Thread(target=camera_light_hid_reader, daemon=True, name="camera-light-hid").start()
+    try:
+        mechanism_startup_self_test()
+    except Exception as err:
+        print(f"[PiWS] Startup motor test error: {err}")
+    _send_presence_now("startup_motor_test")
     try:
         if get_mechanism().home_on_start:
             print("[PiWS] Homing lift to MAIN (top) before ready...")
@@ -2509,9 +4559,9 @@ def run():
             f"Capture→{mech.capture_down_count}×DOWN {mech.move_steps}→photo→"
             f"SORT {mech.sort_deposit_steps}→UP {mech.move_steps}"
             if mech.open_loop
-            else "hall-guided"
+            else "hall-guided (no Hall #3)"
         )
-        print(f"[PiWS] Mechanism: ON — {mode}")
+        print(f"[PiWS] Mechanism: ON — motors on Confirm&Register/SORT only — {mode}")
     else:
         print(
             "[PiWS] Mechanism: OFF — scan will not move NEMA motors. "

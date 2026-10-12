@@ -19,11 +19,19 @@ const {
   getUserOfficeId,
 } = require('../utils/helpers');
 const { queueSenderNotifications } = require('../utils/senderNotifications');
-const { persistAttachments } = require('../utils/attachments');
+const {
+  maxAttachmentsPerDocument,
+  persistAttachments,
+  buildScanPdfAttachment,
+  getScannerPages,
+  isScannerPdf,
+  removeOrphanedAttachments,
+} = require('../utils/attachments');
 const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
 const {
   getDeviceSnapshot,
   recordHardwareDeviceEvent,
+  applyHardwareEvent,
   hardwarePresenceEvents,
 } = require('../services/devicePresence');
 const {
@@ -33,6 +41,7 @@ const {
   pushCommandToDevice,
   getLatestStreamFrame,
   relayStreamFrame,
+  isDeviceWsConnected,
 } = require('../utils/realtime');
 
 const adminOnly = allowRoles('Admin');
@@ -41,6 +50,9 @@ const scannerCommandRoles = allowRoles('Admin', 'Receptionist');
 const updateOptions = { new: true, runValidators: true };
 
 const scannerCommandStaleMs = Number(process.env.SCANNER_COMMAND_STALE_MS || 60000);
+// The Pi marks commands Executing right after it receives them, so a Pending one this old never arrived.
+const scannerCommandUnackedMs = Number(process.env.SCANNER_COMMAND_UNACKED_MS || 30000);
+const motorTestStaleMs = Number(process.env.MOTOR_TEST_STALE_MS || 90000);
 const bridgeSnapshotWsFallbackMaxAgeMs = Number(process.env.BRIDGE_SNAPSHOT_WS_FALLBACK_MAX_AGE_MS || 60000);
 
 const deviceUsesWsJpegStream = (device) => (
@@ -59,9 +71,26 @@ router.post('/devices/connect', deviceLimiter, requireDeviceApiKey, asyncHandler
 }));
 
 router.post('/devices/heartbeat', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
-  const result = await recordHardwareDeviceEvent(req, 'device_heartbeat');
-  broadcastDeviceUpdated(result.device);
-  res.status(201).json(result);
+  // Lightweight when WS is already alive — avoids Mongo write storms from dual keepalive.
+  // Full persist when WS is down so heartbeatFresh keeps the device Online.
+  const result = await applyHardwareEvent(
+    req.body,
+    'device_heartbeat',
+    { deviceId: req.body.deviceId || req.body.id, ip: req.ip },
+    { lightweight: true },
+  );
+  if (result?.device) {
+    broadcastDeviceUpdated(result.device);
+  }
+  // Backup delivery for commands queued while the Pi's WebSocket was down.
+  const heartbeatDeviceId = req.body.deviceId || req.body.id || 'DEV-001';
+  const pendingCommands = await Command.find({ deviceId: heartbeatDeviceId, status: 'Pending' })
+    .sort({ createdAt: 1 })
+    .limit(5)
+    .lean();
+  // Lets the Pi detect a half-open WS (e.g. backend restarted behind a tunnel) and reconnect.
+  const wsLive = isDeviceWsConnected(heartbeatDeviceId);
+  res.status(201).json({ ...result, pendingCommands, wsLive });
 }));
 
 router.post('/devices/disconnect', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
@@ -127,10 +156,36 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   const command = req.body.commandId ? await Command.findOne({ id: req.body.commandId }).lean() : null;
   const device = await Device.findOne({ id: deviceId }).lean();
   const officeId = req.body.officeId?.trim() || command?.payload?.officeId || device?.assignedTo || 'OFF-001';
+  const continuationDocumentId = req.body.documentId?.trim();
+  let existingDocument = null;
+  if (continuationDocumentId) {
+    if (
+      !command
+      || command.command !== 'SCAN'
+      || command.deviceId !== deviceId
+      || command.payload?.documentId !== continuationDocumentId
+    ) {
+      return res.status(403).json({ message: 'This scan command cannot add a page to that document.' });
+    }
+    existingDocument = await Document.findOne({ id: continuationDocumentId });
+    if (!existingDocument) {
+      return res.status(404).json({ message: 'Document for this scan session was not found.' });
+    }
+    if (existingDocument.intakeStatus !== 'Pending Review') {
+      return res.status(409).json({ message: 'This document scan session is no longer open for additional pages.' });
+    }
+  }
   const attachmentSource = req.body.attachment || req.body.scannedFile;
-  const scannedFiles = attachmentSource
+  if (!attachmentSource?.dataUrl && !attachmentSource?.url) {
+    return res.status(400).json({ message: 'A scanned page image is required.' });
+  }
+  const existingScanPages = getScannerPages(existingDocument?.scannedFiles || []);
+  if (existingDocument && existingScanPages.length >= maxAttachmentsPerDocument) {
+    return res.status(400).json({ message: `A document can have at most ${maxAttachmentsPerDocument} scanned pages.` });
+  }
+  const newScanPages = attachmentSource
     ? await persistAttachments(req, [{
-        id: attachmentSource.id,
+        id: attachmentSource.id || (command?.id ? `SCANPAGE_${command.id}` : undefined),
         name: attachmentSource.name || `${deviceId}-scan.jpg`,
         type: attachmentSource.type || 'image/jpeg',
         size: attachmentSource.size,
@@ -141,6 +196,24 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       }])
     : [];
 
+  const trackingNumber = existingDocument?.trackingNumber || req.body.trackingNumber || generateTrackingNumber();
+  const existingPageIds = new Set(existingScanPages.map((page) => page.id).filter(Boolean));
+  const scanPages = [
+    ...existingScanPages,
+    ...newScanPages.filter((page) => !page.id || !existingPageIds.has(page.id)),
+  ];
+  const previousScanFiles = (existingDocument?.scannedFiles || []).filter((file) => (
+    isScannerPdf(file) || getScannerPages([file]).length
+  ));
+  const otherFiles = (existingDocument?.scannedFiles || []).filter((file) => !previousScanFiles.includes(file));
+  let scanPdf = null;
+  try {
+    scanPdf = await buildScanPdfAttachment(req, scanPages, { baseName: trackingNumber, uploadedAt: now });
+  } catch (err) {
+    console.warn(`Unable to build scan PDF for ${trackingNumber}:`, err.message);
+  }
+  const scannedFiles = scanPdf ? [scanPdf, ...otherFiles] : [...otherFiles, ...scanPages];
+
   const subject = req.body.extractedTitle?.trim()
     || (typeof req.body.subject === 'string' ? req.body.subject.trim() : '')
     || 'Scanned Document';
@@ -148,45 +221,54 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   const registrationStatus = registrationStatuses.includes(normalizeWorkflowStatus(requestedScanStatus))
     ? normalizeWorkflowStatus(requestedScanStatus)
     : 'Received';
-  const doc = new Document({
-    id: req.body.documentId || generateId('DOC'),
-    trackingNumber: req.body.trackingNumber || generateTrackingNumber(),
-    subject,
-    documentDirection: req.body.documentDirection || 'Incoming',
-    status: registrationStatus,
-    intakeStatus: 'Pending Review',
-    priorityLevel: req.body.priorityLevel || 'normal',
-    dateReceived: req.body.dateReceived || req.body.extractedDate?.trim() || now.split('T')[0],
-    createdAt: now,
-    updatedAt: now,
-    documentTypeId: req.body.documentTypeId || 'DT-001',
-    documentTypeOther: req.body.documentTypeOther?.trim(),
-    originOfficeId: officeId,
-    originOfficeOther: req.body.originOfficeOther?.trim(),
-    currentOfficeId: officeId,
-    destinationOfficeOther: req.body.destinationOfficeOther?.trim(),
-    senderName: req.body.senderName?.trim() || req.body.extractedSender?.trim() || 'Scanner Device',
-    senderContact: req.body.senderContact?.trim(),
-    senderEmail: req.body.senderEmail?.trim(),
-    notifySender: req.body.notifySender !== undefined ? Boolean(req.body.notifySender) : true,
-    senderNotificationConsent: req.body.senderNotificationConsent !== undefined ? Boolean(req.body.senderNotificationConsent) : true,
-    senderNotificationChannels: normalizeSenderNotificationChannels(req.body.senderNotificationChannels, req.body),
-    remarks: req.body.remarks?.trim() || `Captured by physical scanner ${deviceId}`,
-    scannedText: req.body.scannedText || req.body.extractedText || '',
-    scannedFiles,
-    scannedImageUrl: scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || '',
-    timeline: [{
-      id: generateId('TL'),
-      action: 'hardware_scan',
-      label: 'Physical scanner capture',
-      details: `Document captured by physical scanner ${deviceId}`,
-      officeId,
-      userId: 'hardware',
-      referenceId: deviceId,
-      timestamp: now,
-    }],
-  });
-  await doc.save();
+  let doc = existingDocument;
+  if (doc) {
+    doc.scannedFiles = scannedFiles;
+    doc.scannedImageUrl = scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || '';
+    doc.updatedAt = now;
+    await doc.save();
+    if (scanPdf) await removeOrphanedAttachments(previousScanFiles, scannedFiles);
+  } else {
+    doc = new Document({
+      id: req.body.documentId || generateId('DOC'),
+      trackingNumber,
+      subject,
+      documentDirection: req.body.documentDirection || 'Incoming',
+      status: registrationStatus,
+      intakeStatus: 'Pending Review',
+      priorityLevel: req.body.priorityLevel || 'normal',
+      dateReceived: req.body.dateReceived || req.body.extractedDate?.trim() || now.split('T')[0],
+      createdAt: now,
+      updatedAt: now,
+      documentTypeId: req.body.documentTypeId || 'DT-001',
+      documentTypeOther: req.body.documentTypeOther?.trim(),
+      originOfficeId: officeId,
+      originOfficeOther: req.body.originOfficeOther?.trim(),
+      currentOfficeId: officeId,
+      destinationOfficeOther: req.body.destinationOfficeOther?.trim(),
+      senderName: req.body.senderName?.trim() || req.body.extractedSender?.trim() || 'Scanner Device',
+      senderContact: req.body.senderContact?.trim(),
+      senderEmail: req.body.senderEmail?.trim(),
+      notifySender: req.body.notifySender !== undefined ? Boolean(req.body.notifySender) : true,
+      senderNotificationConsent: req.body.senderNotificationConsent !== undefined ? Boolean(req.body.senderNotificationConsent) : true,
+      senderNotificationChannels: normalizeSenderNotificationChannels(req.body.senderNotificationChannels, req.body),
+      remarks: req.body.remarks?.trim() || `Captured by physical scanner ${deviceId}`,
+      scannedText: req.body.scannedText || req.body.extractedText || '',
+      scannedFiles,
+      scannedImageUrl: scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || '',
+      timeline: [{
+        id: generateId('TL'),
+        action: 'hardware_scan',
+        label: 'Physical scanner capture',
+        details: `Document captured by physical scanner ${deviceId}`,
+        officeId,
+        userId: 'hardware',
+        referenceId: deviceId,
+        timestamp: now,
+      }],
+    });
+    await doc.save();
+  }
 
   const event = new DeviceEvent({
     id: req.body.eventId || generateId('EVT'),
@@ -236,19 +318,23 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
     );
   }
 
-  await createLogEntry(req, 'document_scanned', `Physical scanner uploaded document: ${doc.subject}`, doc.id, 'hardware');
-  await notifyApprovalUsers({
-    title: 'Physical scanner upload',
-    message: `${doc.trackingNumber} was captured by ${deviceId} and needs intake review.`,
-    type: 'warning',
-    referenceType: 'document',
-    referenceId: doc.id,
-    page: 'documents',
-  });
-  await queueSenderNotifications(req, doc, 'document_scanned', {
-    message: `Your document was captured by the physical scanner and registered with tracking number ${doc.trackingNumber}.`,
-    metadata: { deviceId },
-  });
+  if (!existingDocument) {
+    await createLogEntry(req, 'document_scanned', `Physical scanner uploaded document: ${doc.subject}`, doc.id, 'hardware');
+    await notifyApprovalUsers({
+      title: 'Physical scanner upload',
+      message: `${doc.trackingNumber} was captured by ${deviceId} and needs intake review.`,
+      type: 'warning',
+      referenceType: 'document',
+      referenceId: doc.id,
+      page: 'documents',
+    });
+    await queueSenderNotifications(req, doc, 'document_scanned', {
+      message: `Your document was captured by the physical scanner and registered with tracking number ${doc.trackingNumber}.`,
+      metadata: { deviceId },
+    });
+  } else {
+    await createLogEntry(req, 'document_scan_page_added', `Added a scanned page to document ${doc.subject}`, doc.id, 'hardware');
+  }
 
   const deviceSnapshot = await getDeviceSnapshot(deviceId);
   if (req.body.commandId) {
@@ -268,6 +354,14 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
 router.put('/devices/scans/:documentId', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
   const doc = await Document.findOne({ id: req.params.documentId });
   if (!doc) return res.status(404).json({ message: 'Document not found' });
+
+  // Title and fields come from the first page only; added pages never overwrite them.
+  if (req.body.commandId) {
+    const sourceCommand = await Command.findOne({ id: req.body.commandId }).lean();
+    if (sourceCommand?.payload?.documentId) {
+      return res.json({ documentId: doc.id, document: doc.toObject?.() || doc, skipped: 'not-first-page' });
+    }
+  }
 
   const now = new Date().toISOString();
   const set = { updatedAt: now };
@@ -726,11 +820,11 @@ router.post('/commands/cancel', scannerCommandRoles, asyncHandler(async (req, re
 router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['deviceId', 'command']);
   const commandName = req.body.command?.trim().toUpperCase();
-  if (!['SCAN', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
+  if (!['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
     return res.status(400).json({ message: 'Invalid device command' });
   }
-  if (req.user.role !== 'Admin' && commandName !== 'SCAN') {
-    return res.status(403).json({ message: 'Receptionists can only request scan commands' });
+  if (req.user.role !== 'Admin' && !['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT'].includes(commandName)) {
+    return res.status(403).json({ message: 'Receptionists can only request scan/sort/motor test/camera light commands' });
   }
 
   const snapshot = await getDeviceSnapshot(req.body.deviceId);
@@ -738,28 +832,68 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
     return res.status(409).json({ message: 'Physical scanner is not connected. Wait for a hardware heartbeat before sending commands.' });
   }
 
-  const staleCommandCutoff = new Date(Date.now() - scannerCommandStaleMs).toISOString();
-  await Command.updateMany(
-    {
+  // Instant camera setting: never queue behind (or block) a scan/sort.
+  if (commandName === 'CAMERA_LIGHT') {
+    const lightCommand = new Command({
+      id: generateId('CMD'),
       deviceId: req.body.deviceId,
+      command: commandName,
+      status: 'Pending',
+      payload: req.body.payload,
+      requestedBy: req.user.id,
+      createdAt: new Date().toISOString(),
+    });
+    await lightCommand.save();
+    const lightPayload = lightCommand.toObject?.() || lightCommand;
+    broadcastCommandUpdated(lightPayload);
+    const delivered = pushCommandToDevice(lightCommand.deviceId, lightPayload);
+    return res.status(201).json({ ...lightPayload, delivered });
+  }
+
+  const cutoff = (ms) => new Date(Date.now() - ms).toISOString();
+  const staleFilter = {
+    deviceId: req.body.deviceId,
+    $or: [
+      { status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(scannerCommandStaleMs) } },
+      { status: 'Pending', createdAt: { $lt: cutoff(scannerCommandUnackedMs) } },
+      { command: 'MOTOR_TEST', status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(motorTestStaleMs) } },
+    ],
+  };
+  if (commandName === 'MOTOR_TEST') {
+    // Test Motors is a diagnostic — it must not be blocked by a stuck scan/command.
+    // Only a SORT that is actually moving the motors (or another motor test) is kept.
+    staleFilter.$or.push({
       status: { $in: ['Pending', 'Executing'] },
-      createdAt: { $lt: staleCommandCutoff },
-    },
-    {
-      $set: {
-        status: 'Cancelled',
-        errorMessage: 'Cancelled stale scanner command before starting a new scan.',
-        executedAt: new Date().toISOString(),
-      },
-    },
-  );
+      command: { $ne: 'MOTOR_TEST' },
+      $nor: [{ command: 'SORT', status: 'Executing' }],
+    });
+  }
+  const staleCommands = await Command.find(staleFilter).lean();
+  if (staleCommands.length) {
+    const executedAt = new Date().toISOString();
+    const errorMessage = 'Cancelled stale scanner command before starting a new one.';
+    await Command.updateMany(
+      { id: { $in: staleCommands.map((c) => c.id) } },
+      { $set: { status: 'Cancelled', errorMessage, executedAt } },
+    );
+    for (const stale of staleCommands) {
+      broadcastCommandUpdated({ ...stale, status: 'Cancelled', errorMessage, executedAt });
+    }
+  }
 
   const pendingCommand = await Command.findOne({
     deviceId: req.body.deviceId,
     status: { $in: ['Pending', 'Executing'] },
+    command: { $ne: 'CAMERA_LIGHT' },
   }).lean();
   if (pendingCommand) {
-    return res.status(409).json({ message: 'The scanner already has a pending command.' });
+    if (commandName === 'MOTOR_TEST' && pendingCommand.command === 'MOTOR_TEST') {
+      return res.status(200).json(pendingCommand);
+    }
+    return res.status(409).json({
+      message: `The scanner already has a pending ${pendingCommand.command} command.`,
+      pendingCommand: { id: pendingCommand.id, command: pendingCommand.command, status: pendingCommand.status },
+    });
   }
 
   const command = new Command({
@@ -776,8 +910,8 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   await createLogEntry(req, 'device_command_created', `Queued ${command.command} command for ${command.deviceId}`, command.id);
   const commandPayload = command.toObject?.() || command;
   broadcastCommandUpdated(commandPayload);
-  pushCommandToDevice(command.deviceId, commandPayload);
-  res.status(201).json(command);
+  const delivered = pushCommandToDevice(command.deviceId, commandPayload);
+  res.status(201).json({ ...commandPayload, delivered });
 }));
 
 // ─── DEVICE EVENTS ─────────────────────────────────────────────────────────────

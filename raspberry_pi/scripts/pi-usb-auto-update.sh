@@ -19,6 +19,26 @@ log() {
   echo "$(date -Iseconds) $*" | tee -a "$LOG"
 }
 
+stop_existing_scanner() {
+  log "Stopping existing scanner before replacing Desktop package..."
+
+  if systemctl list-unit-files digipath-ws-scanner.service >/dev/null 2>&1; then
+    systemctl stop digipath-ws-scanner.service >>"$LOG" 2>&1 || true
+  fi
+  if systemctl list-unit-files digipath-scanner.service >/dev/null 2>&1; then
+    systemctl stop digipath-scanner.service >>"$LOG" 2>&1 || true
+  fi
+
+  pkill -TERM -f "pi_ws_scanner.py" 2>/dev/null || true
+  pkill -TERM -f "pi_scanner_bridge.py" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    pgrep -af "pi_ws_scanner.py|pi_scanner_bridge.py" >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+  pkill -KILL -f "pi_ws_scanner.py" 2>/dev/null || true
+  pkill -KILL -f "pi_scanner_bridge.py" 2>/dev/null || true
+}
+
 if [[ -f "$LOCK" ]]; then
   exit 0
 fi
@@ -192,6 +212,7 @@ fi
 log "Copying to $DEST (overwrite)..."
 log "Run user: $RUN_USER | Home: $USER_HOME"
 
+stop_existing_scanner
 mkdir -p "$(dirname "$DEST")"
 rm -rf "$DEST"
 if command -v rsync >/dev/null 2>&1; then
