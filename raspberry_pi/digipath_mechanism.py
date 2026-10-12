@@ -8,8 +8,11 @@ Physical halls (Hall #3 scanner REMOVED):
   5 layer3 (GPIO 12)
 
 Door flow (DIGIPATH_DOOR_MONITOR=1 and door hall wired):
-  door detected  -> lift layer 1 -> layer 2 (capture height)
-  door released  -> lift back to layer 1, even from the middle of a move to layer 2
+  door detected  -> lift goes DOWN toward layer 2 immediately
+  door released  -> lift goes UP toward layer 1 immediately, even if layer 2
+                   was never reached
+  door detected again on the way up -> lift goes DOWN again, even if layer 1
+                   was never reached
   A running sort is never interrupted by the door; the lift follows the door
   state once it finishes.
 
@@ -574,6 +577,7 @@ class DigipathMechanism:
         on_sensor=None,
         direction: str | None = None,
         interrupt: Callable[[], bool] | None = None,
+        lock_direction: bool = False,
     ) -> int:
         """Move lift until target hall triggers; direction from current hall position."""
         if self._halls.is_triggered(target_sensor):
@@ -589,12 +593,14 @@ class DigipathMechanism:
                 on_sensor=on_sensor,
                 direction=direction,
                 interrupt=interrupt,
+                lock_direction=lock_direction,
             )
         except Exception:
             self._lift_at = None
             raise
-        if self._halls.is_triggered(target_sensor) or moved > 0:
-            self._lift_at = self._position_key(target_sensor)
+        # The seek returns only after the hall has fired once. Keep that stop
+        # even if the magnet is no longer sitting on the sensor.
+        self._lift_at = self._position_key(target_sensor)
         return moved
 
     def _seek_lift_hall(
@@ -606,6 +612,7 @@ class DigipathMechanism:
         on_sensor=None,
         direction: str | None = None,
         interrupt: Callable[[], bool] | None = None,
+        lock_direction: bool = False,
     ) -> int:
 
         resolved = direction or self._direction_to_sensor(target_sensor, fallback=fallback_dir)
@@ -677,6 +684,9 @@ class DigipathMechanism:
                 raise RuntimeError(f"Lift motor did not step toward {self._hall_label(target_sensor)}")
             if max_steps > 0 and moved >= max_steps:
                 continue
+            if lock_direction:
+                # Door parking must not flip: no door stays up, door detected stays down.
+                continue
             direction_now = "up" if direction_now == "down" else "down"
             step_fn = self._lift_step_fn(direction_now)
             print(
@@ -690,17 +700,19 @@ class DigipathMechanism:
         self._refresh_hall_flags()
         return moved
 
-    def startup_self_test(self) -> bool:
+    def startup_self_test(self, *, skip_lift: bool = False) -> bool:
         with self._motion_lock:
-            return self._startup_self_test()
+            return self._startup_self_test(skip_lift=skip_lift)
 
-    def _startup_self_test(self) -> bool:
+    def _startup_self_test(self, *, skip_lift: bool = False) -> bool:
         """Jog both motors so wiring/drivers are verified on every service start.
 
         Lift DOWN n → UP n ends where it started; sort forward n → back n likewise.
         Open-loop on purpose: must work even with hall sensors unplugged.
         """
-        lift_steps = self.startup_test_lift_steps
+        lift_steps = 0 if skip_lift else self.startup_test_lift_steps
+        if skip_lift:
+            print("[Mech] STARTUP TEST — lift jog skipped; the door sensor chooses up or down")
         sort_steps = self.startup_test_sort_steps
         pause = self.startup_test_pause_secs
         delay_us = self.startup_test_step_delay_us
@@ -1145,16 +1157,25 @@ class DigipathMechanism:
         print(f"[Mech] Lift → {label} ({reason})")
         if pause_first:
             self._motor_pause(f"before lift to {label}")
-        # Heading to layer 2 is only wanted while the door is detected; a release sends
-        # the lift straight to layer 1 instead of finishing the trip down first.
-        interrupt = (lambda: self._door_detected is False) if to_capture and self.door_mode else None
+        # Follow the door without waiting for the far hall: a release cuts a trip
+        # down short and sends the lift up, and a new detect cuts a trip up short.
+        if self.door_mode and to_capture:
+            interrupt = lambda: self._door_detected is False
+        elif self.door_mode:
+            interrupt = lambda: self._door_detected is True
+        else:
+            interrupt = None
         try:
             self._enable_lift_only(f"to {label}")
+            # Door off = up toward layer 1. Door on = down toward layer 2.
+            # Do not infer the opposite direction from whichever hall happens to be active.
             moved = self._move_lift_to_hall(
                 target_sensor,
                 label=f"idle-{label}",
                 fallback_dir="down" if to_capture else "up",
+                direction="down" if to_capture else "up",
                 interrupt=interrupt,
+                lock_direction=self.door_mode,
             )
             with self._lock:
                 self._status.phase = "ready_for_scan" if to_capture else "idle"
@@ -1163,8 +1184,11 @@ class DigipathMechanism:
             print(f"[Mech] Lift at {label} after {moved} steps")
             return moved
         except LiftInterrupted as err:
-            print(f"[Mech] Door released — {err}; going to layer 1 now")
-            return self._move_idle(MAIN, reason="door released mid-move", pause_first=False)
+            if to_capture:
+                print(f"[Mech] Door released before layer 2 — {err}; going up to layer 1")
+                return self._move_idle(MAIN, reason="door released mid-move", pause_first=False)
+            print(f"[Mech] Door detected before layer 1 — {err}; going down to layer 2")
+            return self._move_idle(LAYER_2, reason="door detected mid-move", pause_first=False)
         except Exception as err:
             with self._lock:
                 self._status.phase = "error"
@@ -1177,7 +1201,13 @@ class DigipathMechanism:
     def _reconcile_door_position(self, door_detected: bool):
         """Follow the door: detected → layer 2, released → layer 1. Never preempts a running motion."""
         target = LAYER_2 if door_detected else MAIN
-        if self._lift_at == target or self._stop.is_set():
+        if self._stop.is_set():
+            return
+        if self._halls and self._halls.is_triggered(target):
+            self._lift_at = self._position_key(target)
+        # One hit is enough. After that the lift stays stopped even if the
+        # magnet drifts off the hall. It moves again only when the door changes.
+        if self._lift_at == target:
             return
         if time.monotonic() < self._door_retry_at:
             return
@@ -1198,6 +1228,8 @@ class DigipathMechanism:
         if not self._motion_lock.acquire(blocking=False):
             return
         try:
+            if self._halls and self._halls.is_triggered(target):
+                self._lift_at = self._position_key(target)
             if self._lift_at == target:
                 return
             self._move_idle(
@@ -1229,30 +1261,23 @@ class DigipathMechanism:
                 "detected → layer 2, released → layer 1"
             )
             detect_since: float | None = None
-            last_seen = 0.0
+            clear_since: float | None = None
             while not self._stop.is_set():
                 try:
                     now = time.monotonic()
                     changed = None
-                    if not self._door_detected:
-                        # Detect: filtered reading held for the debounce time.
-                        if self._halls.is_triggered(DOOR):
-                            detect_since = detect_since or now
-                            if now - detect_since >= self.door_debounce_secs:
-                                changed = True
-                                last_seen = now
-                        else:
-                            detect_since = None
-                        if changed is None and self._door_detected is None and detect_since is None:
-                            changed = False
+                    # Same filtered reading both ways. A raw blip used to keep the door
+                    # "detected", so the lift kept going down while the door was already clear.
+                    if self._halls.is_triggered(DOOR):
+                        clear_since = None
+                        detect_since = detect_since or now
+                        if self._door_detected is not True and now - detect_since >= self.door_debounce_secs:
+                            changed = True
                     else:
-                        # Release: a magnet at the edge of range flickers, so any raw hit keeps the
-                        # door "detected"; only a sustained absence counts as released.
-                        if self._halls.is_triggered(DOOR, filtered=False):
-                            last_seen = now
-                        elif now - last_seen >= self.door_release_secs:
+                        detect_since = None
+                        clear_since = clear_since or now
+                        if self._door_detected is not False and now - clear_since >= self.door_debounce_secs:
                             changed = False
-                            detect_since = None
                     if changed is not None and changed != self._door_detected:
                         self._door_detected = changed
                         with self._lock:
@@ -1301,7 +1326,8 @@ def mechanism_startup_self_test() -> bool:
     if not mech.startup_test:
         print("[Mech] Startup test skipped (DIGIPATH_MECH_STARTUP_TEST=0)")
         return False
-    return mech.startup_self_test()
+    # The power-on jog always stepped DOWN first, so a clear door still dropped the lift.
+    return mech.startup_self_test(skip_lift=bool(mech.door_mode))
 
 
 def mechanism_prepare_for_capture():

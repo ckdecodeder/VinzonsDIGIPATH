@@ -20,7 +20,7 @@ import {
   Flag,
   MessageSquare,
   Eye,
-  Image,
+  Image as ImageIcon,
   Wifi,
   WifiOff,
   RefreshCw,
@@ -2140,7 +2140,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             <div className="card">
               <div className="card-header">
                 <h3 className="card-title">
-                  <Image size={18} style={{ color: 'var(--primary-light)' }} />
+                  <ImageIcon size={18} style={{ color: 'var(--primary-light)' }} />
                   Scanned Document
                 </h3>
               </div>
@@ -2148,7 +2148,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 renderCapturedImageGallery('Scanned document')
               ) : (
                 <div className="scanner-preview-empty" style={{ minHeight: '220px' }}>
-                  <Image size={28} />
+                  <ImageIcon size={28} />
                   <span>No scanned preview available yet.</span>
                 </div>
               )}

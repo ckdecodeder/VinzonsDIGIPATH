@@ -355,6 +355,14 @@ router.put('/devices/scans/:documentId', deviceLimiter, requireDeviceApiKey, asy
   const doc = await Document.findOne({ id: req.params.documentId });
   if (!doc) return res.status(404).json({ message: 'Document not found' });
 
+  // Title and fields come from the first page only; added pages never overwrite them.
+  if (req.body.commandId) {
+    const sourceCommand = await Command.findOne({ id: req.body.commandId }).lean();
+    if (sourceCommand?.payload?.documentId) {
+      return res.json({ documentId: doc.id, document: doc.toObject?.() || doc, skipped: 'not-first-page' });
+    }
+  }
+
   const now = new Date().toISOString();
   const set = { updatedAt: now };
 
