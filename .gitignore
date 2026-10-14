@@ -21,3 +21,5 @@ scanned_files/
 .cursorignore
 AGENTS.md
 *.canvas.tsx
+tmp/pdfs/chapter4-05.png
+tmp/pdfs/chapter4-06.png

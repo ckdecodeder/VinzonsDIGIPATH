@@ -4,7 +4,7 @@
 
 set -eu
 
-BACKEND_URL="https://46hdfmgm-5000.asse.devtunnels.ms/api"
+BACKEND_URL="https://zt0pntkq-5000.asse.devtunnels.ms/api"
 DEVICE_KEY="dev-device-key-change-me"
 DEVTUNNEL_TOKEN=""
 
