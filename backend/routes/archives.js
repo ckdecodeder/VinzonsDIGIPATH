@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Archive, Document, Notification } = require('../models');
+const { Archive, Document, Transmission, Notification } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const {
   asyncHandler,
@@ -14,6 +14,7 @@ const {
 const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions, isGlobalDocumentViewer } = require('../utils/documentScope');
+const { canArchiveDocument } = require('../utils/documentRouting');
 
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 const approvalRoles = allowRoles('Admin', 'Mayor');
@@ -29,7 +30,6 @@ const assertCanAccessDocument = async (req, documentId) => {
   return doc;
 };
 
-const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
 const storedWorkflowStatuses = ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
 const normalizeWorkflowStatus = (value, fallback = 'Received') => {
   const { normalizeText } = require('../utils/helpers');
@@ -61,8 +61,16 @@ router.post('/', approvalRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['documentId']);
   const doc = await assertCanAccessDocument(req, req.body.documentId);
   const currentStatus = normalizeWorkflowStatusValue(doc.status, doc.status);
-  if (![...finalWorkflowStatuses, 'For Filing'].includes(currentStatus)) {
-    return res.status(400).json({ message: 'Only Signed or Acknowledged documents can be archived' });
+  const pendingTransmission = await Transmission.findOne({ documentId: doc.id, receivedBy: null }).lean();
+  if (!canArchiveDocument({
+    status: currentStatus,
+    hasPendingTransmission: Boolean(pendingTransmission),
+    sendQueue: doc.sendQueue,
+  })) {
+    if (pendingTransmission || (Array.isArray(doc.sendQueue) && doc.sendQueue.some(Boolean))) {
+      return res.status(400).json({ message: 'Complete all pending office handoffs before archiving this document' });
+    }
+    return res.status(400).json({ message: 'Only Signed, Acknowledged, or For Filing documents can be archived' });
   }
 
   const existingArchive = await Archive.findOne({ documentId: req.body.documentId }).lean();

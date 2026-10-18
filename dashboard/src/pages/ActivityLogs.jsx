@@ -17,6 +17,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { users as defaultUsers } from "../data/mockData";
+import { filterActivityLogs } from "../utils/reportFilters";
 
 const actionConfig = {
   document_received: {
@@ -135,9 +136,13 @@ const actionConfig = {
   },
 };
 
-const ActivityLogs = ({ logs, users = defaultUsers }) => {
+const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
   const [search, setSearch] = useState("");
   const [filterAction, setFilterAction] = useState("All");
+  const [filterUser, setFilterUser] = useState("");
+  const [filterReference, setFilterReference] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
 
@@ -167,18 +172,16 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
     );
   };
 
-  const filtered = logs
-    .filter((l) => {
-      const term = search.toLowerCase();
-      const matchSearch =
-        !term ||
-        (l.details || "").toLowerCase().includes(term) ||
-        getUserFullName(l.userId).toLowerCase().includes(term) ||
-        (l.referenceId || "").toLowerCase().includes(term) ||
-        formatActionLabel(l.action).toLowerCase().includes(term);
-      const matchAction = filterAction === "All" || l.action === filterAction;
-      return matchSearch && matchAction;
-    })
+  const filtered = filterActivityLogs(logs, {
+    search,
+    action: filterAction,
+    userId: filterUser,
+    reference: filterReference,
+    dateFrom,
+    dateTo,
+    users,
+    actionLabels: Object.fromEntries(Object.entries(actionConfig).map(([action, config]) => [action, config.label])),
+  })
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -198,7 +201,7 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterAction, logs]);
+  }, [search, filterAction, filterUser, filterReference, dateFrom, dateTo, logs]);
 
   const formatTimestamp = (ts) => {
     const d = new Date(ts);
@@ -244,6 +247,7 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
               placeholder="Search logs..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search activity logs"
             />
           </div>
 
@@ -253,6 +257,7 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
               className="form-select activity-filter-select"
               value={filterAction}
               onChange={(e) => setFilterAction(e.target.value)}
+              aria-label="Filter activity by action"
             >
               {actionTypes.map((a) => (
                 <option key={a} value={a}>
@@ -260,6 +265,54 @@ const ActivityLogs = ({ logs, users = defaultUsers }) => {
                 </option>
               ))}
             </select>
+          </div>
+
+          <div className="activity-advanced-filters">
+            <label className="activity-advanced-filter">
+              <span>Date from</span>
+              <input
+                type="date"
+                className="form-input"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                aria-label="Activity start date"
+              />
+            </label>
+            <label className="activity-advanced-filter">
+              <span>Date to</span>
+              <input
+                type="date"
+                className="form-input"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                aria-label="Activity end date"
+              />
+            </label>
+            <label className="activity-advanced-filter">
+              <span>User</span>
+              <select
+                className="form-select"
+                value={filterUser}
+                onChange={(e) => setFilterUser(e.target.value)}
+                aria-label="Filter activity by user"
+              >
+                <option value="">All users</option>
+                {users.map((user) => (
+                  <option key={user.id} value={user.id}>{getUserFullName(user.id)}</option>
+                ))}
+              </select>
+            </label>
+            <label className="activity-advanced-filter activity-advanced-filter--reference">
+              <span>Reference</span>
+              <input
+                type="text"
+                className="form-input"
+                value={filterReference}
+                onChange={(e) => setFilterReference(e.target.value)}
+                placeholder="Search reference ID"
+                aria-label="Filter activity by reference"
+              />
+            </label>
           </div>
 
           <div className="activity-entries-count ml-auto self-center whitespace-nowrap text-right">

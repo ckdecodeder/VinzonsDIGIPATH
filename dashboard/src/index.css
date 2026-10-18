@@ -3243,6 +3243,51 @@ tbody tr:hover {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 5l4-4 4 4' fill='none' stroke='%23444' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 
+.activity-filter-row .search-bar {
+  flex: 1 1 320px;
+  width: 320px;
+  min-width: 240px;
+  max-width: 540px;
+}
+
+.activity-filter-dropdown {
+  flex: 0 1 220px;
+  width: 220px;
+  min-width: 180px;
+  max-width: 280px;
+  margin-left: 0;
+}
+
+.activity-advanced-filters {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.activity-advanced-filter {
+  display: flex;
+  flex: 1 1 160px;
+  min-width: 150px;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.activity-advanced-filter .form-input,
+.activity-advanced-filter .form-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+}
+
+.activity-advanced-filter--reference {
+  flex: 1 1 220px;
+}
+
 .activity-entries-count {
   margin-left: auto;
   flex: 0 0 auto;
@@ -6597,6 +6642,38 @@ body.modal-open .notification-dock {
   font-size: 0.8rem;
 }
 
+.reports-extra-filters {
+  flex-basis: 100%;
+  width: 100%;
+  gap: 0.75rem;
+  margin-bottom: 0;
+  padding-top: 0.25rem;
+}
+
+.report-filter-control {
+  display: flex;
+  flex: 1 1 160px;
+  min-width: 150px;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.report-filter-control .form-input,
+.report-filter-control .form-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.report-filter-control--search {
+  flex: 2 1 260px;
+}
+
 .report-filter-separator {
   color: var(--text-muted);
   min-height: 39px;
@@ -7787,6 +7864,16 @@ body.modal-open .notification-dock {
     max-width: none;
     flex: 1 1 auto;
     margin-left: 0;
+  }
+
+  .activity-advanced-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .activity-advanced-filter {
+    width: 100%;
+    min-width: 0;
   }
 
   .activity-entries-count {

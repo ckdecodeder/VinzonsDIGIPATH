@@ -81,8 +81,8 @@ const DocumentList = ({
       documentTypeOther: '',
       originOfficeId: myOfficeId,
       originOfficeOther: '',
-      currentOfficeId: isReceptionist ? mayorsOfficeId : myOfficeId,
-      destinationOfficeId: isReceptionist ? mayorsOfficeId : (isOffice ? defaultDestination : ''),
+      currentOfficeId: myOfficeId,
+      destinationOfficeId: (isReceptionist || isOffice) ? defaultDestination : '',
       destinationOfficeOther: '',
       senderName: isOffice
         ? `${currentUser?.fname || ''} ${currentUser?.lname || ''}`.trim()
@@ -301,12 +301,11 @@ const DocumentList = ({
     const pending = getPendingTransmission(doc.id);
     const latest = getLatestTransmission(doc.id);
 
-    if (doc.lastDetectedOfficeId && doc.status === 'In Transit') {
-      return `Detected at ${getOfficeName(doc.lastDetectedOfficeId)} (pending receipt)`;
-    }
-
     if (doc.status === 'In Transit' && pending) {
-      return `In transit to ${getOfficeName(pending.toOfficeId)}`;
+      const detected = doc.lastDetectedOfficeId
+        ? ` (last detected at ${getOfficeName(doc.lastDetectedOfficeId)})`
+        : '';
+      return `At ${getOfficeName(doc.currentOfficeId)} — in transit to ${getOfficeName(pending.toOfficeId)}${detected}`;
     }
 
     return getOfficeName(
@@ -501,7 +500,7 @@ const DocumentList = ({
         key: 'destinationOfficeId',
         label: 'Destination office',
         value: formData.destinationOfficeId,
-        when: isOfficeStaff && !editDoc,
+        when: (isOfficeStaff || currentUser?.role === 'Receptionist') && !editDoc,
       },
     ];
     const validation = validateRequiredFields(requiredFields);
@@ -562,15 +561,15 @@ const DocumentList = ({
         : (isOfficeStaff ? 'Approved' : undefined),
     };
 
-    if (isOfficeStaff && !editingDoc && !normalizedFormData.destinationOfficeId) {
+    if ((isOfficeStaff || isReceptionist) && !editingDoc && !normalizedFormData.destinationOfficeId) {
       setDocumentFormErrors({ destinationOfficeId: 'Choose where to send this document.' });
       setDocumentFormErrorSummary('Destination office is required.');
       return;
     }
 
-    if (isOfficeStaff && !editingDoc && normalizedFormData.destinationOfficeId === myOfficeId) {
+    if ((isOfficeStaff || isReceptionist) && !editingDoc && normalizedFormData.destinationOfficeId === myOfficeId) {
       setDocumentFormErrors({ destinationOfficeId: 'Choose a different office than your own.' });
-      setDocumentFormErrorSummary('Send the document to reception or another office.');
+      setDocumentFormErrorSummary('Choose an office other than the current office.');
       return;
     }
 
@@ -1632,9 +1631,22 @@ const DocumentList = ({
                     </div>
                   ) : currentRole === 'receptionist' ? (
                     <div className="form-group">
-                      <label className="form-label">Destination</label>
-                      <input className="form-input" value="Mayor's Office" disabled />
-                      <p className="field-hint">External documents are automatically forwarded to the Mayor's Office.</p>
+                      <label className="form-label">Destination <span className="required-mark">*</span></label>
+                      <select
+                        className={`form-select${documentFormErrors.destinationOfficeId ? ' is-invalid' : ''}`}
+                        value={formData.destinationOfficeId}
+                        onChange={e => {
+                          setFormData({ ...formData, destinationOfficeId: e.target.value });
+                          setDocumentFormErrors(prev => clearFieldError(prev, 'destinationOfficeId'));
+                          if (documentFormErrorSummary) setDocumentFormErrorSummary('');
+                        }}
+                        disabled={Boolean(editDoc)}
+                      >
+                        <option value="">Select a destination office</option>
+                        {destinationOffices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </select>
+                      {documentFormErrors.destinationOfficeId && <p className="form-field-error">{documentFormErrors.destinationOfficeId}</p>}
+                      <p className="field-hint">If this document type requires Mayor approval, it will go there first. The selected office remains its destination after approval.</p>
                     </div>
                   ) : (
                     <div className="form-group">

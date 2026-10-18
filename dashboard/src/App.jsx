@@ -449,9 +449,16 @@ function App() {
     return savedDoc;
   };
 
-  const handleEditDocument = async (updated) => {
+  const handleEditDocument = async (updated, initialTransmission = null) => {
     const savedDoc = await runMutation(() => documentService.update(updated));
     upsertDocument(savedDoc);
+    if (initialTransmission?.toOfficeIds?.length) {
+      const savedTransmission = await runMutation(() => transmissionService.create({
+        ...initialTransmission,
+        documentId: savedDoc.id,
+      }));
+      upsertTransmission(savedTransmission);
+    }
     showActionToast('updated');
     refreshAfterMutation();
     return savedDoc;
@@ -586,7 +593,7 @@ function App() {
     return saved;
   };
 
-  const handleScanCapture = async (imageData, text, newDoc, newTransmission) => {
+  const handleScanCapture = async (imageData, text, newDoc) => {
     const attachment = imageData ? {
       name: `${Date.now()}-scan.jpg`,
       type: 'image/jpeg',
@@ -599,9 +606,9 @@ function App() {
       document: {
         ...newDoc,
         scannedText: text,
-        originOfficeId: newDoc.originOfficeId || newTransmission?.fromOfficeId || getUserOfficeId(),
-        currentOfficeId: newDoc.currentOfficeId || newDoc.destinationOfficeId || getUserOfficeId(),
-        destinationOfficeId: newDoc.destinationOfficeId || newTransmission?.toOfficeId || newDoc.currentOfficeId || '',
+        originOfficeId: newDoc.originOfficeId || getUserOfficeId(),
+        currentOfficeId: newDoc.currentOfficeId || getUserOfficeId(),
+        destinationOfficeId: newDoc.destinationOfficeId || '',
         intakeStatus: 'Approved',
         senderEmail: '',
         priorityLevel: 'normal',
@@ -610,6 +617,9 @@ function App() {
     }));
     if (saved?.document) {
       upsertDocument(saved.document);
+    }
+    if (saved?.transmission) {
+      upsertTransmission(saved.transmission);
     }
     showActionToast('created');
     refreshAfterMutation();

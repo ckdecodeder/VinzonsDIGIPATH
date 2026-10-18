@@ -443,7 +443,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     priorityLevel: 'normal',
     fromOfficeId: defaultSourceOfficeId,
     originOfficeOther: '',
-    toOfficeId: mayorsOfficeId,
+    toOfficeId: getNextOfficeId(receptionOfficeId),
     dateReceived: new Date().toISOString().split('T')[0],
     senderName: '',
     senderContact: '',
@@ -473,6 +473,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const validateScannerDetails = () => validateRequiredFields([
     { key: 'subject', label: 'Document subject', value: formData.subject },
     { key: 'senderName', label: 'Sender name', value: formData.senderName },
+    { key: 'toOfficeId', label: 'Destination office', value: formData.toOfficeId },
     {
       key: 'documentTypeOther',
       label: 'Document type',
@@ -1570,7 +1571,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           dateReceived: formData.dateReceived,
           originOfficeId: receptionOfficeId || scanOfficeId,
           originOfficeOther: formData.originOfficeOther.trim(),
-          destinationOfficeId: mayorsOfficeId,
+          destinationOfficeId: formData.toOfficeId,
           senderName: formData.senderName,
           senderContact: formData.senderContact,
           senderEmail: '',
@@ -1584,7 +1585,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             || filesToSave[0]?.previewUrl
             || hardwareScannedDoc.scannedImageUrl,
           intakeStatus: 'Approved',
-        });
+        }, getInitialHandoffOfficeIds().length ? {
+          fromOfficeId: receptionOfficeId,
+          toOfficeIds: getInitialHandoffOfficeIds(),
+          transmissionType: 'External',
+        } : null);
         capturedImagesRef.current = filesToSave;
         setCapturedImages(filesToSave);
         setCapturedImage(combinedPdf.dataUrl);
@@ -1627,8 +1632,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         dateReceived: formData.dateReceived,
         originOfficeId: receptionOfficeId,
         originOfficeOther: formData.originOfficeOther.trim(),
-        currentOfficeId: mayorsOfficeId,
-        destinationOfficeId: mayorsOfficeId,
+        currentOfficeId: receptionOfficeId,
+        destinationOfficeId: formData.toOfficeId,
         senderName: formData.senderName,
         senderContact: formData.senderContact,
         senderEmail: '',
@@ -1642,14 +1647,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         intakeStatus: 'Approved',
       };
 
-      const newTransmission = {
-        fromOfficeId: receptionOfficeId,
-        toOfficeId: mayorsOfficeId,
-        transmissionDate: formData.dateReceived,
-        transmissionType: 'External',
-      };
-
-      await onCapture?.(null, extractedText, newDoc, newTransmission);
+      await onCapture?.(null, extractedText, newDoc);
       capturedImagesRef.current = filesToSave;
       setCapturedImages(filesToSave);
       setCapturedImage(combinedPdf.dataUrl);
@@ -1722,7 +1720,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       priorityLevel: 'normal',
       fromOfficeId: defaultSourceOfficeId,
       originOfficeOther: '',
-      toOfficeId: receptionOfficeId,
+      toOfficeId: getNextOfficeId(receptionOfficeId),
       dateReceived: new Date().toISOString().split('T')[0],
       senderName: '',
       senderContact: '',
@@ -1748,6 +1746,21 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     if (dt?.category === 'Others' && formData.documentTypeOther) return formData.documentTypeOther;
     return dt ? dt.category : 'Unknown';
   };
+
+  const requiresMayorApproval = Boolean(
+    documentTypes.find((type) => type.id === formData.documentTypeId)?.requiresMayorApproval,
+  );
+  const getInitialHandoffOfficeIds = () => {
+    const destinationOfficeId = formData.toOfficeId;
+    if (!destinationOfficeId) return [];
+    if (requiresMayorApproval && receptionOfficeId === mayorsOfficeId) return [];
+    return requiresMayorApproval
+      ? [...new Set([mayorsOfficeId, destinationOfficeId])]
+      : [destinationOfficeId];
+  };
+  const getInitialHandoffLabel = () => (
+    requiresMayorApproval ? "Mayor's Office for approval" : getOfficeName(formData.toOfficeId)
+  );
   const selectedPriority = { color: 'var(--text-muted)', bg: 'transparent' };
 
   const stepLabels = [
@@ -2251,8 +2264,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
                 <div className="form-group">
                   <label className="form-label">Destination</label>
-                  <input className="form-input" type="text" value="Mayor's Office" disabled />
-                  <p className="field-hint">External documents are automatically forwarded to the Mayor's Office.</p>
+                  <select
+                    className={`form-select${formErrors.toOfficeId ? ' is-invalid' : ''}`}
+                    value={formData.toOfficeId}
+                    onChange={e => handleFormChange('toOfficeId', e.target.value)}
+                    required
+                  >
+                    <option value="">Select a destination office</option>
+                    {offices.filter(office => office.id !== receptionOfficeId).map(office => (
+                      <option key={office.id} value={office.id}>{office.name}</option>
+                    ))}
+                  </select>
+                  {formErrors.toOfficeId && <p className="form-field-error">{formErrors.toOfficeId}</p>}
+                  <p className="field-hint">If this document type requires Mayor approval, it will be sent there first, then forwarded to your selected destination after approval.</p>
                 </div>
 
                 {/* Sender Information */}
@@ -2368,7 +2392,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 { label: 'Subject', value: formData.subject },
                 { label: 'Type', value: getDocTypeName(formData.documentTypeId) },
                 { label: 'Date Received', value: formData.dateReceived },
-                { label: 'Destination', value: "Mayor's Office" },
+                { label: 'Destination', value: getOfficeName(formData.toOfficeId) },
                 { label: 'Sender', value: formData.senderName },
                 { label: 'Contact', value: formData.senderContact || '—' },
                 { label: 'From Org', value: formData.originOfficeOther || '—' },
@@ -2415,7 +2439,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 background: 'var(--success-bg)', color: 'var(--success)',
                 fontSize: '0.8rem', fontWeight: 600,
               }}>
-                Mayor's Office
+                {getInitialHandoffLabel()}
               </span>
             </div>
           </div>
@@ -2446,7 +2470,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             Document Registered
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-            The scan was saved and forwarded to the Mayor's Office (FIFO queue).
+            {requiresMayorApproval
+              ? receptionOfficeId === mayorsOfficeId
+                ? `The scan was recorded at the Mayor's Office for approval. ${getOfficeName(formData.toOfficeId)} remains the requested destination.`
+                : `The scan was saved at Reception and sent to the Mayor's Office for approval. ${getOfficeName(formData.toOfficeId)} remains the requested destination.`
+              : `The scan was saved at Reception and sent to ${getOfficeName(formData.toOfficeId)} for receipt.`}
           </p>
 
           {sortStatus && (
@@ -2466,7 +2494,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             {[
               { label: 'Subject', value: formData.subject },
               { label: 'Sender', value: formData.senderName },
-              { label: 'Destination', value: "Mayor's Office" },
+              { label: 'Destination', value: getOfficeName(formData.toOfficeId) },
             ].map((item, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: i < 3 ? '0.5rem' : 0, fontSize: '0.8rem' }}>
                 <span style={{ color: 'var(--text-muted)' }}>{item.label}</span>

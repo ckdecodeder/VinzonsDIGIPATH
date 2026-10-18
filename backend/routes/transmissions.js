@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Transmission, Document, Notification } = require('../models');
+const { Transmission, Document, DocumentType, Office, Notification } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const {
   asyncHandler,
@@ -13,6 +13,7 @@ const {
   getUserOfficeId,
   isApprovalRole,
 } = require('../utils/helpers');
+const { canSendDocument, buildSendTransition, buildReceiveTransition } = require('../utils/documentRouting');
 const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const {
@@ -40,6 +41,12 @@ const getOfficeLabel = async (officeId) => {
   return office?.name || officeId || 'Unknown office';
 };
 
+const findMayorsOfficeId = async () => {
+  const offices = await Office.find({}).lean();
+  const mayorOffice = (offices || []).find((office) => /mayor/i.test(office.name || ''));
+  return mayorOffice?.id || 'OFF-001';
+};
+
 const transmittableStatuses = ['Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged'];
 const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
 
@@ -58,27 +65,38 @@ const normalizeWorkflowStatusValue = (status, fallback = 'Received') => {
 
 router.use(protect);
 
-const { generateId } = require('../utils/helpers');
-
-const replaceDocumentTransmission = async (documentId, payload) => {
-  await Transmission.deleteMany({ documentId });
-  const trans = new Transmission(payload);
-  await trans.save();
-  return trans;
-};
-
 router.get('/', allRoles, asyncHandler(async (req, res) => {
   const trans = await Transmission.find(getScopedTransmissionQuery(req)).sort({ createdAt: -1, transmissionDate: -1, _id: -1 }).lean();
   res.json(trans);
 }));
 
 router.post('/', allRoles, asyncHandler(async (req, res) => {
-  requireFields(req.body, ['documentId', 'fromOfficeId', 'toOfficeId']);
-  if (req.body.fromOfficeId === req.body.toOfficeId) {
+  requireFields(req.body, ['documentId', 'fromOfficeId']);
+  const toOfficeIds = [...new Set(
+    (Array.isArray(req.body.toOfficeIds) ? req.body.toOfficeIds : [req.body.toOfficeId])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean),
+  )];
+  if (!toOfficeIds.length) {
+    return res.status(400).json({ message: 'Select at least one destination office' });
+  }
+  if (toOfficeIds.includes(req.body.fromOfficeId)) {
     return res.status(400).json({ message: 'A document cannot be routed to the same office' });
   }
 
   const doc = await assertCanAccessDocument(req, req.body.documentId);
+  const docType = doc.documentTypeId
+    ? await DocumentType.findOne({ id: doc.documentTypeId }).lean()
+    : null;
+  const requiresMayorApproval = Boolean(docType?.requiresMayorApproval);
+  const mayorsOfficeId = requiresMayorApproval ? await findMayorsOfficeId() : '';
+  const isMayorApprovalHandoff = requiresMayorApproval
+    && !doc.mayorApprovalCleared
+    && req.body.fromOfficeId !== mayorsOfficeId
+    && toOfficeIds[0] === mayorsOfficeId;
+  if (!canSendDocument({ requiresMayorApproval, mayorApprovalCleared: doc.mayorApprovalCleared }) && !isMayorApprovalHandoff) {
+    return res.status(400).json({ message: 'Mayor approval must be recorded before routing this document onward' });
+  }
   const currentStatus = normalizeWorkflowStatusValue(doc.status, doc.status);
   if (!transmittableStatuses.includes(currentStatus)) {
     return res.status(400).json({ message: `Only approved Received, For Signing, For Filing, Signed, or Acknowledged documents can be transmitted. Current status: ${doc.status}` });
@@ -106,47 +124,53 @@ router.post('/', allRoles, asyncHandler(async (req, res) => {
     }
   }
 
-  const now = new Date().toISOString();
-  const existingRows = await Transmission.find({ documentId: doc.id })
-    .sort({ createdAt: 1, _id: 1 })
-    .lean();
-  const stableId = req.body.id || existingRows[0]?.id || generateId('TRN');
-  const createdAt = existingRows[0]?.createdAt || now;
-  const trans = await replaceDocumentTransmission(doc.id, {
-    id: stableId,
-    documentId: req.body.documentId,
-    fromOfficeId: req.body.fromOfficeId,
-    toOfficeId: req.body.toOfficeId,
-    sentBy: req.user.id,
-    receivedBy: null,
-    receivedAt: null,
-    transmissionDate: req.body.transmissionDate || now.split('T')[0],
-    transmissionType: req.body.transmissionType || 'Internal',
-    acknowledgementRemarks: req.body.acknowledgementRemarks || '',
-    createdAt,
-    updatedAt: now,
-  });
+  const offices = await Office.find({}).lean();
+  const knownOfficeIds = new Set((offices || []).map((office) => office.id));
+  const invalidOfficeIds = toOfficeIds.filter((id) => !knownOfficeIds.has(id));
+  if (invalidOfficeIds.length) {
+    return res.status(400).json({ message: `Unknown office id(s): ${invalidOfficeIds.join(', ')}` });
+  }
 
-  const fromOffice = await getOfficeLabel(trans.fromOfficeId);
-  const toOffice = await getOfficeLabel(trans.toOfficeId);
-  const routedDoc = await appendDocumentTimeline(
-    doc.id,
-    createTimelineEvent(
-      req,
-      'document_routed',
-      'Routed to office',
-      `Sent from ${fromOffice} to ${toOffice}`,
-      trans.fromOfficeId,
-      trans.id,
-    ),
-    {
-      status: 'In Transit',
-      preTransitStatus: currentStatus,
-      currentOfficeId: trans.fromOfficeId,
-      destinationOfficeId: trans.toOfficeId,
-      lastRoutedAt: new Date().toISOString(),
-    }
-  );
+  const sentAt = new Date().toISOString();
+  let transition;
+  try {
+    transition = buildSendTransition({
+      document: doc,
+      toOfficeIds,
+      sentBy: req.user.id,
+      sentAt,
+      transmissionType: req.body.transmissionType || 'Internal',
+      transmissionDate: req.body.transmissionDate,
+      acknowledgementRemarks: req.body.acknowledgementRemarks || '',
+    });
+  } catch (err) {
+    return res.status(err.status || 400).json({ message: err.message });
+  }
+
+  const trans = new Transmission(transition.transmission);
+  await trans.save();
+  let routedDoc;
+  let fromOffice;
+  let toOffice;
+  try {
+    fromOffice = await getOfficeLabel(trans.fromOfficeId);
+    toOffice = await getOfficeLabel(trans.toOfficeId);
+    routedDoc = await appendDocumentTimeline(
+      doc.id,
+      createTimelineEvent(
+        req,
+        'document_routed',
+        'Sent to office',
+        `Sent from ${fromOffice} to ${toOffice}`,
+        trans.fromOfficeId,
+        trans.id,
+      ),
+      transition.documentUpdates,
+    );
+  } catch (err) {
+    await Transmission.deleteMany({ id: trans.id });
+    throw err;
+  }
   await createLogEntry(req, 'transmission_created', `Routed "${doc.subject}" from ${fromOffice} to ${toOffice}`, trans.id);
   await createNotification({
     officeId: trans.toOfficeId,
@@ -190,6 +214,9 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     if (receivingDoc.status !== 'In Transit') {
       return res.status(400).json({ message: `Only in-transit documents can be received. Current document status: ${receivingDoc.status}` });
     }
+    if (receivingDoc.currentOfficeId !== existingTrans.fromOfficeId) {
+      return res.status(409).json({ message: 'Transmission source no longer matches the document custody office' });
+    }
     if (receivingDoc.destinationOfficeId && receivingDoc.destinationOfficeId !== existingTrans.toOfficeId) {
       return res.status(409).json({ message: 'Transmission destination no longer matches the document destination' });
     }
@@ -198,7 +225,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   const updates = isReceiveAction
     ? {
         receivedBy: req.user.id,
-        receivedAt: req.body.receivedAt || new Date().toISOString(),
+        receivedAt: new Date().toISOString(),
         ...(req.body.acknowledgementRemarks ? { acknowledgementRemarks: req.body.acknowledgementRemarks } : {}),
       }
     : { ...req.body };
@@ -213,27 +240,35 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     const doc = receivingDoc || await Document.findOne({ id: trans.documentId });
     if (doc) {
       const toOffice = await getOfficeLabel(trans.toOfficeId);
-      const updatedDoc = await appendDocumentTimeline(
-        doc.id,
-        createTimelineEvent(
-          req,
-          'transmission_received',
-          'Received and acknowledged',
-          `Received at ${toOffice}`,
-          trans.toOfficeId,
-          trans.id,
-            ),
-            {
-              status: doc.preTransitStatus || 'Received',
-              preTransitStatus: '',
-              currentOfficeId: trans.toOfficeId,
-              destinationOfficeId: trans.toOfficeId,
-              // Phase 2 — Auto-advance route step
-              ...(doc.routePlan && doc.routePlan.length > 0
-                ? { routeStep: doc.routeStep < doc.routePlan.length - 1 ? doc.routeStep + 1 : doc.routeStep }
-                : {}),
-            }
-          );
+      const receiveUpdates = buildReceiveTransition({
+        document: doc,
+        toOfficeId: trans.toOfficeId,
+        transmissionId: trans.id,
+        receivedBy: req.user.id,
+        receivedAt: trans.receivedAt,
+      });
+      let updatedDoc;
+      try {
+        updatedDoc = await appendDocumentTimeline(
+          doc.id,
+          createTimelineEvent(
+            req,
+            'transmission_received',
+            'Received and acknowledged',
+            `Received at ${toOffice}`,
+            trans.toOfficeId,
+            trans.id,
+          ),
+          receiveUpdates,
+        );
+      } catch (err) {
+        await Transmission.findOneAndUpdate(
+          { id: trans.id },
+          { $set: { receivedBy: null, receivedAt: null, updatedAt: new Date().toISOString() } },
+          updateOptions,
+        );
+        throw err;
+      }
           await createLogEntry(req, 'transmission_received', `Received transmission for "${doc.subject}" at ${toOffice}`, trans.id);
           await createNotification({
             officeId: trans.fromOfficeId,

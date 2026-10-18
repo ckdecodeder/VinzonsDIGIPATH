@@ -64,6 +64,10 @@ const DocumentPreviewModal = ({
     (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0),
   );
   const sendHistory = Array.isArray(doc.sendHistory) ? doc.sendHistory : [];
+  const pendingTransmission = transmissions.find(
+    (item) => item.documentId === doc.id && !item.receivedBy,
+  );
+  const queuedOfficeIds = Array.isArray(doc.sendQueue) ? doc.sendQueue.filter(Boolean) : [];
 
   let workflowExplanation = '';
   if (doc.intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') {
@@ -102,10 +106,38 @@ const DocumentPreviewModal = ({
         <div className="modal-body">
           <DocumentWorkflowPipeline
             doc={doc}
-            hasPendingTransmission={false}
+            hasPendingTransmission={Boolean(pendingTransmission)}
             locationLabel={currentLocation}
             workflowNote={workflowExplanation}
           />
+
+          {(pendingTransmission || queuedOfficeIds.length > 0) && (
+            <div className="document-detail-section" style={{ marginTop: '1rem' }}>
+              <h4><MapPin size={14} /> Current Handoff</h4>
+              {pendingTransmission && (
+                <>
+                  <div className="detail-pair">
+                    <span>Custody remains at</span>
+                    <strong>{getOfficeName(doc.currentOfficeId)}</strong>
+                  </div>
+                  <div className="detail-pair">
+                    <span>Awaiting receipt at</span>
+                    <strong>{getOfficeName(pendingTransmission.toOfficeId)}</strong>
+                  </div>
+                  <div className="detail-pair">
+                    <span>Sent</span>
+                    <strong>{formatDateTime(pendingTransmission.createdAt || pendingTransmission.transmissionDate)}</strong>
+                  </div>
+                </>
+              )}
+              {queuedOfficeIds.length > 0 && (
+                <div className="detail-pair">
+                  <span>Later offices in route</span>
+                  <strong>{queuedOfficeIds.map(getOfficeName).join(' → ')}</strong>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="document-detail-grid">
             <div className="document-detail-section">
@@ -191,6 +223,11 @@ const DocumentPreviewModal = ({
                     </strong>
                     <span>{formatDateTime(event.sentAt)}</span>
                     <span>by {getUserFullName(event.sentBy)}</span>
+                    <span>
+                      {event.receivedAt
+                        ? `Received ${formatDateTime(event.receivedAt)}${event.receivedBy ? ` by ${getUserFullName(event.receivedBy)}` : ''}`
+                        : 'Awaiting destination receipt'}
+                    </span>
                   </div>
                 ))}
               </div>

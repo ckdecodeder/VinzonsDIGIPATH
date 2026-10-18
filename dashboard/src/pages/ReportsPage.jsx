@@ -35,14 +35,21 @@ import {
   exportReportPagesAsJpeg,
   exportReportPagesAsPdf,
 } from '../utils/reportExport';
+import {
+  filterActivityLogs,
+  filterByDateRange,
+  filterDocuments,
+  filterOfficeStats,
+  filterTransmissions,
+} from '../utils/reportFilters';
 
 const ReportsPage = ({
-  documents,
-  transmissions,
-  archives,
+  documents = [],
+  transmissions = [],
+  archives = [],
   offices = defaultOffices,
-  users,
-  logs,
+  users = [],
+  logs = [],
   documentTypes = defaultDocumentTypes,
   currentRole,
   currentUser,
@@ -51,6 +58,14 @@ const ReportsPage = ({
   const [activeCategory, setActiveCategory] = useState('summary');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [documentFilters, setDocumentFilters] = useState({
+    status: '', typeId: '', priority: '', direction: '', officeId: '',
+  });
+  const [transmissionFilters, setTransmissionFilters] = useState({
+    status: '', type: '', fromOfficeId: '', toOfficeId: '', sentBy: '', receivedBy: '',
+  });
+  const [officeFilter, setOfficeFilter] = useState('');
+  const [activityFilters, setActivityFilters] = useState({ search: '', action: '', userId: '', reference: '' });
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const [showPreview, setShowPreview] = useState(false);
@@ -77,21 +92,32 @@ const ReportsPage = ({
     categories.push({ id: 'activity', label: 'Activity', icon: <Clock size={16} /> });
   }
 
-  // Filter by date range
-  const filterByDate = (items, dateField) => {
-    return items.filter(item => {
-      const d = item[dateField];
-      if (!d) return true;
-      if (dateFrom && d < dateFrom) return false;
-      if (dateTo && d > dateTo) return false;
-      return true;
-    });
-  };
-
-  const filteredDocs = sortNewest(filterByDate(documents, 'dateReceived'), ['createdAt', 'updatedAt', 'dateReceived']);
-  const filteredTransmissions = sortNewest(filterByDate(transmissions, 'transmissionDate'), ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']);
-  const filteredArchives = sortNewest(filterByDate(archives, 'date'), ['createdAt', 'updatedAt', 'date']);
-  const filteredLogs = sortNewest(filterByDate(logs, 'timestamp'), ['timestamp']);
+  const dateFilteredTransmissions = sortNewest(
+    filterByDateRange(transmissions, 'transmissionDate', dateFrom, dateTo),
+    ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate'],
+  );
+  const dateFilteredArchives = sortNewest(
+    filterByDateRange(archives, 'date', dateFrom, dateTo),
+    ['createdAt', 'updatedAt', 'date'],
+  );
+  const filteredDocs = sortNewest(filterDocuments(documents, {
+    ...documentFilters,
+    dateFrom,
+    dateTo,
+  }), ['createdAt', 'updatedAt', 'dateReceived']);
+  const filteredTransmissions = sortNewest(filterTransmissions(transmissions, {
+    ...transmissionFilters,
+    dateFrom,
+    dateTo,
+  }), ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']);
+  const filteredArchives = dateFilteredArchives;
+  const filteredLogs = sortNewest(filterActivityLogs(logs, {
+    ...activityFilters,
+    dateFrom,
+    dateTo,
+    users,
+  }), ['timestamp']);
+  const activityUsers = users.filter((user) => filteredLogs.some((log) => log.userId === user.id));
 
   const reportTableTotalPages = Math.max(1, Math.ceil(filteredDocs.length / REPORT_TABLE_PAGE_SIZE));
   const paginatedReportDocs = filteredDocs.slice(
@@ -119,7 +145,7 @@ const ReportsPage = ({
   useEffect(() => {
     setReportTablePage(1);
     setTransmissionReportTablePage(1);
-  }, [dateFrom, dateTo, activeCategory]);
+  }, [dateFrom, dateTo, activeCategory, documentFilters, transmissionFilters, officeFilter, activityFilters]);
 
   useEffect(() => {
     setReportTablePage((current) => Math.min(current, reportTableTotalPages));
@@ -154,15 +180,118 @@ const ReportsPage = ({
     return user ? `${user.fname} ${user.mname || ''} ${user.lname}`.replace(/\s+/g, ' ').trim() : 'Unknown';
   };
 
-  const getDocTypeName = (typeId) => {
-    const documentType = documentTypes.find((item) => item.id === typeId);
-    return documentType ? documentType.category : 'Unknown';
-  };
-
   const getWorkflowStatus = (doc) => {
     if (doc.status === 'For Signature') return 'For Signing';
     if (doc.status === 'Acknoweledged') return 'Acknowledged';
     return doc.status || 'Received';
+  };
+
+  const updateDocumentFilter = (key, value) => {
+    setDocumentFilters((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateTransmissionFilter = (key, value) => {
+    setTransmissionFilters((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateActivityFilter = (key, value) => {
+    setActivityFilters((current) => ({ ...current, [key]: value }));
+  };
+
+  const getFilterValues = (items, field) => [...new Set(
+    items.map((item) => item?.[field]).filter((value) => value !== undefined && value !== null && value !== ''),
+  )].sort((a, b) => String(a).localeCompare(String(b)));
+
+  const renderFilterSelect = (label, value, onChange, options, allLabel = `All ${label.toLowerCase()}`) => (
+    <label className="report-filter-control">
+      <span>{label}</span>
+      <select className="form-select" value={value} onChange={(event) => onChange(event.target.value)} aria-label={`Filter report by ${label.toLowerCase()}`}>
+        <option value="">{allLabel}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+
+  const officeOptions = offices.map((office) => ({ value: office.id, label: office.name }));
+  const userOptions = users.map((user) => ({
+    value: user.id,
+    label: getUserFullName(user.id),
+  }));
+  const documentTypeOptions = documentTypes.map((type) => ({ value: type.id, label: type.category }));
+  const documentStatusOptions = getFilterValues(documents, 'status').map((value) => ({
+    value,
+    label: getWorkflowStatus({ status: value }),
+  }));
+  const priorityOptions = getFilterValues(documents, 'priorityLevel').map((value) => ({
+    value,
+    label: getPriorityInfo(value).label || value,
+  }));
+  const directionOptions = getFilterValues(documents, 'documentDirection').map((value) => ({ value, label: value }));
+  const transmissionTypeOptions = getFilterValues(transmissions, 'transmissionType').map((value) => ({ value, label: value }));
+  const activityActionOptions = getFilterValues(logs, 'action').map((value) => ({ value, label: value.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ') }));
+
+  const renderCategoryFilters = () => {
+    if (activeCategory === 'summary' || activeCategory === 'documents') {
+      return (
+        <div className="report-filter-row reports-extra-filters" aria-label="Document report filters">
+          {renderFilterSelect('Status', documentFilters.status, (value) => updateDocumentFilter('status', value), documentStatusOptions)}
+          {renderFilterSelect('Type', documentFilters.typeId, (value) => updateDocumentFilter('typeId', value), documentTypeOptions)}
+          {renderFilterSelect('Priority', documentFilters.priority, (value) => updateDocumentFilter('priority', value), priorityOptions)}
+          {renderFilterSelect('Direction', documentFilters.direction, (value) => updateDocumentFilter('direction', value), directionOptions)}
+          {renderFilterSelect('Office', documentFilters.officeId, (value) => updateDocumentFilter('officeId', value), officeOptions)}
+        </div>
+      );
+    }
+
+    if (activeCategory === 'transmissions') {
+      return (
+        <div className="report-filter-row reports-extra-filters" aria-label="Transmission report filters">
+          {renderFilterSelect('Status', transmissionFilters.status, (value) => updateTransmissionFilter('status', value), [
+            { value: 'Pending', label: 'Pending Receipt' },
+            { value: 'Completed', label: 'Completed' },
+          ])}
+          {renderFilterSelect('Type', transmissionFilters.type, (value) => updateTransmissionFilter('type', value), transmissionTypeOptions)}
+          {renderFilterSelect('Source office', transmissionFilters.fromOfficeId, (value) => updateTransmissionFilter('fromOfficeId', value), officeOptions)}
+          {renderFilterSelect('Destination office', transmissionFilters.toOfficeId, (value) => updateTransmissionFilter('toOfficeId', value), officeOptions)}
+          {renderFilterSelect('Sender', transmissionFilters.sentBy, (value) => updateTransmissionFilter('sentBy', value), userOptions)}
+          {renderFilterSelect('Receiver', transmissionFilters.receivedBy, (value) => updateTransmissionFilter('receivedBy', value), userOptions)}
+        </div>
+      );
+    }
+
+    if (activeCategory === 'offices') {
+      return (
+        <div className="report-filter-row reports-extra-filters" aria-label="Office report filters">
+          {renderFilterSelect('Office', officeFilter, setOfficeFilter, officeOptions)}
+        </div>
+      );
+    }
+
+    if (activeCategory === 'activity' && canViewActivity) {
+      return (
+        <div className="report-filter-row reports-extra-filters" aria-label="Activity report filters">
+          <label className="report-filter-control report-filter-control--search">
+            <span>Search</span>
+            <input className="form-input" type="search" value={activityFilters.search} onChange={(event) => updateActivityFilter('search', event.target.value)} placeholder="Search details, reference, user, or action" aria-label="Search activity report" />
+          </label>
+          {renderFilterSelect('Action', activityFilters.action, (value) => updateActivityFilter('action', value), activityActionOptions)}
+          {renderFilterSelect('User', activityFilters.userId, (value) => updateActivityFilter('userId', value), userOptions)}
+          <label className="report-filter-control">
+            <span>Reference</span>
+            <input className="form-input" type="search" value={activityFilters.reference} onChange={(event) => updateActivityFilter('reference', event.target.value)} placeholder="Reference ID" aria-label="Filter activity report by reference" />
+          </label>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const getDocTypeName = (typeId) => {
+    const documentType = documentTypes.find((item) => item.id === typeId);
+    return documentType ? documentType.category : 'Unknown';
   };
 
   // ====== SUMMARY ======
@@ -196,10 +325,11 @@ const ReportsPage = ({
 
   // ====== OFFICE BREAKDOWN ======
   const officeStats = offices.map(office => {
-    const sentFrom = filteredTransmissions.filter(t => t.fromOfficeId === office.id).length;
-    const sentTo = filteredTransmissions.filter(t => t.toOfficeId === office.id).length;
-    return { name: office.name, sentFrom, sentTo, total: sentFrom + sentTo };
+    const sentFrom = dateFilteredTransmissions.filter(t => t.fromOfficeId === office.id).length;
+    const sentTo = dateFilteredTransmissions.filter(t => t.toOfficeId === office.id).length;
+    return { id: office.id, name: office.name, sentFrom, sentTo, total: sentFrom + sentTo };
   }).filter(o => o.total > 0).sort((a, b) => b.total - a.total);
+  const filteredOfficeStats = filterOfficeStats(officeStats, officeFilter);
 
   // ====== STAT CARD COMPONENT ======
   const StatCard = ({ label, value, icon, color, sub }) => (
@@ -237,7 +367,7 @@ const ReportsPage = ({
   };
 
   const maxCount = Math.max(...docTypeCounts.map(d => d.count), 1);
-  const maxOffice = Math.max(...officeStats.map(o => o.total), 1);
+  const maxOffice = Math.max(...filteredOfficeStats.map(o => o.total), 1);
 
   const handleExport = async (format) => {
     const label = categories.find(item => item.id === activeCategory)?.label || 'Summary';
@@ -317,7 +447,7 @@ const ReportsPage = ({
     ['Documents', 'For Filing', statusCounts['For Filing'], percent(statusCounts['For Filing'], filteredDocs.length)],
     ['Documents', 'Signed', statusCounts.Signed, percent(statusCounts.Signed, filteredDocs.length)],
     ['Documents', 'Acknowledged', statusCounts.Acknowledged, percent(statusCounts.Acknowledged, filteredDocs.length)],
-    ['Routing', 'Total Transmissions', filteredTransmissions.length, `${filteredTransmissions.filter(t => !t.receivedBy).length} pending / ${filteredTransmissions.filter(t => t.receivedBy).length} completed`],
+    ['Routing', 'Total Transmissions', dateFilteredTransmissions.length, `${dateFilteredTransmissions.filter(t => !t.receivedBy).length} pending / ${dateFilteredTransmissions.filter(t => t.receivedBy).length} completed`],
     ['Archives', 'Archived Records', filteredArchives.length, 'Visible archived records in coverage'],
   ];
 
@@ -342,12 +472,12 @@ const ReportsPage = ({
     }
 
     if (activeCategory === 'offices') {
-      const totalOfficeMovement = officeStats.reduce((sum, item) => sum + item.total, 0);
+      const totalOfficeMovement = filteredOfficeStats.reduce((sum, item) => sum + item.total, 0);
       return {
         title: 'Office Movement Report',
         headers: ['Office', 'Sent From', 'Received To', 'Total', 'Share', 'Notes'],
         columnWidths: ['18%', '14%', '14%', '10%', '10%', '34%'],
-        rows: officeStats.map(item => [
+        rows: filteredOfficeStats.map(item => [
           item.name,
           item.sentFrom,
           item.sentTo,
@@ -493,7 +623,7 @@ const ReportsPage = ({
   // printed bond paper (Letter, 8.5in x 11in) instead of clipping content.
   const measureRef = useRef(null);
   const [rowChunks, setRowChunks] = useState(null);
-  const measureSignature = `${activeCategory}|${dateFrom}|${dateTo}|${detailRows.length}|${previewTable.title}`;
+  const measureSignature = `${activeCategory}|${dateFrom}|${dateTo}|${JSON.stringify({ documentFilters, transmissionFilters, officeFilter, activityFilters })}|${detailRows.length}|${previewTable.title}`;
 
   useLayoutEffect(() => {
     if (!showPreview) return;
@@ -678,6 +808,7 @@ const ReportsPage = ({
               </button>
             )}
           </div>
+          {renderCategoryFilters()}
         </div>
       </div>
 
@@ -990,8 +1121,8 @@ const ReportsPage = ({
             <div className="card-header">
               <h3 className="card-title">Transmission Volume by Office</h3>
             </div>
-            {officeStats.length > 0 ? (
-              officeStats.map(o => (
+            {filteredOfficeStats.length > 0 ? (
+              filteredOfficeStats.map(o => (
                 <HorizontalBar key={o.name} label={o.name} value={o.total} max={maxOffice} color="#0891b2" />
               ))
             ) : (
@@ -1014,7 +1145,7 @@ const ReportsPage = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {officeStats.map(o => (
+                  {filteredOfficeStats.map(o => (
                     <tr key={o.name}>
                       <td className="td-primary">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1052,8 +1183,8 @@ const ReportsPage = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map(u => {
-                    const userLogs = logs.filter(l => l.userId === u.id);
+                {activityUsers.map(u => {
+                    const userLogs = filteredLogs.filter(l => l.userId === u.id);
                     const lastLog = userLogs.length > 0 ? userLogs[0] : null;
                     return (
                       <tr key={u.id}>
@@ -1088,10 +1219,10 @@ const ReportsPage = ({
           <div className="card">
             <div className="card-header">
               <h3 className="card-title">Recent Activity Log</h3>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{logs.length} entries</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{filteredLogs.length} entries</span>
             </div>
             <div className="activity-list">
-              {logs.slice(0, 15).map(log => (
+              {filteredLogs.slice(0, 15).map(log => (
                 <div key={log.id} className="activity-item">
                   <div className={`activity-dot ${
                     log.action.includes('received') ? 'blue' :
