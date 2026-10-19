@@ -7,6 +7,7 @@ dashboard/node_modules/
 
 dashboard/dist/
 backend/uploads/
+backend/pgdata/
 database-export/
 
 *.log
