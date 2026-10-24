@@ -36,6 +36,43 @@ test('a direct office route records its destination without transferring custody
   assert.deepEqual(route.sendHistory, []);
 });
 
+test('initial Mayor reception is a separate route decision from Mayor approval', () => {
+  const route = buildInitialOfficeRoute({
+    originOfficeId: 'OFF-008', destinationOfficeId: 'OFF-003', mayorsOfficeId: 'OFF-001',
+    requiresMayorReception: true, requiresMayorApproval: false,
+    sentBy: 'USR-008', sentAt: '2026-10-12T00:00:00.000Z',
+  });
+
+  assert.equal(route.firstDestinationOfficeId, 'OFF-001');
+  assert.equal(route.status, 'Received');
+  assert.equal(route.intakeOfficeId, 'OFF-001');
+});
+
+test('Mayor approval still routes through the Mayor even when initial reception is not requested', () => {
+  const route = buildInitialOfficeRoute({
+    originOfficeId: 'OFF-008', destinationOfficeId: 'OFF-003', mayorsOfficeId: 'OFF-001',
+    requiresMayorReception: false, requiresMayorApproval: true,
+    sentBy: 'USR-008', sentAt: '2026-10-12T00:00:00.000Z',
+  });
+
+  assert.equal(route.firstDestinationOfficeId, 'OFF-001');
+  assert.equal(route.status, 'For Signing');
+  assert.equal(route.intakeOfficeId, 'OFF-008');
+});
+
+test('initial reception and Mayor approval combine as separate workflow decisions', () => {
+  const route = buildInitialOfficeRoute({
+    originOfficeId: 'OFF-008', destinationOfficeId: 'OFF-003', mayorsOfficeId: 'OFF-001',
+    requiresMayorReception: true, requiresMayorApproval: true,
+    sentBy: 'USR-008', sentAt: '2026-10-12T00:00:00.000Z',
+  });
+
+  assert.equal(route.firstDestinationOfficeId, 'OFF-001');
+  assert.equal(route.intakeOfficeId, 'OFF-001');
+  assert.equal(route.status, 'For Signing');
+  assert.deepEqual(route.routePlan, ['OFF-008', 'OFF-001', 'OFF-003']);
+});
+
 test('priority values are preserved when valid and default to normal otherwise', () => {
   assert.equal(normalizePriorityLevel(' UrGent '), 'urgent');
   assert.equal(normalizePriorityLevel('invalid'), 'normal');

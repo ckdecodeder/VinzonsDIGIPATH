@@ -672,9 +672,9 @@ const DocumentList = ({
       required: true,
     },
     sign_document: {
-      title: 'Mark Signed',
+      title: 'Mark as signed',
       helper: 'Use this after the document has been signed.',
-      button: 'Mark Signed',
+      button: 'Mark as signed',
       required: false,
     },
     acknowledge_document: {
@@ -935,7 +935,7 @@ const DocumentList = ({
         )}
         {canSignDocument(doc) && (
           <button className="btn btn-sm btn-success" onClick={() => openProcessingAction(doc, 'sign_document')}>
-            <CheckCircle2 size={14} /> Signed
+            <CheckCircle2 size={14} /> Mark as signed
           </button>
         )}
         {canAcknowledgeDocument(doc) && (

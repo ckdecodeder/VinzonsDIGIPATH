@@ -405,6 +405,7 @@ const ReceptionistDashboard = ({
                 <th>Type</th>
                 <th>Sender</th>
                 <th>Status</th>
+                <th>Current Office</th>
                 <th>Date Received</th>
                 <th>Workflow Note</th>
               </tr>
@@ -427,6 +428,7 @@ const ReceptionistDashboard = ({
                         {getWorkflowStatus(doc)}
                       </span>
                     </td>
+                    <td>{offices.find((office) => office.id === doc.currentOfficeId)?.name || 'Location pending'}</td>
                     <td style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
                     <td><span className="workflow-explanation">{getDocumentPendingReason(doc)}</span></td>
                   </tr>

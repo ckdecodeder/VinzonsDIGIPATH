@@ -40,6 +40,7 @@ const documentSchema = new mongoose.Schema({
   documentTypeId: { type: String },
   documentTypeOther: { type: String },
   originOfficeId: { type: String },
+  intakeOfficeId: { type: String },
   originOfficeOther: { type: String },
   currentOfficeId: { type: String },
   destinationOfficeId: { type: String },

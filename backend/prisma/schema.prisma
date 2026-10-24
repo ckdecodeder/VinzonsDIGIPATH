@@ -64,10 +64,13 @@ model devices {
 }
 
 model document_types {
-  id        String  @id @db.VarChar(255)
-  category  String?
-  createdAt String?
-  updatedAt String?
+  id                     String   @id @db.VarChar(255)
+  category               String?
+  requiresMayorApproval  Boolean? @default(false)
+  requiresMayorReception Boolean? @default(false)
+  routingTrack           String?  @default("direct")
+  createdAt              String?
+  updatedAt              String?
 }
 
 model documents {
@@ -86,6 +89,7 @@ model documents {
   documentTypeId             String?
   documentTypeOther          String?
   originOfficeId             String?
+  intakeOfficeId             String?
   originOfficeOther          String?
   currentOfficeId            String?
   destinationOfficeId        String?

@@ -47,6 +47,7 @@ const DocumentTypeModel = sequelize
       category:              { type: DataTypes.STRING, allowNull: false },
       // Phase 1 — Workflow routing fields
       requiresMayorApproval: { type: DataTypes.BOOLEAN, defaultValue: false },
+      requiresMayorReception: { type: DataTypes.BOOLEAN, defaultValue: false },
       routingTrack:          { type: DataTypes.STRING, defaultValue: 'direct' },
       createdAt:             { type: DataTypes.STRING },
       updatedAt:             { type: DataTypes.STRING },
@@ -70,6 +71,7 @@ const DocumentModel = sequelize
       documentTypeId:               { type: DataTypes.TEXT },
       documentTypeOther:            { type: DataTypes.TEXT },
       originOfficeId:               { type: DataTypes.TEXT },
+      intakeOfficeId:               { type: DataTypes.TEXT },
       originOfficeOther:            { type: DataTypes.TEXT },
       currentOfficeId:              { type: DataTypes.TEXT },
       destinationOfficeId:          { type: DataTypes.TEXT },
@@ -309,10 +311,16 @@ const migrateDocumentTypeRoutingFields = async () => {
     ALTER TABLE document_types
     ADD COLUMN IF NOT EXISTS "routingTrack" TEXT DEFAULT 'direct';
   `);
+  await sequelize.query(`
+    ALTER TABLE document_types
+    ADD COLUMN IF NOT EXISTS "requiresMayorReception" BOOLEAN DEFAULT false;
+  `);
 };
 
 // Phase 1 — Add routing fields to documents table
 const migrateDocumentRoutingFields = async () => {
+  await sequelize.query(`ALTER TABLE documents ADD COLUMN IF NOT EXISTS "intakeOfficeId" TEXT;`);
+  await sequelize.query(`UPDATE documents SET "intakeOfficeId" = "originOfficeId" WHERE "intakeOfficeId" IS NULL AND "documentDirection" = 'Incoming';`);
   await sequelize.query(`
     ALTER TABLE documents
     ADD COLUMN IF NOT EXISTS "routePlan" JSONB DEFAULT '[]'::jsonb;

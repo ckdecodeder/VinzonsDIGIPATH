@@ -254,7 +254,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
           createTimelineEvent(
             req,
             'transmission_received',
-            'Received and acknowledged',
+            'Received at office',
             `Received at ${toOffice}`,
             trans.toOfficeId,
             trans.id,

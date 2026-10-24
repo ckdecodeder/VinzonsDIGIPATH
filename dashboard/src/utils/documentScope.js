@@ -24,6 +24,10 @@ export const isDocumentVisibleToUser = (doc, currentUser, { role } = {}) => {
   const officeId = currentUser.officeId;
   if (!officeId) return false;
 
+  if (currentUser.role === 'Receptionist' && doc.documentDirection === 'Incoming' && doc.intakeOfficeId === officeId) {
+    return true;
+  }
+
   if (getWorkflowStatus(doc) === 'In Transit') {
     return doc.destinationOfficeId === officeId;
   }

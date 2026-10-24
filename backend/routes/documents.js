@@ -333,6 +333,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     docType = await DocumentType.findOne({ id: documentTypeId }).lean();
   }
   const requiresMayorApproval = docType?.requiresMayorApproval || false;
+  const requiresMayorReception = docType?.requiresMayorReception || false;
 
   let finalStatus = registrationStatus;
   let initialRoute = null;
@@ -343,6 +344,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
       originOfficeId,
       destinationOfficeId,
       mayorsOfficeId,
+      requiresMayorReception,
       requiresMayorApproval,
       sentBy: req.user?.id,
       sentAt: now,
@@ -355,6 +357,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
       originOfficeId,
       destinationOfficeId,
       mayorsOfficeId,
+      requiresMayorReception: false,
       requiresMayorApproval: true,
       sentBy: req.user?.id,
       sentAt: now,
@@ -365,6 +368,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
       originOfficeId,
       destinationOfficeId,
       mayorsOfficeId,
+      requiresMayorReception: false,
       requiresMayorApproval: false,
       sentBy: req.user?.id,
       sentAt: now,
@@ -390,6 +394,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     documentTypeId,
     documentTypeOther: normalizeText(body.documentTypeOther),
     originOfficeId,
+    intakeOfficeId: documentDirection === 'Incoming' ? (initialRoute?.intakeOfficeId || originOfficeId) : '',
     originOfficeOther: normalizeText(body.originOfficeOther),
     currentOfficeId,
     destinationOfficeId,

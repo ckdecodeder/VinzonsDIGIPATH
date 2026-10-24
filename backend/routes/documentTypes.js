@@ -21,6 +21,7 @@ router.post('/', adminOnly, asyncHandler(async (req, res) => {
     ...req.body,
     id: req.body.id || generateId('DT'),
     requiresMayorApproval: Boolean(req.body.requiresMayorApproval),
+    requiresMayorReception: Boolean(req.body.requiresMayorReception),
     routingTrack: req.body.routingTrack || 'direct',
   };
   
@@ -35,6 +36,7 @@ router.put('/:id', adminOnly, asyncHandler(async (req, res) => {
   if (req.body.requiresMayorApproval !== undefined) {
     updates.requiresMayorApproval = Boolean(req.body.requiresMayorApproval);
   }
+  if (req.body.requiresMayorReception !== undefined) updates.requiresMayorReception = Boolean(req.body.requiresMayorReception);
   if (req.body.routingTrack) {
     updates.routingTrack = req.body.routingTrack;
   }

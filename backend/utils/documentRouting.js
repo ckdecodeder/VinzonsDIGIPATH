@@ -31,12 +31,13 @@ const buildInitialOfficeRoute = ({
   originOfficeId,
   destinationOfficeId,
   mayorsOfficeId,
+  requiresMayorReception = false,
   requiresMayorApproval,
   sentBy,
   sentAt,
 }) => {
   const hasDestination = Boolean(destinationOfficeId && destinationOfficeId !== originOfficeId);
-  const firstDestination = requiresMayorApproval && mayorsOfficeId !== originOfficeId
+  const firstDestination = (requiresMayorReception || requiresMayorApproval) && mayorsOfficeId !== originOfficeId
     ? mayorsOfficeId
     : (hasDestination ? destinationOfficeId : '');
   const routeDestinations = [];
@@ -47,10 +48,11 @@ const buildInitialOfficeRoute = ({
   return {
     currentOfficeId: originOfficeId,
     destinationOfficeId: firstDestination || originOfficeId,
-    status: requiresMayorApproval ? 'For Signing' : 'Received',
+    status: requiresMayorApproval && firstDestination === mayorsOfficeId ? 'For Signing' : 'Received',
     routePlan,
     routeStep: 0,
     firstDestinationOfficeId: firstDestination,
+    intakeOfficeId: requiresMayorReception && mayorsOfficeId ? mayorsOfficeId : originOfficeId,
     queuedOfficeIds: routeDestinations.slice(1),
     sendHistory: [],
     sendQueue: [],

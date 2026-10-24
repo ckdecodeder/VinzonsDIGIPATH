@@ -12,6 +12,7 @@ import DocumentWorkflowPipeline from './DocumentWorkflowPipeline';
 import { getWorkflowStatus } from '../utils/documentWorkflow';
 import { getDocumentFiles } from '../utils/documentFiles';
 import { resolveUploadUrl } from '../utils/mediaUrl';
+import { getTimelineEventLabel, getTimelineEventOffice, getTimelineEventUser } from '../utils/documentTimeline';
 
 const formatDateTime = (value) => {
   if (!value) return '-';
@@ -240,11 +241,11 @@ const DocumentPreviewModal = ({
               <div className="timeline-list">
                 {timeline.map((event) => (
                   <div key={event.id || `${event.timestamp}-${event.label}`} className="timeline-item">
-                    <strong>{event.label || event.action}</strong>
+                    <strong>{getTimelineEventLabel(event)}</strong>
                     <span>{formatDateTime(event.timestamp)}</span>
-                    {event.details && <span>{event.details}</span>}
-                    {event.officeId && <span>{getOfficeName(event.officeId)}</span>}
-                    {event.userId && <span>{getUserFullName(event.userId)}</span>}
+                    {event.details && !/^[A-Z]{2,}-[A-Z0-9-]+$/i.test(event.details.trim()) && <span>{event.details}</span>}
+                    {getTimelineEventOffice(event, offices) && <span>{getTimelineEventOffice(event, offices)}</span>}
+                    {getTimelineEventUser(event, users) && <span>{getTimelineEventUser(event, users)}</span>}
                   </div>
                 ))}
               </div>

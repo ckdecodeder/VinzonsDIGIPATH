@@ -24,6 +24,7 @@ const DocumentTypeList = ({
   const [formData, setFormData] = useState({
     category: '',
     requiresMayorApproval: false,
+    requiresMayorReception: false,
     routingTrack: 'direct',
   });
 
@@ -37,11 +38,12 @@ const DocumentTypeList = ({
       setFormData({
         category: type.category || '',
         requiresMayorApproval: Boolean(type.requiresMayorApproval),
+        requiresMayorReception: Boolean(type.requiresMayorReception),
         routingTrack: type.routingTrack || 'direct',
       });
     } else {
       setEditType(null);
-      setFormData({ category: '', requiresMayorApproval: false, routingTrack: 'direct' });
+      setFormData({ category: '', requiresMayorApproval: false, requiresMayorReception: false, routingTrack: 'direct' });
     }
     setShowForm(true);
   };
@@ -110,6 +112,7 @@ const DocumentTypeList = ({
                 <th>Category</th>
                 <th>Routing Track</th>
                 <th style={{ textAlign: 'center' }}>Mayor Approval</th>
+                <th style={{ textAlign: 'center' }}>Mayor Reception</th>
                 <th style={{ textAlign: 'center' }}>Documents</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
@@ -117,7 +120,7 @@ const DocumentTypeList = ({
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
+                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
                     No document types found.
                   </td>
                 </tr>
@@ -152,6 +155,7 @@ const DocumentTypeList = ({
                           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>—</span>
                         )}
                       </td>
+                      <td style={{ textAlign: 'center' }}>{type.requiresMayorReception ? 'Required' : '—'}</td>
                       <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{docCount}</td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
@@ -218,6 +222,14 @@ const DocumentTypeList = ({
                       <option key={t.value} value={t.value}>{t.label} — {t.description}</option>
                     ))}
                   </select>
+                </div>
+
+                <div className="form-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: '8px', padding: '1rem', marginBottom: 0 }}>
+                  <div style={{ flex: 1, paddingRight: '1rem' }}>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem', color: 'var(--text-main)' }}>Initial reception at Mayor’s Office</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>Route the document to the Mayor’s Office reception before other offices.</div>
+                  </div>
+                  <input type="checkbox" checked={formData.requiresMayorReception} onChange={(e) => setFormData((p) => ({ ...p, requiresMayorReception: e.target.checked }))} />
                 </div>
 
                 {/* Mayor Approval Toggle */}

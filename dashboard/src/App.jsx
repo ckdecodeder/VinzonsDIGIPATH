@@ -320,9 +320,14 @@ function App() {
       }
     });
 
+    const offReconnect = realtimeClient.on('connection:open', () => {
+      loadData({ silent: true, quiet: true });
+    });
+
     return () => {
       offDevice();
       offInvalidate();
+      offReconnect();
     };
   }, [currentUser]);
 

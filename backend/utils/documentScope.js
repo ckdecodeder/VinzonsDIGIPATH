@@ -4,10 +4,10 @@ const { getUserOfficeId } = require('./helpers');
  * Admin/Mayor see everything.
  * Offices see documents currently assigned to them and their own outbox history:
  * - In Transit → destination office only
- * - Otherwise → current office, originated documents, or documents they routed
+ * - Receptionists retain read access to records first registered at their office
  *
  * Flow: Reception → Selected Office → Received by Selected Office
- * Once routed forward, the previous office loses document access.
+ * Office users retain current operational access; Receptionists retain lifecycle tracking.
  */
 const isGlobalDocumentViewer = (req) => {
   const role = req.user?.role;
@@ -18,6 +18,7 @@ const getOfficeDocumentVisibilityClauses = (officeId) => [
   { status: 'In Transit', destinationOfficeId: officeId },
   { status: { $ne: 'In Transit' }, currentOfficeId: officeId },
   { originOfficeId: officeId },
+  { intakeOfficeId: officeId },
   { 'sendHistory.fromOfficeId': officeId },
 ];
 
