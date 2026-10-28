@@ -37,6 +37,34 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-10-28] — Forwarded backend verified before frontend publication
+
+- **Type / state:** AUDIT | DOCS / LOCAL record; application source COMMITTED
+- **Author / time:** Codex; 2026-10-28, Asia/Manila.
+- **Request / reason:** User supplied the forwarded port-5000 address after starting the main backend.
+- **Branch / revision:** `main`, source commit `c1ac509`; local tracking shows one unpublished commit. Follow-up log/plan/handoff edits remain separate local documentation changes.
+- **Changes / files:** Verified the supplied public address and updated readiness records. No application code, endpoint setting, branch, or service configuration changed during this verification.
+- **Data / configuration impact:** Health/config GETs, a browser-origin preflight, a read-only account lookup for a short-lived WS authentication check, and a public frontend asset read. No business-record writes, saved credentials, Pi commands, or database restoration.
+- **Backup / recovery evidence:** Existing verified native backup, scan/configuration copies, and restored test copy retained; no new backup required for these read-only checks.
+- **Validation:** Local and forwarded `/api/status` returned HTTP 200 with the expected API identity and connected database. Public config advertised the matching HTTPS API and WSS route. Vercel-origin preflight returned HTTP 204 with matching allowed origin/authorization headers. Authenticated public WS connection passed using a 60-second token kept out of logs. Current Vercel bundle contains the supplied backend origin; future-build environment settings were not directly inspected. This supersedes the earlier failed public check. No application suite rerun because source is unchanged; earlier 55-test/build results remain separate evidence.
+- **Publication / deployment:** Laptop backend and public route verified. No push or new Vercel deployment performed by Codex; source `c1ac509` remains the pending application publication. These checks do not establish four-device capacity or complete the remaining software phases.
+- **Rollback:** No configuration/data rollback needed for the verification. Preserve matching frontend/backend versions if a later release is reverted; do not restore the database merely to undo a source release.
+- **Outstanding / next action:** Publish the tested application commit through the existing `main`/Vercel workflow and verify the resulting build and online login/document loading. Keep the laptop backend and tunnel running. Four-device/Pi acceptance and other planned optimization phases remain pending.
+
+## [2026-10-28] — User commit verified and main laptop backend started
+
+- **Type / state:** GIT | AUDIT / LOCAL record; application batch COMMITTED; main laptop backend RUNNING
+- **Author / time:** User committed and started the backend; Codex verified; 2026-10-28, Asia/Manila.
+- **Request / reason:** Verify the user's commit and backend startup before publishing the frontend.
+- **Branch / revision:** `main`, `c1ac50905be6444d068ab74257f0237564b95cc2`; user commit title: Add performance audit scripts and validation summaries for 2026-10-28. Checkout was clean and one commit ahead of `origin/main` before this documentation entry; the last remote check still showed `73cf88f`.
+- **Changes / files:** User committed the 57-file application/audit/test/documentation batch and ran `npm.cmd --prefix backend start`. This follow-up changes the log and plan only; no additional application code or branch created.
+- **Data / configuration impact:** Main backend now uses its existing live configuration on port 5000. Standard startup database verification/backfill routines ran. This verification performed only health GETs; no separate data migration/restoration, password reset, environment rewrite, or Pi command was performed.
+- **Backup / recovery evidence:** Previously verified native database dump, scan/configuration copies, and restored test copy remain in the ignored operation directory. No new backup or restore performed in this verification.
+- **Validation:** Local `/api/status` returned HTTP 200 with the expected API identity and connected database. The configured public tunnel returned HTTP 404, so public availability remains unverified. Earlier isolated test services were listening on 5501/5174; their readiness does not establish main/public readiness. Application tests were not rerun for these runtime/documentation checks.
+- **Publication / deployment:** Application changes committed locally on `main`; not pushed by Codex. Updated backend is running on the laptop; the matching Vercel frontend has not been deployed by this operation. No complete live-system acceptance claimed.
+- **Rollback:** Stop the main backend in its user-owned terminal if required; retain data and backups. Any source rollback must keep frontend/backend contracts compatible. Do not restore an older database dump merely to stop or revert a service.
+- **Outstanding / next action:** Verify the current forwarded address for port 5000 and its public visibility, then align/verify endpoint configuration before a push can publish the matching frontend. Physical Pi/four-device acceptance and other pending software phases remain separate work.
+
 ## [2026-10-28] — Initial manual browser feedback
 
 - **Type / state:** DOCS / LOCAL

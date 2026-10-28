@@ -2,7 +2,7 @@
 
 Date: 2026-10-28, Asia/Manila. Starting revision: `main`, `73cf88f`.
 
-The backend and PostgreSQL will remain on this laptop, as requested. This is a local implementation checkpoint, not a completed deployment or proof that the live four-device incident is resolved. The user deferred physical acceptance to a later session. Changes remain uncommitted and unpushed.
+The backend and PostgreSQL will remain on this laptop, as requested. This is an implementation checkpoint, not proof that the live four-device incident is resolved. The user deferred physical acceptance to a later session. Source commit `c1ac509` is committed locally on `main`; its frontend publication remains pending. After the user started the main backend and forwarded port 5000, public API/config, Vercel-origin CORS and authenticated WS checks passed. Follow-up documentation updates remain local; no push or Vercel deployment was performed by Codex.
 
 See [CHANGELOG.md](../CHANGELOG.md) for batch records, [the operation plan](PERFORMANCE_AND_DEPLOYMENT_PLAN_2026-10-28.md) for remaining work, and [the original audit](MULTI_USER_PERFORMANCE_AUDIT_2026-10-28.md) for baseline evidence.
 
