@@ -2,9 +2,19 @@
 
 Date: 2026-10-28, Asia/Manila. Starting revision: `main`, `73cf88f`.
 
-The backend and PostgreSQL will remain on this laptop, as requested. This is an implementation checkpoint, not proof that the live four-device incident is resolved. The user deferred physical acceptance to a later session. Source commit `c1ac509` is committed locally on `main`; its frontend publication remains pending. After the user started the main backend and forwarded port 5000, public API/config, Vercel-origin CORS and authenticated WS checks passed. Follow-up documentation updates remain local; no push or Vercel deployment was performed by Codex.
+The backend and PostgreSQL remain on this laptop, as requested. This is a first-batch checkpoint, not proof that the live four-device incident is resolved. The user deferred physical acceptance to a later session. The user pushed `main` at `4c8649e`, including application commit `c1ac509`; GitHub matching and the updated Vercel frontend were verified. Public API/config, Vercel-origin CORS, authenticated WS, deferred page assets and concurrent role/API reads passed. Detailed online browser/workflow and physical-device acceptance remain pending. Follow-up verification documentation remains local and can be included with the next substantive batch; no additional push or deployment was performed by Codex.
 
 See [CHANGELOG.md](../CHANGELOG.md) for batch records, [the operation plan](PERFORMANCE_AND_DEPLOYMENT_PLAN_2026-10-28.md) for remaining work, and [the original audit](MULTI_USER_PERFORMANCE_AUDIT_2026-10-28.md) for baseline evidence.
+
+## Local report follow-up
+
+After first-batch publication, the user reported smooth ordinary actions and a stuck approximately 490-page activity print/export. A separate frontend fix now generates a complete selectable PDF in a background worker and previews one page at a time. The report uses a stable data/filter/time snapshot. Progress, Cancel, deadlines, retry and duplicate-job prevention are included. Print opens the prepared PDF in a tab; use its print button or Ctrl+P. Allow that report tab if the browser blocks it, or download the PDF and print the saved file. One-page JPEG remains a JPG; multiple pages download as a ZIP containing every page. The app reports an explicit error if the image archive exceeds its memory limit; the complete PDF remains available.
+
+This follow-up is LOCAL on `main`, based on `4c8649e`; it has not been committed, pushed or deployed. The online site still serves the first batch. No backend, database, endpoint or Pi change is included. Keep the user's backend/tunnel running.
+
+Validation: 39 frontend tests and production build passed; actual source and bundled workers retained all 10,000 synthetic records across 589 pages (1,639,972 bytes). Cancellation after worker progress and a fresh retry passed. A 4,000-word cell continued intact over page breaks; first/middle/last PDF pages were rendered and visually checked. Browser preview and last-page navigation, cancellation, complete PDF/ZIP and single-page JPG downloads passed. Native print-dialog/physical printing and the actual live historical report remain acceptance steps in the user's browser. See [aggregate report evidence](performance-evidence-2026-10-28/report-verification.json).
+
+Run `npm.cmd --prefix dashboard test` and `npm.cmd --prefix dashboard run build` from the project root for regression checks. For synthetic UI validation, use the existing local Vite server at `http://127.0.0.1:5174/test/report-harness.html?rows=10000`, select Activity, then Preview. It uses no database or account. Check page navigation, PDF download and Print; use `rows=100000` to exercise Cancel, then Retry PDF or close. The harness is excluded from the normal production entry. For business-record checks use the restored local test setup below. Review the source batch before the next authorized main commit/push and verify Vercel afterward.
 
 ## Implemented locally
 
@@ -88,7 +98,7 @@ The HTTP verification uses all four existing roles without resetting passwords. 
 - Complete cross-record workflow transactions and conflict/uniqueness guards for concurrent sends, receives and commands. Row-safe individual updates do not make a multi-record workflow atomic; `save()`/bulk-update behavior also needs the planned review.
 - Idle/hidden preview demand, Pi pause/resume, and supported multi-viewer camera workload. No Pi Python/mechanism package files were changed in this batch.
 - SQL dashboard/report summaries, filtered report queries, fully server-driven document-page browsing, and a reviewed dry-run/rollback procedure for legacy inline-cover normalization. Complete metadata collection is retained for compatibility and is not the final large-dataset design.
-- Measured indexes/pool waits, compression, request/event-loop/bitrate metrics, report workers if justified, and supervised production startup.
+- Measured indexes/pool waits, compression, request/event-loop/bitrate metrics and supervised production startup. Browser report-worker generation is now covered by the separate local follow-up above; SQL filtering/aggregation remains pending.
 - Authenticated browser screens, physical four-device acceptance, separate-storage backup before live data migration, a verified public route, and coordinated frontend/backend rollout.
 
 ## Recovery

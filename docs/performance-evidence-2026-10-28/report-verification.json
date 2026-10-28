@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-28",
+  "timezone": "Asia/Manila",
+  "branch": "main",
+  "baseRevision": "4c8649eb3ede815b4c62592d10f1578a7cba08a6",
+  "state": "LOCAL, uncommitted and not deployed",
+  "data": "Synthetic only; no API, database, credentials or Pi accessed by report validation",
+  "frontendTests": { "passed": 39, "failed": 0 },
+  "productionBuild": "passed",
+  "largePdf": {
+    "records": 10000,
+    "pages": 589,
+    "bytes": 1639972,
+    "allUniqueReferencesRetained": true,
+    "actualSourceWorker": "passed",
+    "productionBundledWorker": "passed: reportPdf.worker-3e54c15d.js, final production bundle",
+    "callerTimerAdvancedDuringWorkerGeneration": true
+  },
+  "oversizedCell": { "words": 4000, "pages": 11, "allWordsRetained": true, "nextRecordRetained": true },
+  "renderedVisualChecks": "First, middle and last pages of large and oversized-cell PDFs; header, seal, wrapping, tables, numbering and signature footer checked",
+  "cancellation": [
+    "Actual worker stopped after progress; fresh worker retry passed",
+    "100000-record browser job cancelled and controls recovered",
+    "Stalled optional module wait can be cancelled",
+    "Seal body download bounded by deadline and caller cancellation",
+    "Late worker callbacks ignored"
+  ],
+  "browserChecks": {
+    "largePreviewAndLastPageNavigation": "passed",
+    "threePagePdfDownload": { "records": 30, "allUniqueReferencesRetained": true },
+    "jpegZipDownload": { "entries": 3, "dimensionsPerImage": [918, 1188], "bytes": 558273 },
+    "singlePageJpegDownload": { "dimensions": [918, 1188] },
+    "print": "Prepared-PDF handoff hint returned without stuck generation; separately inspectable native PDF tab/print dialog unavailable in the in-app test browser"
+  },
+  "syntheticArtifacts": "Ignored database-export/performance-operation-2026-10-28/report-validation/",
+  "limitations": [
+    "No physical printing or live historical report acceptance performed",
+    "No commit, push or Vercel deployment performed for this follow-up",
+    "Not a four-physical-device or Pi acceptance run",
+    "Browser still collects complete report metadata; SQL report filtering/aggregation remains pending"
+  ]
+}

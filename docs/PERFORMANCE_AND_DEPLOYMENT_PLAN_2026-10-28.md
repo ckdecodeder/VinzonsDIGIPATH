@@ -20,7 +20,7 @@ The first implementation batch addresses request deadlines, independent loading,
 
 ## Current user decisions and local checkpoint
 
-On 2026-10-28 the user selected keeping the backend and PostgreSQL on this laptop and preparing the physical four-device acceptance run for later. No cloud backend/database migration or publication was performed. See [the implementation handoff](PERFORMANCE_IMPROVEMENTS_2026-10-28.md) and [aggregate verification](performance-evidence-2026-10-28/verification-summary.json). Changes remain local on `main`; 55 tests and the production build passed. Pending software phases are listed explicitly below and in the handoff.
+On 2026-10-28 the user selected keeping the backend and PostgreSQL on this laptop and preparing physical four-device acceptance for later. The user published the first batch through `main` at `4c8649e`; the updated Vercel frontend and public API/WS reads were verified. The original first batch passed 55 tests and a production build. The user subsequently reported smooth ordinary online actions and a stuck roughly 490-page activity print/export. The separate report fix is LOCAL on `main`: background PDF generation, single-page preview, cancellation/deadlines, PDF print handoff and complete image ZIPs; 39 frontend tests and the production build passed. See [the handoff](PERFORMANCE_IMPROVEMENTS_2026-10-28.md), [first-batch evidence](performance-evidence-2026-10-28/verification-summary.json) and [report evidence](performance-evidence-2026-10-28/report-verification.json). No cloud/database migration or new report-fix publication was performed. Remaining phases and physical acceptance stay pending.
 
 ## Working rules
 
@@ -163,6 +163,8 @@ Suggested files: `backend/routes/documents.js`, `backend/routes/logs.js`, `backe
 
 ## Phase 4 — Optimize remaining queries and production execution
 
+**Local report checkpoint (2026-10-28):** worker-based complete text PDFs, bounded single-page rendering, stable report snapshots and isolated clock, cancellation/deadline/retry controls, PDF print handoff and complete JPEG ZIPs implemented. Synthetic 10,000-record/589-page content and layout checks, actual worker cancellation/retry, browser preview/downloads, 39 frontend tests and production build passed. This report batch has not been committed, pushed or deployed. SQL report filtering/aggregation, native browser/physical print acceptance and the other tasks below remain pending.
+
 ### Tasks
 
 - Review query plans and add targeted indexes for actual device-event, pending-command, log-ordering, and workflow lookups. Review duplicate unique-index/constraint dependencies before removing anything.
@@ -248,12 +250,12 @@ Begin after the local acceptance criteria pass.
 | Audit and source evidence available | Complete |
 | Operation plan saved | Complete |
 | Verified backup and restored test copy | Local verification complete: 12 tables, 64 scan files, isolated API/storage; separate-storage copy pending before cutover |
-| Loading reliability and endpoint fixes | Implemented and locally tested; user reports the initial browser test feels smooth; detailed role/workflow coverage and public-route verification pending |
+| Loading reliability and endpoint fixes | First batch published; local tests and public API/asset checks passed; initial local browser feedback positive; detailed online browser/workflow acceptance pending |
 | Payload, pagination, and refresh fixes | Partial: small metadata pages, activity pagination, detail loading and targeted refresh complete locally; SQL summaries/document-page UI/legacy migration pending |
 | Concurrent-update and scanner transport fixes | Partial: row-safe existing-record updates, presence registration and frame limits tested; cross-record guards and idle preview pending |
-| Remaining query/rendering/production optimization | Partial: optional page bundles deferred; indexes/metrics/pool/report/production work pending |
+| Remaining query/rendering/production optimization | Partial: page bundles deferred; complete report worker/single-page preview/cancellation tested locally; SQL report queries, indexes/metrics/pool/production work pending |
 | Four-device local acceptance | Deferred by user; automated four-role local HTTP checks passed; initial manual browser feedback positive, detailed role checks and physical devices pending |
-| Hosting choices and staging validation | User selected laptop backend/database; no online migration; controlled public-route validation pending |
-| Live cutover and hosted acceptance | Source c1ac509 committed locally; laptop/public API, Vercel-origin CORS and authenticated public WS verified after tunnel forwarding; frontend push/deployment and real acceptance pending |
+| Hosting choices and staging validation | User selected laptop backend/database; no online database migration; public API/CORS/WS connectivity verified |
+| Live cutover and hosted acceptance | User pushed main 4c8649e including source c1ac509; updated Vercel bundle/feature assets and four-role public API reads verified; detailed online browser and physical-device acceptance pending |
 
-**Immediate publication action:** user-supplied port-5000 forwarding now passes public API/config, Vercel-origin CORS and authenticated WS checks. Publish source commit `c1ac509` through the existing `main`/Vercel workflow, then verify the new build and online login/document loading; no push/deployment has been performed by Codex. Current Vercel bundle uses the matching backend origin, but future-build settings were not directly inspected. Keep the laptop backend and tunnel running. Continue pending software phases and role/physical-device acceptance; do not treat these connectivity checks as complete live performance acceptance.
+**Immediate next action:** review the local report fix and test preview, Cancel, retry, PDF download and the PDF-tab print flow. Include this substantive fix and existing verification documentation in the next authorized `main` commit/push; verify the Vercel build and the actual all-time report in the user's browser afterward. Keep the current laptop backend/tunnel running; this frontend-only report fix does not change its API contract or data. Native PDF printing, detailed workflow/four-device/Pi acceptance and the explicitly pending phases remain outstanding. Do not treat synthetic report success as completed live-system acceptance.

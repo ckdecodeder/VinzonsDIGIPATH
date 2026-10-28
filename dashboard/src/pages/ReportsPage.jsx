@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import {
@@ -30,8 +30,10 @@ import {
 } from '../data/mockData';
 import { sortNewest } from '../utils/sorting';
 import usePhilippinesClock from '../hooks/usePhilippinesClock';
+import { formatPhilippinesDateTime } from '../utils/philippinesDateTime';
 import {
   buildReportFilename,
+  prepareReportPdf,
   exportReportPagesAsJpeg,
   exportReportPagesAsPdf,
 } from '../utils/reportExport';
@@ -42,6 +44,12 @@ import {
   filterOfficeStats,
   filterTransmissions,
 } from '../utils/reportFilters';
+
+const ReportClock = () => <>{usePhilippinesClock()}</>;
+const ReportPdfPreview = lazy(() => import('../components/ReportPdfPreview'));
+const reportDate = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', year: 'numeric', month: 'numeric', day: 'numeric' });
+const reportDateTime = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+const releasePdfUrl = (file) => { if (file?.url) setTimeout(() => URL.revokeObjectURL(file.url), 60000); };
 
 const ReportsPage = ({
   documents = [],
@@ -70,11 +78,20 @@ const ReportsPage = ({
   const [exportError, setExportError] = useState('');
   const [showPreview, setShowPreview] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
-  const reportPrintRootRef = useRef(null);
+  const [reportFile, setReportFile] = useState(null);
+  const [reportProgress, setReportProgress] = useState(null);
+  const [printHint, setPrintHint] = useState(false);
+  const fileRef = useRef(null);
+  const jobRef = useRef(null);
+  useEffect(() => () => {
+    jobRef.current?.controller.abort();
+    jobRef.current?.printWindow?.close();
+    jobRef.current = null;
+    releasePdfUrl(fileRef.current);
+  }, []);
   const downloadMenuRef = useRef(null);
   const [reportTablePage, setReportTablePage] = useState(1);
   const [transmissionReportTablePage, setTransmissionReportTablePage] = useState(1);
-  const generatedAt = usePhilippinesClock();
 
   const REPORT_TABLE_PAGE_SIZE = 10;
 
@@ -92,32 +109,26 @@ const ReportsPage = ({
     categories.push({ id: 'activity', label: 'Activity', icon: <Clock size={16} /> });
   }
 
-  const dateFilteredTransmissions = sortNewest(
+  const dateFilteredTransmissions = useMemo(() => sortNewest(
     filterByDateRange(transmissions, 'transmissionDate', dateFrom, dateTo),
     ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate'],
-  );
-  const dateFilteredArchives = sortNewest(
-    filterByDateRange(archives, 'date', dateFrom, dateTo),
-    ['createdAt', 'updatedAt', 'date'],
-  );
-  const filteredDocs = sortNewest(filterDocuments(documents, {
-    ...documentFilters,
-    dateFrom,
-    dateTo,
-  }), ['createdAt', 'updatedAt', 'dateReceived']);
-  const filteredTransmissions = sortNewest(filterTransmissions(transmissions, {
-    ...transmissionFilters,
-    dateFrom,
-    dateTo,
-  }), ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']);
-  const filteredArchives = dateFilteredArchives;
-  const filteredLogs = sortNewest(filterActivityLogs(logs, {
-    ...activityFilters,
-    dateFrom,
-    dateTo,
-    users,
-  }), ['timestamp']);
-  const activityUsers = users.filter((user) => filteredLogs.some((log) => log.userId === user.id));
+  ), [transmissions, dateFrom, dateTo]);
+  const filteredArchives = useMemo(() => sortNewest(
+    filterByDateRange(archives, 'date', dateFrom, dateTo), ['createdAt', 'updatedAt', 'date'],
+  ), [archives, dateFrom, dateTo]);
+  const filteredDocs = useMemo(() => sortNewest(filterDocuments(documents, {
+    ...documentFilters, dateFrom, dateTo,
+  }), ['createdAt', 'updatedAt', 'dateReceived']), [documents, documentFilters, dateFrom, dateTo]);
+  const filteredTransmissions = useMemo(() => sortNewest(filterTransmissions(transmissions, {
+    ...transmissionFilters, dateFrom, dateTo,
+  }), ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']), [transmissions, transmissionFilters, dateFrom, dateTo]);
+  const filteredLogs = useMemo(() => sortNewest(filterActivityLogs(logs, {
+    ...activityFilters, dateFrom, dateTo, users,
+  }), ['timestamp']), [logs, activityFilters, dateFrom, dateTo, users]);
+  const activityUsers = useMemo(() => {
+    const ids = new Set(filteredLogs.map((log) => log.userId));
+    return users.filter((user) => ids.has(user.id));
+  }, [users, filteredLogs]);
 
   const reportTableTotalPages = Math.max(1, Math.ceil(filteredDocs.length / REPORT_TABLE_PAGE_SIZE));
   const paginatedReportDocs = filteredDocs.slice(
@@ -369,34 +380,74 @@ const ReportsPage = ({
   const maxCount = Math.max(...docTypeCounts.map(d => d.count), 1);
   const maxOffice = Math.max(...filteredOfficeStats.map(o => o.total), 1);
 
-  const handleExport = async (format) => {
-    const label = categories.find(item => item.id === activeCategory)?.label || 'Summary';
-    const filename = buildReportFilename(label, format);
-    setExportError('');
-    setIsExporting(true);
-    setDownloadMenuOpen(false);
+  const closePreview = () => {
+    jobRef.current?.controller.abort();
+    jobRef.current?.printWindow?.close();
+    setShowPreview(false); setDownloadMenuOpen(false);
+    releasePdfUrl(fileRef.current); fileRef.current = null; setReportFile(null);
+  };
 
-    const wasPreviewOpen = showPreview;
-
+  const runReportAction = async (action) => {
+    if (jobRef.current) return;
+    let printWindow = null;
+    // Open during the click gesture, before asynchronous generation, so printing
+    // is not blocked as a popup. It never calls window.print() on the live app.
+    if (action === 'print') {
+      printWindow = window.open('about:blank', '_blank');
+      if (!printWindow) { setExportError('Please allow the report tab to open, or download the PDF and print it.'); return; }
+      printWindow.opener = null;
+      printWindow.document.title = 'Preparing DigiPath report';
+      printWindow.document.body.textContent = 'Preparing your report for printing. You can cancel from DigiPath.';
+    }
+    const controller = new AbortController();
+    const job = { controller, printWindow };
+    jobRef.current = job;
+    setExportError(''); setIsExporting(true); setDownloadMenuOpen(false); setPrintHint(false);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, action === 'jpeg' ? 300000 : 125000);
     try {
-      if (!showPreview) {
+      let file = showPreview ? fileRef.current : null;
+      if (!file) {
+        releasePdfUrl(fileRef.current); fileRef.current = null; setReportFile(null);
         setShowPreview(true);
+        setReportProgress({ completedRows: 0, totalRows: 0, stage: 'preparing' });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (controller.signal.aborted) throw Object.assign(new Error('Report generation cancelled.'), { name: 'AbortError' });
+        const table = getPreviewTable();
+        const model = { categoryLabel, preparedBy, coverageText, generatedAt: formatPhilippinesDateTime(),
+          recordCount: activeCategory === 'summary' ? filteredDocs.length : table.rows.length,
+          summaryRows, table };
+        setReportProgress({ completedRows: 0, totalRows: table.title ? table.rows.length : 0, stage: 'pdf' });
+        const result = await prepareReportPdf(model, { signal: controller.signal, onProgress: (progress) => {
+          if (jobRef.current === job) setReportProgress({ ...progress, stage: 'pdf' });
+        } });
+        if (jobRef.current !== job || controller.signal.aborted) return;
+        file = { ...result, recordCount: model.recordCount,
+          url: URL.createObjectURL(new Blob([result.buffer], { type: 'application/pdf' })) };
+        fileRef.current = file; setReportFile(file);
       }
-
-      if (format === 'pdf') {
-        await exportReportPagesAsPdf(reportPrintRootRef.current, filename);
-      } else {
-        await exportReportPagesAsJpeg(reportPrintRootRef.current, filename);
+      if (action === 'pdf') exportReportPagesAsPdf(file, buildReportFilename(categoryLabel, 'pdf'));
+      if (action === 'jpeg') await exportReportPagesAsJpeg(file, buildReportFilename(categoryLabel, 'jpeg'), {
+        signal: controller.signal,
+        onProgress: (progress) => { if (jobRef.current === job) setReportProgress(progress); },
+      });
+      if (action === 'print' && printWindow && !printWindow.closed) {
+        printWindow.location.href = file.url;
+        job.printWindow = null;
+        setPrintHint(true);
       }
-    } catch (err) {
-      const message = err.message || 'Unable to generate the official report.';
-      setExportError(message);
-      onNotify?.({ type: 'danger', title: 'Report export failed', message });
+    } catch (error) {
+      if (printWindow && !printWindow.closed) printWindow.close();
+      if (jobRef.current === job) {
+        const message = timedOut ? 'Report generation took too long. Retry or select a smaller date range.'
+          : error.name === 'AbortError' ? 'Report generation cancelled. You can retry.'
+          : error.message || 'Unable to generate the report. Please retry.';
+        setExportError(message);
+        if (error.name !== 'AbortError') onNotify?.({ type: 'danger', title: 'Report generation failed', message });
+      }
     } finally {
-      if (!wasPreviewOpen) {
-        setShowPreview(false);
-      }
-      setIsExporting(false);
+      clearTimeout(timer);
+      if (jobRef.current === job) { jobRef.current = null; setIsExporting(false); setReportProgress(null); }
     }
   };
 
@@ -419,11 +470,11 @@ const ReportsPage = ({
       </button>
       {downloadMenuOpen && (
         <div className="report-download-menu-panel" role="menu" aria-label="Download format">
-          <button type="button" role="menuitem" onClick={() => handleExport('pdf')}>
+          <button type="button" role="menuitem" onClick={() => runReportAction('pdf')}>
             Download as PDF
           </button>
-          <button type="button" role="menuitem" onClick={() => handleExport('jpeg')}>
-            Download as JPEG
+          <button type="button" role="menuitem" onClick={() => runReportAction('jpeg')}>
+            Download as JPEG (ZIP for multiple pages)
           </button>
         </div>
       )}
@@ -437,7 +488,7 @@ const ReportsPage = ({
     if (!value) return 'Not recorded';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return withTime ? date.toLocaleString() : date.toLocaleDateString();
+    return (withTime ? reportDateTime : reportDate).format(date);
   };
   const percent = (value, total) => (!total ? '0%' : `${Math.round((value / total) * 100)}%`);
   const summaryRows = [
@@ -530,186 +581,6 @@ const ReportsPage = ({
     };
   };
 
-  const previewTable = getPreviewTable();
-  const detailRows = previewTable.title ? previewTable.rows : [];
-
-  // Reusable report building blocks (shared by the visible sheets and the
-  // hidden measurement layer so heights match exactly).
-  const detailColgroup = previewTable.columnWidths ? (
-    <colgroup>
-      {previewTable.columnWidths.map((width, index) => (
-        <col key={index} style={{ width }} />
-      ))}
-    </colgroup>
-  ) : null;
-
-  const detailThead = (
-    <thead>
-      <tr>
-        {previewTable.headers.map(header => <th key={header}>{header}</th>)}
-      </tr>
-    </thead>
-  );
-
-  const coverBlock = (
-    <>
-      <header className="official-report-header">
-        <img src="/Seal_of_Vinzons.png" alt="Seal of Vinzons" />
-        <div>
-          <p>Republic of the Philippines</p>
-          <p>Province of Camarines Norte</p>
-          <h1>Municipality of Vinzons</h1>
-          <strong>DigiPath Document Tracking System</strong>
-        </div>
-      </header>
-
-      <div className="official-report-title">
-        <h2>{categoryLabel} Report</h2>
-        <p>Official generated report from DigiPath records</p>
-      </div>
-
-      <div className="official-report-meta">
-        <div><span>Prepared By</span><strong>{preparedBy}</strong></div>
-        <div><span>Coverage</span><strong>{coverageText}</strong></div>
-        <div><span>Generated</span><strong>{generatedAt}</strong></div>
-        <div><span>Record Count</span><strong>{activeCategory === 'summary' ? filteredDocs.length : previewTable.rows.length}</strong></div>
-      </div>
-
-      <div className="official-report-section">
-        <h3 className="official-report-section-title">Summary</h3>
-        <div className="official-report-table-wrap">
-          <table className="official-report-table official-report-table--summary">
-            <colgroup>
-              <col style={{ width: '18%' }} />
-              <col style={{ width: '30%' }} />
-              <col style={{ width: '12%' }} />
-              <col style={{ width: '40%' }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>Section</th>
-                <th>Metric</th>
-                <th>Value</th>
-                <th>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summaryRows.map((row, index) => (
-                <tr key={`${row[0]}-${row[1]}-${index}`}>
-                  {row.map((cell, cellIndex) => <td key={cellIndex}>{cell}</td>)}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </>
-  );
-
-  const footerBlock = (
-    <footer className="official-report-footer">
-      <div>
-        <span>Prepared by</span>
-        <strong>{preparedBy}</strong>
-      </div>
-      <div>
-        <span>Verified / Noted by</span>
-        <strong>____________________________</strong>
-      </div>
-    </footer>
-  );
-
-  // Measure the real rendered heights so the preview paginates exactly like a
-  // printed bond paper (Letter, 8.5in x 11in) instead of clipping content.
-  const measureRef = useRef(null);
-  const [rowChunks, setRowChunks] = useState(null);
-  const measureSignature = `${activeCategory}|${dateFrom}|${dateTo}|${JSON.stringify({ documentFilters, transmissionFilters, officeFilter, activityFilters })}|${detailRows.length}|${previewTable.title}`;
-
-  useLayoutEffect(() => {
-    if (!showPreview) return;
-    const node = measureRef.current;
-    if (!node) return;
-
-    const DPI = 96;
-    const USABLE = 11 * DPI - (0.55 + 0.85) * DPI; // page height minus top/bottom padding
-
-    const coverEl = node.querySelector('[data-m="cover"]');
-    const theadEl = node.querySelector('[data-m="thead"]');
-    const footerEl = node.querySelector('[data-m="footer"]');
-    const rowEls = Array.from(node.querySelectorAll('[data-m="row"]'));
-
-    const coverH = coverEl ? coverEl.offsetHeight : 0;
-    const theadH = theadEl ? theadEl.offsetHeight : 0;
-    const footerH = footerEl ? footerEl.offsetHeight : 0;
-    const rowH = rowEls.map(el => el.offsetHeight);
-
-    const firstHeadH = coverH + theadH;
-    const contHeadH = theadH;
-
-    const chunks = [];
-    if (rowH.length === 0) {
-      chunks.push([0, 0]);
-    } else {
-      let i = 0;
-      let isFirst = true;
-      while (i < rowH.length) {
-        const avail = USABLE - (isFirst ? firstHeadH : contHeadH);
-        const start = i;
-        let used = 0;
-        while (i < rowH.length && used + rowH[i] <= avail) {
-          used += rowH[i];
-          i += 1;
-        }
-        if (i === start) {
-          i += 1; // a single row taller than the page: keep at least one
-        }
-        chunks.push([start, i]);
-        isFirst = false;
-      }
-
-      // Keep the signature footer with content: if it does not fit on the last
-      // sheet, spill trailing rows onto a fresh sheet that carries the footer.
-      const lastHeadH = chunks.length === 1 ? firstHeadH : contHeadH;
-      const last = chunks[chunks.length - 1];
-      let lastUsed = 0;
-      for (let k = last[0]; k < last[1]; k += 1) lastUsed += rowH[k];
-      if (lastUsed + footerH > USABLE - lastHeadH) {
-        let end = last[1];
-        while (end > last[0] + 1 && lastUsed + footerH > USABLE - contHeadH) {
-          end -= 1;
-          lastUsed -= rowH[end];
-        }
-        if (end < last[1]) {
-          chunks[chunks.length - 1] = [last[0], end];
-          chunks.push([end, last[1]]);
-        }
-      }
-    }
-
-    setRowChunks(prev => {
-      if (prev && prev.length === chunks.length && prev.every((c, idx) => c[0] === chunks[idx][0] && c[1] === chunks[idx][1])) {
-        return prev;
-      }
-      return chunks;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPreview, measureSignature]);
-
-  const detailPageDefs = (rowChunks && rowChunks.length)
-    ? rowChunks.map(([start, end]) => ({ rows: detailRows.slice(start, end), startIndex: start }))
-    : [{ rows: detailRows, startIndex: 0 }];
-  const previewTotalPages = detailPageDefs.length;
-
-  const handlePrintPreview = () => {
-    setShowPreview(true);
-    window.setTimeout(() => {
-      window.print();
-    }, 120);
-  };
-
-  const handlePrintFromPreview = () => {
-    window.print();
-  };
 
   return (
     <>
@@ -721,11 +592,11 @@ const ReportsPage = ({
               <p>View categorized reports and analytics</p>
             </div>
             <div className="page-header-actions reports-header-actions">
-              <button type="button" className="btn-report-action btn-report-action--preview" onClick={() => setShowPreview(true)}>
+              <button type="button" className="btn-report-action btn-report-action--preview" onClick={() => runReportAction('preview')} disabled={isExporting}>
                 <Eye size={16} />
                 Preview
               </button>
-              <button type="button" className="btn-report-action btn-report-action--print" onClick={handlePrintPreview}>
+              <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting}>
                 <Printer size={16} />
                 Print
               </button>
@@ -754,7 +625,7 @@ const ReportsPage = ({
         </div>
         <div>
           <span>Generated</span>
-          <strong>{generatedAt}</strong>
+          <strong><ReportClock /></strong>
         </div>
       </div>
 
@@ -1248,116 +1119,39 @@ const ReportsPage = ({
       </PageShell>
 
       {showPreview && (
-        <ModalOverlay overlayClassName="report-preview-overlay" onClose={() => setShowPreview(false)}>
-          <div className="modal report-preview-modal" onClick={e => e.stopPropagation()}>
+        <ModalOverlay overlayClassName="report-preview-overlay" onClose={closePreview}>
+          <div className="modal report-preview-modal" onClick={(event) => event.stopPropagation()}>
             <div className="report-preview-toolbar">
-              <div>
-                <h2>Report Preview</h2>
-                <p>{categoryLabel} - {coverageText}</p>
-              </div>
+              <div><h2>Report Preview</h2><p>{categoryLabel} - {coverageText}</p></div>
               <div className="report-preview-actions">
-                <button type="button" className="btn-report-action btn-report-action--print" onClick={handlePrintFromPreview}>
+                <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting}>
                   <Printer size={16} /> Print
                 </button>
                 {renderDownloadMenu(true)}
-                <button className="btn-icon" onClick={() => setShowPreview(false)} aria-label="Close preview">
-                  <X size={18} />
-                </button>
+                <button className="btn-icon" onClick={closePreview} aria-label="Close preview"><X size={18} /></button>
               </div>
             </div>
-            <div className="report-print-root" ref={reportPrintRootRef}>
-              {detailPageDefs.map((pageDef, pageIndex) => {
-                const isFirstSheet = pageIndex === 0;
-                const isLastSheet = pageIndex === previewTotalPages - 1;
-                const pageRows = pageDef.rows;
-                const rowOffset = pageDef.startIndex;
-
-                return (
-                  <section className="official-report-page" key={pageIndex}>
-                    {isFirstSheet ? (
-                      <>
-                        {coverBlock}
-
-                        {previewTable.title && (
-                          <div className="official-report-section">
-                            <h3 className="official-report-section-title">{previewTable.title}</h3>
-                            <div className="official-report-table-wrap">
-                              <table className="official-report-table">
-                                {detailColgroup}
-                                {detailThead}
-                                <tbody>
-                                  {pageRows.length ? pageRows.map((row, rowIndex) => (
-                                    <tr key={rowOffset + rowIndex}>
-                                      {row.map((cell, cellIndex) => <td key={cellIndex}>{cell || '-'}</td>)}
-                                    </tr>
-                                  )) : (
-                                    <tr>
-                                      <td colSpan={previewTable.headers.length || 1}>No records found for the selected coverage.</td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    ) : (
-                      <div className="official-report-section">
-                        <div className="official-report-table-wrap">
-                          <table className="official-report-table">
-                            {detailColgroup}
-                            {detailThead}
-                            <tbody>
-                              {pageRows.map((row, rowIndex) => (
-                                <tr key={rowOffset + rowIndex}>
-                                  {row.map((cell, cellIndex) => <td key={cellIndex}>{cell || '-'}</td>)}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-
-                    {isLastSheet && footerBlock}
-
-                    <div className="official-report-page-number">
-                      Page {pageIndex + 1} of {previewTotalPages}
-                    </div>
-                  </section>
-                );
-              })}
-
-              {/* Hidden measurement layer: mirrors a single sheet's content at
-                  the true print width so we can paginate by real pixel heights. */}
-              <div className="report-measure-layer" ref={measureRef} aria-hidden="true">
-                <div className="official-report-page report-measure-page">
-                  <div data-m="cover">{coverBlock}</div>
-                  {previewTable.title && (
-                    <div className="official-report-section">
-                      <div className="official-report-table-wrap">
-                        <table className="official-report-table">
-                          {detailColgroup}
-                          <thead data-m="thead">
-                            <tr>
-                              {previewTable.headers.map(header => <th key={header}>{header}</th>)}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {detailRows.map((row, rowIndex) => (
-                              <tr key={rowIndex} data-m="row">
-                                {row.map((cell, cellIndex) => <td key={cellIndex}>{cell || '-'}</td>)}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                  <div data-m="footer">{footerBlock}</div>
-                </div>
+            {isExporting && <div className="report-generation-status" role="status" aria-live="polite">
+              <Loader2 size={16} className="animate-spin" />
+              <span>{reportProgress?.stage === 'images' ? 'Preparing images' : 'Preparing PDF'}
+                {reportProgress?.totalRows > 0 ? `: ${reportProgress.completedRows.toLocaleString()} / ${reportProgress.totalRows.toLocaleString()}` : '…'}</span>
+              {reportProgress?.totalRows > 0 && <progress value={reportProgress.completedRows} max={reportProgress.totalRows} aria-label="Report generation progress" />}
+              <button className="btn btn-secondary btn-sm" onClick={() => jobRef.current?.controller.abort()}>Cancel</button>
+            </div>}
+            {exportError && <div className="report-generation-status" role="alert">
+              <span>{exportError}</span>
+              {!isExporting && <button className="btn btn-secondary btn-sm" onClick={() => runReportAction('preview')}>Retry PDF</button>}
+            </div>}
+            {printHint && <p className="report-generation-status">Your PDF opened in a new tab. Use its print button or Ctrl+P to print.</p>}
+            {reportFile ? <>
+              <div className="report-generation-status">
+                <span>{reportFile.pageCount.toLocaleString()} pages · {reportFile.recordCount.toLocaleString()} records</span>
+                <a href={reportFile.url} target="_blank" rel="noopener noreferrer">Open PDF in a new tab</a>
               </div>
-            </div>
+              <Suspense fallback={<p className="report-generation-status">Loading PDF preview…</p>}>
+                <ReportPdfPreview key={reportFile.url} file={reportFile} />
+              </Suspense>
+            </> : !isExporting && <div className="report-generation-empty">Select Retry PDF to prepare the report, or close this preview.</div>}
           </div>
         </ModalOverlay>
       )}

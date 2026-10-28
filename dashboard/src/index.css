@@ -6726,6 +6726,56 @@ body.modal-open .notification-dock {
   flex-shrink: 0;
 }
 
+.report-generation-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1.25rem;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-main);
+  font-size: 0.85rem;
+}
+
+.report-generation-status progress { flex: 1; min-width: 100px; }
+.report-generation-status a { color: var(--primary); }
+.report-generation-empty { padding: 2rem; color: var(--text-muted); }
+.report-pdf-preview {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  flex: 1;
+  background: #e5e7eb;
+}
+
+.report-pdf-preview input {
+  width: 5rem;
+  padding: 0.25rem;
+  color: var(--text-main);
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.report-pdf-page-scroll {
+  overflow: auto;
+  min-height: 200px;
+  max-height: 70vh;
+  padding: 1rem;
+}
+
+.report-pdf-page-scroll canvas {
+  display: block;
+  width: 100%;
+  max-width: 918px;
+  height: auto;
+  margin: 0 auto;
+  background: white;
+}
+
 .report-print-root {
   background: var(--bg-elevated);
   padding: 1.75rem 1.25rem 2.5rem;
