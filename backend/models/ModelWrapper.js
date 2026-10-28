@@ -224,16 +224,13 @@ class QueryBuilder {
     return this;
   }
 
+  skip(n) { this._options.offset = n; return this; }
+
+  withAttributes(attributes) { this._options.attributes = attributes; return this; }
+
   select(fields) {
-    // Mongoose .select('+password') or .select('-password')
-    // We implement password selection manually:
-    if (typeof fields === 'string') {
-      if (fields.includes('+password')) {
-        this._selectedFields = 'withPassword';
-      } else if (fields.startsWith('-')) {
-        this._selectedFields = 'excludePassword';
-      }
-    }
+    this._selectedFields = typeof fields === 'string' ? fields.trim().split(/\s+/).filter(Boolean)
+      : Object.entries(fields || {}).map(([key, enabled]) => enabled ? key : `-${key}`);
     return this;
   }
 
@@ -247,13 +244,26 @@ class QueryBuilder {
       where: this._where,
       ...(this._options.order ? { order: this._options.order } : {}),
       ...(this._options.limit ? { limit: this._options.limit } : {}),
+      ...(this._options.offset ? { offset: this._options.offset } : {}),
       raw: false,
     };
 
     // By default, exclude password from User queries unless explicitly selected
     const isUserModel = this._Model.tableName === 'users';
-    if (isUserModel && this._selectedFields !== 'withPassword') {
-      opts.attributes = { exclude: ['password'] };
+    const fields = this._selectedFields || [];
+    const includePassword = fields.includes('+password');
+    const positive = fields.filter((field) => !field.startsWith('-') && !field.startsWith('+'));
+    const negative = fields.filter((field) => field.startsWith('-')).map((field) => field.slice(1));
+    if (positive.length) {
+      opts.attributes = positive.map((field) => field === '_id' ? 'id' : field)
+        .filter((field) => !isUserModel || field !== 'password' || includePassword);
+      if (isUserModel && includePassword && !opts.attributes.includes('password')) opts.attributes.push('password');
+    } else if (negative.length || (isUserModel && !includePassword)) {
+      opts.attributes = { exclude: [...new Set([...negative, ...(isUserModel && !includePassword ? ['password'] : [])])] };
+    }
+    if (this._options.attributes) {
+      opts.attributes = this._options.attributes;
+      if (isUserModel) throw new Error('Custom attributes are not supported on user queries');
     }
 
     if (this._isMany) {
@@ -315,58 +325,56 @@ class ModelWrapper {
    */
   async findOneAndUpdate(filter, update, opts = {}) {
     const where = this._buildWhere(filter);
-    const row = await this._Model.findOne({ where });
-    if (!row) return null;
+    return this._Model.sequelize.transaction(async (transaction) => {
+      const row = await this._Model.findOne({ where, transaction, lock: transaction.LOCK.UPDATE });
+      if (!row) return null;
 
-    const current = toPlain(row);
-    const changes = {};
+      const current = structuredClone(toPlain(row));
+      const changes = {};
 
-    // Handle $set, $push, $addToSet, $inc
-    if (update.$set) Object.assign(changes, update.$set);
-    if (update.$push) {
-      for (const [field, val] of Object.entries(update.$push)) {
-        const existing = Array.isArray(current[field]) ? current[field] : [];
-        changes[field] = [...existing, val];
+      // Handle $set, $push, $addToSet, $inc
+      if (update.$set) Object.assign(changes, update.$set);
+      if (update.$push) {
+        for (const [field, val] of Object.entries(update.$push)) {
+          const existing = Array.isArray(current[field]) ? current[field] : [];
+          const values = val && typeof val === 'object' && '$each' in val ? val.$each : [val];
+          if (!Array.isArray(values)) throw new Error('$each must be an array');
+          changes[field] = [...existing, ...values];
+        }
       }
-    }
-    if (update.$addToSet) {
-      for (const [field, val] of Object.entries(update.$addToSet)) {
-        const existing = Array.isArray(current[field]) ? current[field] : [];
-        const nextValues = Array.isArray(val) ? val : [val];
-        changes[field] = Array.from(new Set([...existing, ...nextValues]));
+      if (update.$addToSet) {
+        for (const [field, val] of Object.entries(update.$addToSet)) {
+          const existing = Array.isArray(current[field]) ? current[field] : [];
+          const nextValues = Array.isArray(val) ? val : [val];
+          changes[field] = Array.from(new Set([...existing, ...nextValues]));
+        }
       }
-    }
-    if (update.$inc) {
-      for (const [field, val] of Object.entries(update.$inc)) {
-        changes[field] = (current[field] || 0) + val;
+      if (update.$inc) {
+        for (const [field, val] of Object.entries(update.$inc)) {
+          changes[field] = (current[field] || 0) + val;
+        }
       }
-    }
-    if (update.$unset) {
-      for (const field of Object.keys(update.$unset)) {
-        changes[field] = null;
+      if (update.$unset) {
+        for (const field of Object.keys(update.$unset)) {
+          changes[field] = null;
+        }
       }
-    }
-    // If no operators, treat update as $set
-    if (!update.$set && !update.$push && !update.$inc && !update.$unset) {
-      const cleaned = { ...update };
-      delete cleaned._id;
-      delete cleaned.__v;
-      Object.assign(changes, cleaned);
-    }
+      // If no operators, treat update as $set
+      if (!Object.keys(update).some((field) => field.startsWith('$'))) {
+        const cleaned = { ...update };
+        delete cleaned._id;
+        delete cleaned.__v;
+        Object.assign(changes, cleaned);
+      }
 
-    // Hash password if needed
-    if (changes.password && !changes.password.startsWith('$2')) {
-      changes.password = await bcrypt.hash(changes.password, 10);
-    }
+      // Hash password if needed
+      if (changes.password && !changes.password.startsWith('$2')) {
+        changes.password = await bcrypt.hash(changes.password, 10);
+      }
 
-    await row.update(changes);
-
-    if (opts.new !== false) {
-      const updated = await this._Model.findOne({ where: { id: current.id } });
-      const plain = toPlain(updated);
-      return new ModelInstance(plain, this);
-    }
-    return new ModelInstance(toPlain(row), this);
+      await row.update(changes, { transaction });
+      return new ModelInstance(opts.new === false ? current : toPlain(row), this);
+    });
   }
 
   /**
@@ -385,6 +393,12 @@ class ModelWrapper {
    * Model.updateOne(filter, update, opts)
    */
   async updateOne(filter, update, opts = {}) {
+    if (update.$inc || update.$push || update.$addToSet) {
+      const updated = await this.findOneAndUpdate(filter, update, opts);
+      if (updated) return { modifiedCount: 1 };
+      if (!opts.upsert) return { modifiedCount: 0 };
+    }
+
     const where = this._buildWhere(filter);
     const row = await this._Model.findOne({ where });
 

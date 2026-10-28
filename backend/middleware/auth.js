@@ -25,8 +25,13 @@ const protect = async (req, res, next) => {
     return res.status(401).json({ message: 'Authentication required' });
   }
 
+  let decoded;
   try {
-    const decoded = jwt.verify(token, getJwtSecret());
+    decoded = jwt.verify(token, getJwtSecret());
+  } catch {
+    return res.status(401).json({ message: 'Invalid or expired token' });
+  }
+  try {
     const user = await User.findOne({ id: decoded.id }).lean();
 
     if (!user) {
@@ -36,7 +41,7 @@ const protect = async (req, res, next) => {
     req.user = user;
     next();
   } catch {
-    return res.status(401).json({ message: 'Invalid or expired token' });
+    return res.status(503).json({ message: 'Authentication service temporarily unavailable. Please retry.' });
   }
 };
 

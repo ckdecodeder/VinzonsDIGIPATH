@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * One command: sync network → start backend + dashboard → open browser.
+ * Start backend + dashboard and open browser. Configuration sync is opt-in.
  * Usage: npm start   (or: npm run dev without browser/sync)
  */
 
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const path = require('path');
 
 const root = process.cwd();
@@ -40,6 +41,9 @@ const buildTunnelArgs = (tunnelId = '') => {
 };
 
 const networkEnv = parseEnvFile(path.join(root, 'network.env'));
+const shouldSyncNetworkOnStart = (processEnv = process.env, networkSettings = networkEnv) => (
+  processEnv.DIGIPATH_SYNC_NETWORK_ON_START ?? networkSettings.DIGIPATH_SYNC_NETWORK_ON_START ?? '0'
+).trim() === '1';
 const autoOpenBrowser = (process.env.DIGIPATH_AUTO_OPEN_BROWSER
   ?? networkEnv.DIGIPATH_AUTO_OPEN_BROWSER
   ?? '1').trim() !== '0';
@@ -59,26 +63,41 @@ const shutdown = (code = 0) => {
   process.exitCode = code;
 };
 
-const waitForUrl = (url, timeoutMs = 120000) => new Promise((resolve, reject) => {
-  const started = Date.now();
-  const attempt = () => {
-    const req = http.get(url, (res) => {
-      res.resume();
-      resolve();
+const waitForUrl = async (url, timeoutMs = 120000, { pollIntervalMs = 1000 } = {}) => {
+  const deadline = Date.now() + timeoutMs;
+  const apiHealth = new URL(url).pathname.endsWith('/api/status');
+  while (Date.now() < deadline) {
+    const healthy = await new Promise((resolve) => {
+      let settled = false;
+      let timer;
+      const finish = (value) => { if (settled) return; settled = true; clearTimeout(timer); resolve(value); };
+      const req = (url.startsWith('https:') ? https : http).get(url, (res) => {
+        let body = '';
+        res.on('data', (chunk) => {
+          body += chunk;
+          if (body.length > 65536) { finish(false); req.destroy(); }
+        });
+        res.on('error', () => finish(false));
+        res.on('end', () => {
+          let valid = res.statusCode >= 200 && res.statusCode < 300;
+          if (apiHealth) {
+            try {
+              const data = JSON.parse(body);
+              valid = valid && /application\/json/i.test(res.headers['content-type'] || '')
+                && data.status === 'API is running' && data.database === 'connected';
+            } catch { valid = false; }
+          }
+          finish(valid);
+        });
+      });
+      req.on('error', () => finish(false));
+      timer = setTimeout(() => { finish(false); req.destroy(); }, Math.min(4000, Math.max(1, deadline - Date.now())));
     });
-    req.on('error', () => {
-      if (Date.now() - started > timeoutMs) {
-        reject(new Error(`Timed out waiting for ${url}`));
-        return;
-      }
-      setTimeout(attempt, 1000);
-    });
-    req.setTimeout(4000, () => {
-      req.destroy();
-    });
-  };
-  attempt();
-});
+    if (healthy) return;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, Math.max(0, deadline - Date.now()))));
+  }
+  throw new Error(`Timed out waiting for a healthy response from ${url}`);
+};
 
 const openBrowser = (url) => {
   if (!autoOpenBrowser) return;
@@ -158,13 +177,20 @@ const main = () => {
   console.log('========================================');
   console.log('');
 
-  console.log('[DigiPath] Step 1/3 — sync network.env ...');
-  const sync = spawnSync('node', ['scripts/sync-network-config.js'], { cwd: root, stdio: 'inherit' });
-  if (sync.status !== 0) {
-    console.warn('[DigiPath] network:sync had warnings — continuing anyway');
+  if (shouldSyncNetworkOnStart()) {
+    console.log('[DigiPath] Step 1/3 — synchronize network.env (explicitly enabled) ...');
+    const sync = spawnSync('node', ['scripts/sync-network-config.js'], { cwd: root, stdio: 'inherit' });
+    if (sync.status !== 0) {
+      console.error('[DigiPath] Configuration synchronization failed; services were not started.');
+      process.exitCode = 1;
+      return;
+    }
+  } else {
+    console.log('[DigiPath] Step 1/3 — using existing configuration. Run npm run network:sync explicitly when changing endpoints.');
   }
 
-  const publicUrl = networkEnv.DIGIPATH_PUBLIC_BACKEND_URL || '';
+  const publicUrl = parseEnvFile(path.join(root, 'backend', '.env')).PUBLIC_API_URL
+    || networkEnv.DIGIPATH_PUBLIC_BACKEND_URL || '';
   if (publicUrl.includes('devtunnels.ms') && !autoTunnel) {
     console.log('');
     console.log('[DigiPath] Tip: Public URL uses dev tunnel. Keep VS Code port 5000 tunnel PUBLIC,');
@@ -183,9 +209,7 @@ const main = () => {
   (async () => {
     try {
       console.log('[DigiPath] Waiting for backend ...');
-      await waitForUrl(backendHealthUrl).catch(async () => {
-        await waitForUrl('http://127.0.0.1:5000/');
-      });
+      await waitForUrl(backendHealthUrl);
       console.log('[DigiPath] Waiting for dashboard ...');
       await waitForUrl(dashboardUrl);
       console.log('');
@@ -209,6 +233,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  shouldSyncNetworkOnStart,
   parseEnvFile,
   buildTunnelArgs,
   maybeStartTunnel,

@@ -7,7 +7,7 @@
     "start": "vite",
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/utils/*.test.js",
+    "test": "node --test src/utils/*.test.js src/api/*.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

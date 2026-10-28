@@ -1,0 +1,629 @@
+{
+  "observedAt": "2026-10-28T03:34:22.336Z",
+  "configuration": {
+    "backendOrigin": "https://zt0pntkq-5000.asse.devtunnels.ms",
+    "networkOrigin": "https://t2z0wjm9-5000.asse.devtunnels.ms",
+    "dashboardApi": "/api",
+    "dashboardWs": null,
+    "piOrigin": "https://zt0pntkq-5000.asse.devtunnels.ms",
+    "deviceKeyMatchesBackend": true,
+    "senderProvider": "outbox",
+    "nodeEnv": "development",
+    "piPreview": {
+      "width": "1280",
+      "height": "720",
+      "maxFps": "15",
+      "jpegByteTarget": "140000",
+      "heartbeatSeconds": "3"
+    }
+  },
+  "database": {
+    "counts": {
+      "users": 17,
+      "documents": 80,
+      "transmissions": 30,
+      "archives": 6,
+      "offices": 11,
+      "document_types": 9,
+      "devices": 1,
+      "device_events": 531,
+      "logs": 9462,
+      "notifications": 258,
+      "sender_notifications": 40,
+      "commands": 123
+    },
+    "sizes": {
+      "documents": {
+        "rows": 80,
+        "all_rows_json_bytes": "34175474"
+      },
+      "logs": {
+        "rows": 9462,
+        "all_rows_json_bytes": "1813529"
+      },
+      "transmissions": {
+        "rows": 30,
+        "all_rows_json_bytes": "9628"
+      },
+      "device_events": {
+        "rows": 531,
+        "all_rows_json_bytes": "4495951"
+      }
+    },
+    "indexes": [
+      {
+        "tablename": "archives",
+        "indexname": "archives_pkey",
+        "indexdef": "CREATE UNIQUE INDEX archives_pkey ON public.archives USING btree (id)"
+      },
+      {
+        "tablename": "commands",
+        "indexname": "commands_pkey",
+        "indexdef": "CREATE UNIQUE INDEX commands_pkey ON public.commands USING btree (id)"
+      },
+      {
+        "tablename": "device_events",
+        "indexname": "device_events_pkey",
+        "indexdef": "CREATE UNIQUE INDEX device_events_pkey ON public.device_events USING btree (id)"
+      },
+      {
+        "tablename": "devices",
+        "indexname": "devices_pkey",
+        "indexdef": "CREATE UNIQUE INDEX devices_pkey ON public.devices USING btree (id)"
+      },
+      {
+        "tablename": "document_types",
+        "indexname": "document_types_pkey",
+        "indexdef": "CREATE UNIQUE INDEX document_types_pkey ON public.document_types USING btree (id)"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_pkey",
+        "indexdef": "CREATE UNIQUE INDEX documents_pkey ON public.documents USING btree (id)"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key",
+        "indexdef": "CREATE UNIQUE INDEX \"documents_trackingNumber_key\" ON public.documents USING btree (\"trackingNumber\")"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key1",
+        "indexdef": "CREATE UNIQUE INDEX \"documents_trackingNumber_key1\" ON public.documents USING btree (\"trackingNumber\")"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key2",
+        "indexdef": "CREATE UNIQUE INDEX \"documents_trackingNumber_key2\" ON public.documents USING btree (\"trackingNumber\")"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key3",
+        "indexdef": "CREATE UNIQUE INDEX \"documents_trackingNumber_key3\" ON public.documents USING btree (\"trackingNumber\")"
+      },
+      {
+        "tablename": "logs",
+        "indexname": "logs_pkey",
+        "indexdef": "CREATE UNIQUE INDEX logs_pkey ON public.logs USING btree (id)"
+      },
+      {
+        "tablename": "notifications",
+        "indexname": "notifications_pkey",
+        "indexdef": "CREATE UNIQUE INDEX notifications_pkey ON public.notifications USING btree (id)"
+      },
+      {
+        "tablename": "offices",
+        "indexname": "offices_pkey",
+        "indexdef": "CREATE UNIQUE INDEX offices_pkey ON public.offices USING btree (id)"
+      },
+      {
+        "tablename": "sender_notifications",
+        "indexname": "sender_notifications_pkey",
+        "indexdef": "CREATE UNIQUE INDEX sender_notifications_pkey ON public.sender_notifications USING btree (id)"
+      },
+      {
+        "tablename": "transmissions",
+        "indexname": "transmissions_pkey",
+        "indexdef": "CREATE UNIQUE INDEX transmissions_pkey ON public.transmissions USING btree (id)"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_pkey",
+        "indexdef": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key",
+        "indexdef": "CREATE UNIQUE INDEX users_username_key ON public.users USING btree (username)"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key1",
+        "indexdef": "CREATE UNIQUE INDEX users_username_key1 ON public.users USING btree (username)"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key2",
+        "indexdef": "CREATE UNIQUE INDEX users_username_key2 ON public.users USING btree (username)"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key3",
+        "indexdef": "CREATE UNIQUE INDEX users_username_key3 ON public.users USING btree (username)"
+      }
+    ],
+    "plans": {
+      "documentList": {
+        "planningMs": 0.129,
+        "executionMs": 0.412,
+        "plan": {
+          "Node Type": "Sort",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 24.28,
+          "Total Cost": 24.48,
+          "Plan Rows": 79,
+          "Plan Width": 1443,
+          "Actual Startup Time": 0.375,
+          "Actual Total Time": 0.379,
+          "Actual Rows": 80,
+          "Actual Loops": 1,
+          "Disabled": false,
+          "Sort Key": [
+            "\"createdAt\"",
+            "\"dateReceived\"",
+            "id"
+          ],
+          "Sort Method": "quicksort",
+          "Sort Space Used": 132,
+          "Sort Space Type": "Memory",
+          "Shared Hit Blocks": 24,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Seq Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "documents",
+              "Alias": "documents",
+              "Startup Cost": 0,
+              "Total Cost": 21.79,
+              "Plan Rows": 79,
+              "Plan Width": 1443,
+              "Actual Startup Time": 0.023,
+              "Actual Total Time": 0.081,
+              "Actual Rows": 80,
+              "Actual Loops": 1,
+              "Disabled": false,
+              "Shared Hit Blocks": 21,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        }
+      },
+      "logList": {
+        "planningMs": 0.088,
+        "executionMs": 39.498,
+        "plan": {
+          "Node Type": "Sort",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 928.05,
+          "Total Cost": 948.97,
+          "Plan Rows": 8370,
+          "Plan Width": 111,
+          "Actual Startup Time": 38.623,
+          "Actual Total Time": 39.01,
+          "Actual Rows": 9462,
+          "Actual Loops": 1,
+          "Disabled": false,
+          "Sort Key": [
+            "\"timestamp\" DESC",
+            "id DESC"
+          ],
+          "Sort Method": "quicksort",
+          "Sort Space Used": 1626,
+          "Sort Space Type": "Memory",
+          "Shared Hit Blocks": 299,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Seq Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "logs",
+              "Alias": "logs",
+              "Startup Cost": 0,
+              "Total Cost": 382.7,
+              "Plan Rows": 8370,
+              "Plan Width": 111,
+              "Actual Startup Time": 0.008,
+              "Actual Total Time": 0.594,
+              "Actual Rows": 9462,
+              "Actual Loops": 1,
+              "Disabled": false,
+              "Shared Hit Blocks": 299,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        }
+      },
+      "latestDeviceEvent": {
+        "planningMs": 0.103,
+        "executionMs": 5.704,
+        "plan": {
+          "Node Type": "Limit",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 32.01,
+          "Total Cost": 32.01,
+          "Plan Rows": 1,
+          "Plan Width": 291,
+          "Actual Startup Time": 5.683,
+          "Actual Total Time": 5.684,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Disabled": false,
+          "Shared Hit Blocks": 17,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Sort",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 32.01,
+              "Total Cost": 33.31,
+              "Plan Rows": 518,
+              "Plan Width": 291,
+              "Actual Startup Time": 0.462,
+              "Actual Total Time": 0.462,
+              "Actual Rows": 1,
+              "Actual Loops": 1,
+              "Disabled": false,
+              "Sort Key": [
+                "\"timestamp\" DESC",
+                "id DESC"
+              ],
+              "Sort Method": "top-N heapsort",
+              "Sort Space Used": 25,
+              "Sort Space Type": "Memory",
+              "Shared Hit Blocks": 17,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0,
+              "Plans": [
+                {
+                  "Node Type": "Seq Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Relation Name": "device_events",
+                  "Alias": "device_events",
+                  "Startup Cost": 0,
+                  "Total Cost": 29.42,
+                  "Plan Rows": 518,
+                  "Plan Width": 291,
+                  "Actual Startup Time": 0.04,
+                  "Actual Total Time": 0.205,
+                  "Actual Rows": 531,
+                  "Actual Loops": 1,
+                  "Disabled": false,
+                  "Filter": "((\"deviceId\" = 'DEV-001'::text) AND (\"recordedBy\" = 'hardware'::text) AND (\"eventType\" = ANY ('{device_connected,device_disconnected,device_heartbeat,scan_started,scan_completed,rfid_detected}'::text[])))",
+                  "Rows Removed by Filter": 0,
+                  "Shared Hit Blocks": 17,
+                  "Shared Read Blocks": 0,
+                  "Shared Dirtied Blocks": 0,
+                  "Shared Written Blocks": 0,
+                  "Local Hit Blocks": 0,
+                  "Local Read Blocks": 0,
+                  "Local Dirtied Blocks": 0,
+                  "Local Written Blocks": 0,
+                  "Temp Read Blocks": 0,
+                  "Temp Written Blocks": 0
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "hardwareScanCount": {
+        "planningMs": 0.091,
+        "executionMs": 0.132,
+        "plan": {
+          "Node Type": "Aggregate",
+          "Strategy": "Plain",
+          "Partial Mode": "Simple",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 26.75,
+          "Total Cost": 26.76,
+          "Plan Rows": 1,
+          "Plan Width": 8,
+          "Actual Startup Time": 0.112,
+          "Actual Total Time": 0.112,
+          "Actual Rows": 1,
+          "Actual Loops": 1,
+          "Disabled": false,
+          "Shared Hit Blocks": 17,
+          "Shared Read Blocks": 0,
+          "Shared Dirtied Blocks": 0,
+          "Shared Written Blocks": 0,
+          "Local Hit Blocks": 0,
+          "Local Read Blocks": 0,
+          "Local Dirtied Blocks": 0,
+          "Local Written Blocks": 0,
+          "Temp Read Blocks": 0,
+          "Temp Written Blocks": 0,
+          "Plans": [
+            {
+              "Node Type": "Seq Scan",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Relation Name": "device_events",
+              "Alias": "device_events",
+              "Startup Cost": 0,
+              "Total Cost": 26.66,
+              "Plan Rows": 36,
+              "Plan Width": 0,
+              "Actual Startup Time": 0.013,
+              "Actual Total Time": 0.107,
+              "Actual Rows": 36,
+              "Actual Loops": 1,
+              "Disabled": false,
+              "Filter": "((\"deviceId\" = 'DEV-001'::text) AND (\"recordedBy\" = 'hardware'::text) AND (\"eventType\" = 'scan_completed'::text))",
+              "Rows Removed by Filter": 495,
+              "Shared Hit Blocks": 17,
+              "Shared Read Blocks": 0,
+              "Shared Dirtied Blocks": 0,
+              "Shared Written Blocks": 0,
+              "Local Hit Blocks": 0,
+              "Local Read Blocks": 0,
+              "Local Dirtied Blocks": 0,
+              "Local Written Blocks": 0,
+              "Temp Read Blocks": 0,
+              "Temp Written Blocks": 0
+            }
+          ]
+        }
+      }
+    },
+    "stats": [
+      {
+        "relname": "archives",
+        "n_live_tup": "0",
+        "n_dead_tup": "0",
+        "seq_scan": "680",
+        "idx_scan": "0",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      },
+      {
+        "relname": "commands",
+        "n_live_tup": "123",
+        "n_dead_tup": "17",
+        "seq_scan": "1506",
+        "idx_scan": "54",
+        "last_analyze": null,
+        "last_autoanalyze": "2026-10-27T08:31:16.095Z"
+      },
+      {
+        "relname": "device_events",
+        "n_live_tup": "531",
+        "n_dead_tup": "0",
+        "seq_scan": "2927",
+        "idx_scan": "186",
+        "last_analyze": null,
+        "last_autoanalyze": "2026-10-27T09:04:17.639Z"
+      },
+      {
+        "relname": "devices",
+        "n_live_tup": "1",
+        "n_dead_tup": "32",
+        "seq_scan": "1781",
+        "idx_scan": "0",
+        "last_analyze": null,
+        "last_autoanalyze": "2026-10-27T08:47:16.974Z"
+      },
+      {
+        "relname": "document_types",
+        "n_live_tup": "0",
+        "n_dead_tup": "0",
+        "seq_scan": "684",
+        "idx_scan": "21",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      },
+      {
+        "relname": "documents",
+        "n_live_tup": "80",
+        "n_dead_tup": "28",
+        "seq_scan": "1375",
+        "idx_scan": "454",
+        "last_analyze": null,
+        "last_autoanalyze": "2026-10-27T09:08:17.844Z"
+      },
+      {
+        "relname": "logs",
+        "n_live_tup": "375",
+        "n_dead_tup": "0",
+        "seq_scan": "686",
+        "idx_scan": "375",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      },
+      {
+        "relname": "notifications",
+        "n_live_tup": "41",
+        "n_dead_tup": "0",
+        "seq_scan": "685",
+        "idx_scan": "41",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      },
+      {
+        "relname": "offices",
+        "n_live_tup": "0",
+        "n_dead_tup": "0",
+        "seq_scan": "707",
+        "idx_scan": "18",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      },
+      {
+        "relname": "sender_notifications",
+        "n_live_tup": "2",
+        "n_dead_tup": "0",
+        "seq_scan": "706",
+        "idx_scan": "2",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      },
+      {
+        "relname": "transmissions",
+        "n_live_tup": "9",
+        "n_dead_tup": "0",
+        "seq_scan": "704",
+        "idx_scan": "9",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      },
+      {
+        "relname": "users",
+        "n_live_tup": "0",
+        "n_dead_tup": "0",
+        "seq_scan": "9331",
+        "idx_scan": "0",
+        "last_analyze": null,
+        "last_autoanalyze": null
+      }
+    ],
+    "connectionStats": [
+      {
+        "numbackends": 1,
+        "deadlocks": "0",
+        "temp_files": "0",
+        "temp_bytes": "0"
+      }
+    ]
+  },
+  "network": [
+    {
+      "label": "localApi",
+      "url": "http://127.0.0.1:5000/api/status",
+      "ms": 46,
+      "error": "TypeError",
+      "code": "ECONNREFUSED"
+    },
+    {
+      "label": "backendAdvertisedApi",
+      "url": "https://zt0pntkq-5000.asse.devtunnels.ms/api/status",
+      "status": 404,
+      "ms": 348,
+      "contentType": null,
+      "contentEncoding": null,
+      "bytes": 0,
+      "validApiStatus": false,
+      "validApiConfig": false
+    },
+    {
+      "label": "networkSourceApi",
+      "url": "https://t2z0wjm9-5000.asse.devtunnels.ms/api/status",
+      "ms": 6506,
+      "error": "TimeoutError",
+      "code": null
+    },
+    {
+      "label": "vercelApiStatus",
+      "url": "https://vinzons-digipath.vercel.app/api/status",
+      "status": 200,
+      "ms": 893,
+      "contentType": "text/html; charset=utf-8",
+      "contentEncoding": "br",
+      "bytes": 1297,
+      "validApiStatus": false,
+      "validApiConfig": false
+    },
+    {
+      "label": "vercelApiConfig",
+      "url": "https://vinzons-digipath.vercel.app/api/config",
+      "status": 200,
+      "ms": 892,
+      "contentType": "text/html; charset=utf-8",
+      "contentEncoding": "br",
+      "bytes": 1297,
+      "validApiStatus": false,
+      "validApiConfig": false
+    },
+    {
+      "label": "vercelHomepage",
+      "url": "https://vinzons-digipath.vercel.app",
+      "status": 200,
+      "ms": 891,
+      "contentType": "text/html; charset=utf-8",
+      "contentEncoding": "br",
+      "bytes": 1297,
+      "validApiStatus": false,
+      "validApiConfig": false,
+      "asset": "/assets/index-8a236c9d.js"
+    },
+    {
+      "label": "deployedBundle",
+      "status": 200,
+      "ms": 625,
+      "bytes": 1495471,
+      "tunnelOrigins": [
+        "https://zt0pntkq-5000.asse.devtunnels.ms"
+      ]
+    }
+  ]
+}

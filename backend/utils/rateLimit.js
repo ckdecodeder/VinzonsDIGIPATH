@@ -2,9 +2,10 @@ const { normalizeText } = require('./helpers');
 
 const rateLimitBuckets = new Map();
 
-const createRateLimiter = ({ windowMs, max, keyPrefix }) => (req, res, next) => {
+const createRateLimiter = ({ windowMs, max, keyPrefix, keyGenerator }) => (req, res, next) => {
   const now = Date.now();
-  const key = `${keyPrefix}:${req.ip}:${normalizeText(req.body?.username || req.params?.trackingNumber || req.body?.deviceId || '')}`;
+  const identity = keyGenerator ? keyGenerator(req) : normalizeText(req.body?.username || req.params?.trackingNumber || req.body?.deviceId || '');
+  const key = `${keyPrefix}:${req.ip}:${identity}`;
   const bucket = rateLimitBuckets.get(key) || { count: 0, resetAt: now + windowMs };
 
   if (now > bucket.resetAt) {
@@ -33,5 +34,7 @@ const createRateLimiter = ({ windowMs, max, keyPrefix }) => (req, res, next) => 
 const loginLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'login' });
 const trackingLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 80, keyPrefix: 'tracking' });
 const deviceLimiter = createRateLimiter({ windowMs: 60 * 1000, max: 300, keyPrefix: 'device' });
+// Preview traffic has its own budget; 15–25 FPS must not exhaust control requests.
+const streamFrameLimiter = createRateLimiter({ windowMs: 1000, max: 30, keyPrefix: 'stream-frame', keyGenerator: (req) => req.streamDeviceId });
 
-module.exports = { createRateLimiter, loginLimiter, trackingLimiter, deviceLimiter };
+module.exports = { createRateLimiter, loginLimiter, trackingLimiter, deviceLimiter, streamFrameLimiter };

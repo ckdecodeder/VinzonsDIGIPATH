@@ -1,4 +1,4 @@
-const { getRealtimeHub } = require('../ws/realtimeHub');
+const { getRealtimeHub, registerPresenceHandler } = require('../ws/realtimeHub');
 
 const getHub = () => getRealtimeHub();
 
@@ -31,7 +31,7 @@ const relayStreamFrame = (deviceId, frameBuffer) => {
 };
 
 const setPresenceHandler = (handler) => {
-  getHub()?.setPresenceHandler(handler);
+  registerPresenceHandler(handler);
 };
 
 module.exports = {

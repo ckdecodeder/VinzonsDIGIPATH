@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { documentService } from '../api/documentService';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import ScannedPreviewModal from '../components/ScannedPreviewModal';
@@ -119,6 +120,9 @@ const DocumentList = ({
   const [downloadFormats, setDownloadFormats] = useState({});
   const [routeDoc, setRouteDoc] = useState(null);
   const [detailDoc, setDetailDoc] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [detailRetry, setDetailRetry] = useState(0);
   const [previewFile, setPreviewFile] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [rejectDoc, setRejectDoc] = useState(null);
@@ -130,6 +134,17 @@ const DocumentList = ({
   const [documentFormErrors, setDocumentFormErrors] = useState({});
   const [documentFormErrorSummary, setDocumentFormErrorSummary] = useState('');
   const [sendOfficeIds, setSendOfficeIds] = useState([]);
+
+  const detailVersion = documents.find((item) => item.id === detailDoc?.id)?.updatedAt;
+  useEffect(() => {
+    if (!detailDoc) return undefined;
+    const controller = new AbortController();
+    setDetailLoading(true); setDetailError('');
+    documentService.getById(detailDoc.id, { signal: controller.signal }).then(setDetailDoc).catch((error) => {
+      if (error.code !== 'ABORTED') setDetailError(error.message);
+    }).finally(() => { if (!controller.signal.aborted) setDetailLoading(false); });
+    return () => controller.abort();
+  }, [detailDoc?.id, detailVersion, detailRetry]);
 
   useEffect(() => {
     if (!initialStatusFilter) return;
@@ -435,7 +450,11 @@ const DocumentList = ({
     reader.readAsDataURL(file);
   });
 
-  const handleOpenForm = (doc = null) => {
+  const handleOpenForm = async (doc = null) => {
+    if (doc?._summary) {
+      try { doc = await documentService.getById(doc.id); }
+      catch (error) { notify(error.message, 'Unable to open document', 'danger'); return; }
+    }
     setAttachmentFile(null);
     setDocumentFormErrors({});
     setDocumentFormErrorSummary('');
@@ -1096,8 +1115,8 @@ const DocumentList = ({
                       </span>
                     </td>
                     <td className="documents-col-files">
-                      <span className={`documents-files-count ${files.length ? 'has-files' : ''}`}>
-                        <Paperclip size={12} /> {files.length}
+                      <span className={`documents-files-count ${(doc.attachmentCount ?? files.length) ? 'has-files' : ''}`}>
+                        <Paperclip size={12} /> {doc.attachmentCount ?? files.length}
                       </span>
                     </td>
                     <td className="documents-col-date">{doc.dateReceived}</td>
@@ -1332,7 +1351,7 @@ const DocumentList = ({
       </PageShell>
 
       {detailDoc && !previewFile && (() => {
-        const doc = documents.find(item => item.id === detailDoc.id) || detailDoc;
+        const doc = detailDoc;
         const files = getDocumentFiles(doc);
         const timeline = getTimeline(doc);
         const pendingTransmission = getPendingTransmission(doc.id);
@@ -1352,6 +1371,11 @@ const DocumentList = ({
                 <button className="btn-icon" onClick={() => setDetailDoc(null)}><X size={18} /></button>
               </div>
               <div className="modal-body">
+                {(detailLoading || detailError) && <div role="status" className="page-content-alert">
+                  {detailLoading ? 'Loading scans and history…' : detailError}
+                  {detailError && <button onClick={() => setDetailRetry((value) => value + 1)}>Retry</button>}
+                </div>}
+
                 <DocumentWorkflowPipeline
                   doc={doc}
                   hasPendingTransmission={Boolean(pendingTransmission)}

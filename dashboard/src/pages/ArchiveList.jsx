@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { documentService } from '../api/documentService';
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
 import ScannedPreviewModal from "../components/ScannedPreviewModal";
@@ -40,6 +41,18 @@ const ArchiveList = ({
   const [filterDate, setFilterDate] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [detailArchive, setDetailArchive] = useState(null);
+  const [detailDocument, setDetailDocument] = useState(null);
+  const [detailError, setDetailError] = useState('');
+  const [detailRetry, setDetailRetry] = useState(0);
+  useEffect(() => {
+    setDetailDocument(null); setDetailError('');
+    if (!detailArchive) return undefined;
+    const controller = new AbortController();
+    documentService.getById(detailArchive.documentId, { signal: controller.signal }).then(setDetailDocument).catch((error) => {
+      if (error.code !== 'ABORTED') setDetailError(error.message);
+    });
+    return () => controller.abort();
+  }, [detailArchive?.id, detailRetry]);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [previewFile, setPreviewFile] = useState(null);
@@ -421,9 +434,7 @@ const ArchiveList = ({
           const archive =
             archives.find((item) => item.id === detailArchive.id) ||
             detailArchive;
-          const doc =
-            documents.find((item) => item.id === archive.documentId) ||
-            archive.doc;
+          const doc = (detailDocument?.id === archive.documentId ? detailDocument : null) || documents.find((item) => item.id === archive.documentId) || archive.doc;
           const files = getDocumentFiles(doc);
           const timeline = getArchiveTimeline(archive, doc);
 
@@ -454,6 +465,10 @@ const ArchiveList = ({
                   </button>
                 </div>
                 <div className="modal-body">
+                  {detailDocument?.id !== archive.documentId && <div role="status">{detailError || 'Loading scans and history…'}
+                    {detailError && <button onClick={() => setDetailRetry((value) => value + 1)}>Retry</button>}
+                  </div>}
+
                   <div className="document-detail-grid">
                     <div className="document-detail-section">
                       <h4>

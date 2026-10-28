@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { generateId } = require('./helpers');
 
-const uploadRoot = path.join(__dirname, '..', 'uploads', 'scans');
+const { scansRoot: uploadRoot, resolveScanPath } = require('../config/storage');
 const maxAttachmentsPerDocument = Number(process.env.MAX_ATTACHMENTS_PER_DOCUMENT || 50);
 const maxAttachmentBytes = Number(process.env.MAX_ATTACHMENT_BYTES || 10 * 1024 * 1024);
 const allowedAttachmentMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
@@ -101,20 +101,7 @@ const persistAttachments = async (req, attachments = []) => {
   return Promise.all(attachments.map((attachment) => persistAttachment(req, attachment)));
 };
 
-const resolveStoredScanPath = (attachment) => {
-  if (!attachment) return null;
-  if (attachment.storagePath) {
-    const relative = attachment.storagePath.replace(/^[/\\]+/, '');
-    return path.isAbsolute(attachment.storagePath)
-      ? attachment.storagePath
-      : path.join(__dirname, '..', relative);
-  }
-
-  const url = attachment.url || '';
-  const match = url.match(/\/uploads\/scans\/([^/?#]+)$/);
-  if (!match) return null;
-  return path.join(uploadRoot, match[1]);
-};
+const resolveStoredScanPath = resolveScanPath;
 
 /** Attachments plus the scanner page images stored inside a combined scan PDF. */
 const flattenAttachmentFiles = (files = []) => (files || []).flatMap((file) => (

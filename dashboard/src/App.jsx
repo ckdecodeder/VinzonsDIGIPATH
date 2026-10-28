@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import AppModal from './components/AppModal';
@@ -15,16 +15,11 @@ import {
 } from './utils/documentScope';
 import LoginPage from './pages/LoginPage';
 import AdminDashboard from './pages/DashboardHome';
-import DocumentList from './pages/DocumentList';
-import ArchiveList from './pages/ArchiveList';
 import OfficeList from './pages/OfficeList';
 import UserList from './pages/UserList';
 import DocumentTypeList from './pages/DocumentTypeList';
 import ReceptionistDashboard from './pages/ReceptionistDashboard';
-import DeviceControlPanel from './pages/DeviceControlPanel';
 import ActivityLogs from './pages/ActivityLogs';
-import Scanner from './components/Scanner';
-import ReportsPage from './pages/ReportsPage';
 import ProfileSettings from './pages/ProfileSettings';
 import DocumentPreviewModal from './components/DocumentPreviewModal';
 import {
@@ -41,9 +36,18 @@ import {
   transmissionService,
   userService,
 } from './api/documentService';
+import { toDocumentSummary } from './api/pagination.mjs';
+import { bootstrapApiBase } from './api/apiBase';
+import DataSectionStatus from './components/DataSectionStatus';
 import { sortNewest } from './utils/sorting';
 import { RealtimeProvider } from './context/RealtimeContext';
 import { realtimeClient } from './ws/realtimeClient';
+
+const DocumentList = lazy(() => import('./pages/DocumentList'));
+const ArchiveList = lazy(() => import('./pages/ArchiveList'));
+const DeviceControlPanel = lazy(() => import('./pages/DeviceControlPanel'));
+const Scanner = lazy(() => import('./components/Scanner'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
 
 const PAGE_STORAGE_KEY = 'dp_currentPage';
 
@@ -128,9 +132,12 @@ function App() {
 
   const [systemStatus, setSystemStatus] = useState({ database: 'checking' });
   const [dataError, setDataError] = useState('');
+  const [sectionStates, setSectionStates] = useState({});
+  const activeUserRef = useRef(currentUser?.id);
+  activeUserRef.current = currentUser?.id;
+  const refreshKeysRef = useRef(new Set());
+  const refreshTimerRef = useRef(null);
   const [saveError, setSaveError] = useState('');
-  const [isLoadingData, setIsLoadingData] = useState(false);
-  const [isRefreshingContent, setIsRefreshingContent] = useState(false);
   const [hasLoadedData, setHasLoadedData] = useState(false);
   const [actionToast, setActionToast] = useState(null);
   const [documentFocusId, setDocumentFocusId] = useState('');
@@ -141,41 +148,29 @@ function App() {
     const saved = localStorage.getItem('dp_dismissedNotifications');
     return saved ? JSON.parse(saved) : [];
   });
-
-  const loadData = async ({ silent = hasLoadedData, quiet = false } = {}) => {
-    if (silent) {
-      if (!quiet) {
-        setIsRefreshingContent(true);
-      }
-    } else {
-      setIsLoadingData(true);
-    }
-    if (!silent) {
-      setDataError('');
-    }
-
-    try {
-      const data = await appDataService.loadAll();
-      setDocuments(sortNewest(data.documents, ['createdAt', 'updatedAt', 'dateReceived']));
-      setTransmissions(sortNewest(data.transmissions, ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']));
-      setArchives(sortNewest(data.archives, ['createdAt', 'updatedAt', 'date']));
-      setDevice(data.device);
-      setLogs(data.logs);
-      setUsers(data.users);
-      setOffices(data.offices);
-      setDocumentTypes(data.documentTypes);
-      setDeviceEvents(data.deviceEvents);
-      setServerNotifications(data.notifications || []);
-      setSenderNotifications(data.senderNotifications || []);
-      setHasLoadedData(true);
-    } catch (err) {
-      if (!silent || !hasLoadedData) {
-        setDataError(err.message || 'Unable to load database data. Check that the backend and MongoDB are running.');
-      }
-    } finally {
-      setIsLoadingData(false);
-      setIsRefreshingContent(false);
-    }
+  const pageSections = appDataService.sectionsForPage(currentPage, currentUser?.role);
+  const loadData = async ({ keys = pageSections, force = false } = {}) => {
+    const userId = currentUser?.id;
+    if (!userId) return;
+    if (force) appDataService.invalidate(keys);
+    const setters = {
+      documents: (value) => setDocuments(sortNewest(value || [], ['createdAt', 'updatedAt', 'dateReceived'])),
+      transmissions: (value) => setTransmissions(sortNewest(value || [], ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate'])),
+      archives: (value) => setArchives(sortNewest(value || [], ['createdAt', 'updatedAt', 'date'])),
+      device: setDevice, logs: setLogs, users: setUsers, offices: setOffices,
+      documentTypes: setDocumentTypes, deviceEvents: setDeviceEvents,
+      notifications: setServerNotifications, senderNotifications: setSenderNotifications,
+    };
+    await appDataService.load(keys, {
+      onData: (key, value) => {
+        if (activeUserRef.current !== userId) return;
+        setters[key]?.(value);
+        setHasLoadedData(true);
+      },
+      onState: (key, state) => {
+        if (activeUserRef.current === userId) setSectionStates((prev) => ({ ...prev, [key]: state }));
+      },
+    });
   };
 
   const refreshSystemStatus = async () => {
@@ -230,14 +225,21 @@ function App() {
   }, []);
 
   const clearActionToast = useCallback(() => setActionToast(null), []);
-
-  const refreshAfterMutation = () => {
-    loadData({ quiet: true }).catch(() => {});
+  const refreshAfterMutation = (keys = ['documents', 'transmissions', 'archives', 'logs', 'notifications', 'senderNotifications']) => {
+    appDataService.invalidate(keys);
+    keys.forEach((key) => refreshKeysRef.current.add(key));
+    clearTimeout(refreshTimerRef.current);
+    refreshTimerRef.current = setTimeout(() => {
+      const visible = appDataService.sectionsForPage(currentPage, currentUser?.role);
+      const affected = [...refreshKeysRef.current].filter((key) => visible.includes(key));
+      refreshKeysRef.current.clear();
+      loadData({ keys: affected }).catch(() => {});
+    }, 120);
   };
 
   const upsertDocument = (savedDoc) => {
     setDocuments((prev) => sortNewest(
-      [savedDoc, ...prev.filter((item) => item.id !== savedDoc.id)],
+      [toDocumentSummary(savedDoc), ...prev.filter((item) => item.id !== savedDoc.id)],
       ['createdAt', 'updatedAt', 'dateReceived'],
     ));
   };
@@ -284,52 +286,42 @@ function App() {
   );
 
   const getUserOfficeId = () => currentUser?.officeId || 'OFF-001';
+  useEffect(() => { refreshSystemStatus(); }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const hydrate = async () => {
-      await refreshSystemStatus();
-      if (!cancelled && currentUser) {
-        await loadData();
-      }
-    };
-
-    hydrate();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    appDataService.clear();
+    setSectionStates({});
+    setDocuments([]); setTransmissions([]); setArchives([]); setDevice(null); setLogs([]);
+    setUsers([]); setOffices([]); setDocumentTypes([]); setDeviceEvents([]);
+    setServerNotifications([]); setSenderNotifications([]); setPreviewDocument(null);
+    return () => { clearTimeout(refreshTimerRef.current); refreshKeysRef.current.clear(); };
+  }, [currentUser?.id]);
+  useEffect(() => {
+    if (currentUser) loadData();
+  }, [currentUser?.id, currentPage]);
 
   useEffect(() => {
     if (!currentUser) return undefined;
 
     const offDevice = realtimeClient.on('device:updated', (message) => {
-      if (message.device) {
-        setDevice((prev) => ({ ...(prev || {}), ...message.device }));
-      }
+      appDataService.invalidate(['device']);
+      if (message.device) setDevice((prev) => ({ ...(prev || {}), ...message.device }));
     });
+    const aliases = { 'device-events': 'deviceEvents', 'document-types': 'documentTypes', 'sender-notifications': 'senderNotifications' };
 
     const offInvalidate = realtimeClient.on('data:invalidate', (message) => {
       const collections = Array.isArray(message?.collections) ? message.collections : [];
-      const shouldReload = !collections.length
-        || collections.some((name) => ['device', 'device-events', 'documents', 'logs'].includes(name));
-      if (shouldReload) {
-        loadData({ silent: true, quiet: true });
-      }
+      refreshAfterMutation(collections.length ? collections.map((key) => aliases[key] || key) : pageSections);
     });
-
-    const offReconnect = realtimeClient.on('connection:open', () => {
-      loadData({ silent: true, quiet: true });
-    });
+    const refreshVisible = () => refreshAfterMutation(pageSections);
+    const offReconnect = realtimeClient.on('connection:open', refreshVisible);
+    window.addEventListener('dp_connection_recovered', refreshVisible);
 
     return () => {
-      offDevice();
-      offInvalidate();
-      offReconnect();
+      offDevice(); offInvalidate(); offReconnect();
+      window.removeEventListener('dp_connection_recovered', refreshVisible);
     };
-  }, [currentUser]);
+  }, [currentUser?.id, currentPage]);
 
   useEffect(() => { localStorage.setItem('dp_dismissedNotifications', JSON.stringify(dismissedNotifications)); }, [dismissedNotifications]);
   useEffect(() => {
@@ -361,11 +353,10 @@ function App() {
   }, []);
 
   const handleLogin = async (user) => {
+    setDataError('');
     setCurrentUser(user);
     setCurrentPage('dashboard');
-
-    await refreshSystemStatus();
-    await loadData();
+    refreshSystemStatus();
   };
 
   const handleLogout = async () => {
@@ -416,10 +407,14 @@ function App() {
   const handleFocusDocumentConsumed = useCallback(() => {
     setDocumentFocusId('');
   }, []);
-
-  const handlePreviewDocument = useCallback((doc) => {
+  const handlePreviewDocument = useCallback(async (doc) => {
     if (!doc) return;
-    setPreviewDocument(doc);
+    const owner = activeUserRef.current;
+    try {
+      const fullDocument = doc._summary ? await documentService.getById(doc.id) : doc;
+      if (activeUserRef.current === owner) setPreviewDocument(fullDocument);
+    }
+    catch (error) { notifyUser({ type: 'danger', title: 'Unable to open document', message: error.message }); }
   }, []);
 
   const handleOpenDocument = (documentId) => {
@@ -644,7 +639,7 @@ function App() {
     const savedUser = await runMutation(() => userService.create(user));
     upsertUser(savedUser);
     showActionToast('created');
-    refreshAfterMutation();
+    refreshAfterMutation(['users', 'logs']);
     return savedUser;
   };
 
@@ -662,7 +657,7 @@ function App() {
     const savedUser = await runMutation(() => userService.update(id, updates));
     upsertUser(savedUser);
     showActionToast('updated');
-    refreshAfterMutation();
+    refreshAfterMutation(['users', 'logs']);
     return savedUser;
   };
 
@@ -680,7 +675,7 @@ function App() {
     await runMutation(() => userService.delete(id));
     setUsers((prev) => prev.filter((item) => item.id !== id));
     showActionToast('deleted');
-    refreshAfterMutation();
+    refreshAfterMutation(['users', 'logs']);
   };
 
   const handleAddOffice = async (office) => {
@@ -695,7 +690,7 @@ function App() {
     const savedOffice = await runMutation(() => officeService.create(office));
     upsertOffice(savedOffice);
     showActionToast('created');
-    refreshAfterMutation();
+    refreshAfterMutation(['offices', 'logs']);
     return savedOffice;
   };
 
@@ -712,7 +707,7 @@ function App() {
     const savedOffice = await runMutation(() => officeService.update(id, updates));
     upsertOffice(savedOffice);
     showActionToast('updated');
-    refreshAfterMutation();
+    refreshAfterMutation(['offices', 'logs']);
     return savedOffice;
   };
 
@@ -729,7 +724,7 @@ function App() {
     await runMutation(() => officeService.delete(id));
     setOffices((prev) => prev.filter((item) => item.id !== id));
     showActionToast('deleted');
-    refreshAfterMutation();
+    refreshAfterMutation(['offices', 'logs']);
   };
 
   // Phase 4 — Document Type CRUD handlers
@@ -737,7 +732,7 @@ function App() {
     const saved = await runMutation(() => documentTypeService.create(data));
     setDocumentTypes((prev) => [saved, ...prev]);
     showActionToast('created');
-    refreshAfterMutation();
+    refreshAfterMutation(['documentTypes', 'logs']);
     return saved;
   };
 
@@ -745,7 +740,7 @@ function App() {
     const saved = await runMutation(() => documentTypeService.update(id, data));
     setDocumentTypes((prev) => prev.map((t) => (t.id === id ? saved : t)));
     showActionToast('updated');
-    refreshAfterMutation();
+    refreshAfterMutation(['documentTypes', 'logs']);
     return saved;
   };
 
@@ -761,7 +756,7 @@ function App() {
     await runMutation(() => documentTypeService.delete(id));
     setDocumentTypes((prev) => prev.filter((t) => t.id !== id));
     showActionToast('deleted');
-    refreshAfterMutation();
+    refreshAfterMutation(['documentTypes', 'logs']);
   };
 
   const canSeeDocument = (doc) => isDocumentVisibleToUser(doc, currentUser, { role: currentRole });
@@ -931,7 +926,7 @@ function App() {
       return (
         <DeviceControlPanel
           device={device}
-          onRefresh={() => loadData({ silent: true })}
+          onRefresh={() => loadData({ keys: ['device', 'deviceEvents'], force: true })}
           logs={visibleLogs}
           users={users}
           offices={offices}
@@ -974,6 +969,7 @@ function App() {
           case 'dashboard':
             return (
               <AdminDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 archives={visibleArchives}
@@ -1093,6 +1089,7 @@ function App() {
           default:
             return (
               <AdminDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 archives={visibleArchives}
@@ -1112,6 +1109,7 @@ function App() {
           case 'dashboard':
             return (
               <AdminDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 archives={visibleArchives}
@@ -1199,6 +1197,7 @@ function App() {
           default:
             return (
               <AdminDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 archives={visibleArchives}
@@ -1218,6 +1217,7 @@ function App() {
           case 'dashboard':
             return (
               <AdminDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 archives={visibleArchives}
@@ -1290,6 +1290,7 @@ function App() {
           default:
             return (
               <AdminDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 archives={visibleArchives}
@@ -1310,6 +1311,7 @@ function App() {
           case 'receive-document':
             return (
               <ReceptionistDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 transmissions={visibleTransmissions}
                 offices={offices}
@@ -1354,6 +1356,7 @@ function App() {
           default:
             return (
               <ReceptionistDashboard
+                dataStates={sectionStates}
                 documents={visibleDocuments}
                 offices={offices}
                 users={users}
@@ -1385,19 +1388,25 @@ function App() {
         pendingTransmissions={pendingTransmissions}
         dataError={dataError}
         saveError={saveError}
-        isLoadingContent={isLoadingData && !hasLoadedData}
-        isRefreshingContent={isRefreshingContent}
+        isLoadingContent={false}
+        isRefreshingContent={pageSections.some((key) => sectionStates[key]?.status === 'loading')}
         notifications={notifications}
         onDismissNotification={handleDismissNotification}
         onNotificationSelect={handleNotificationSelect}
       >
         <ErrorBoundary resetKey={`${currentPage}-${currentUser?.id || ''}`}>
-          {renderPage()}
+          <DataSectionStatus keysToShow={pageSections} states={sectionStates} onRetry={async (key) => {
+            try { await bootstrapApiBase({ force: true }); } catch { /* Section retry reports connection failure. */ }
+            loadData({ keys: [key], force: true });
+          }} />
+          <Suspense fallback={<div role="status" className="page-content-loading">Loading page…</div>}>
+            {renderPage()}
+          </Suspense>
         </ErrorBoundary>
       </Layout>
       {previewDocument && (
         <DocumentPreviewModal
-          doc={visibleDocuments.find((item) => item.id === previewDocument.id) || previewDocument}
+          doc={previewDocument}
           offices={offices}
           users={users}
           documentTypes={documentTypes}
@@ -1422,4 +1431,3 @@ function App() {
 }
 
 export default App;
-

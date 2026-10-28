@@ -24,6 +24,7 @@ import { compareOldest } from '../utils/sorting';
 import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
 
 const ReceptionistDashboard = ({
+  dataStates = {},
   documents,
   offices = defaultOffices,
   documentTypes = defaultDocumentTypes,
@@ -285,7 +286,7 @@ const ReceptionistDashboard = ({
               <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
               <div className="stat-info">
                 <p className="stat-label">{stat.label}</p>
-                <p className="stat-value">{stat.value}</p>
+                <p className="stat-value">{dataStates.documents?.status === 'ready' ? stat.value : '—'}</p>
               </div>
             </button>
           ))}

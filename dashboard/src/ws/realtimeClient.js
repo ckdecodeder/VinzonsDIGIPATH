@@ -1,4 +1,4 @@
-import { getApiBase, getResolvedWsUrl } from '../api/apiBase';
+import { getApiBase, getResolvedWsUrl, bootstrapApiBase, recoverApiConnection } from '../api/apiBase';
 
 const getAuthToken = () => {
   if (typeof sessionStorage !== 'undefined') {
@@ -43,12 +43,6 @@ const apiBaseToWsUrl = (apiBase) => {
 
 export const getWsUrl = () => {
   if (typeof window === 'undefined') return 'ws://127.0.0.1:5000/ws';
-
-  const explicit = import.meta.env.VITE_WS_URL?.trim();
-  if (explicit) {
-    const normalized = explicit.replace(/\/$/, '');
-    return normalized.endsWith('/ws') ? normalized : `${normalized}/ws`;
-  }
 
   const configuredWs = getResolvedWsUrl();
   if (configuredWs) {
@@ -106,7 +100,7 @@ export class RealtimeClient {
     this.flushScannerFrame();
   }
 
-  connect() {
+  async connect() {
     this.shouldConnect = true;
     this.clearReconnect();
 
@@ -124,6 +118,12 @@ export class RealtimeClient {
       return;
     }
 
+    if (this.connecting) return;
+    this.connecting = true;
+    try { await bootstrapApiBase(); }
+    catch { this.scheduleReconnect(); return; }
+    finally { this.connecting = false; }
+    if (!this.shouldConnect || this.ws) return;
     const ws = new WebSocket(getWsUrl());
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
@@ -183,6 +183,7 @@ export class RealtimeClient {
     };
 
     ws.onerror = () => {
+      recoverApiConnection();
       this.emit('connection:error', { message: 'WebSocket connection failed' });
     };
   }

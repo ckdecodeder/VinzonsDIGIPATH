@@ -21,6 +21,7 @@ const { normalizeSenderNotificationChannels, queueSenderNotifications } = requir
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
 const { persistAttachments, removeOrphanedAttachments } = require('../utils/attachments');
+const { parsePagination, contains, andFilters, documentSummaryAttributes } = require('../utils/listing');
 const {
   buildInitialOfficeRoute,
   normalizePriorityLevel,
@@ -407,7 +408,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     notifySender: body.notifySender !== undefined ? Boolean(body.notifySender) : true,
     senderNotificationConsent: body.senderNotificationConsent !== undefined ? Boolean(body.senderNotificationConsent) : true,
     scannedFiles,
-    scannedImageUrl: body.scannedImageUrl || scannedFiles[0]?.url || scannedFiles[0]?.dataUrl,
+    scannedImageUrl: scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || body.scannedImageUrl,
     sendHistory: startsAtOrigin ? initialRoute.sendHistory : (Array.isArray(body.sendHistory) ? body.sendHistory : []),
     sendQueue: startsAtOrigin ? initialRoute.sendQueue : (Array.isArray(body.sendQueue) ? body.sendQueue : []),
     routePlan: startsAtOrigin ? initialRoute.routePlan : (Array.isArray(body.routePlan) ? body.routePlan : []),
@@ -506,9 +507,18 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
 
 // ================= DOCUMENTS =================
 router.get('/', allRoles, asyncHandler(async (req, res) => {
-  // FIFO: oldest registration first
-  const docs = await Document.find(await getScopedDocumentQueryWithTransmissions(req)).sort({ createdAt: 1, dateReceived: 1, _id: 1 }).lean();
-  res.json(docs);
+  const { page, limit, offset } = parsePagination(req.query);
+  const filters = {};
+  for (const field of ['status', 'documentDirection', 'priorityLevel', 'documentTypeId', 'dateReceived']) {
+    if (req.query[field] && req.query[field] !== 'All') filters[field] = String(req.query[field]);
+  }
+  if (req.query.search) filters.$or = ['subject', 'trackingNumber', 'senderName', 'originOfficeOther', 'destinationOfficeOther'].map((field) => ({ [field]: contains(req.query.search) }));
+  const query = andFilters(await getScopedDocumentQueryWithTransmissions(req), filters);
+  const [items, total] = await Promise.all([
+    Document.find(query).withAttributes(documentSummaryAttributes).sort({ createdAt: 1, dateReceived: 1, id: 1 }).skip(offset).limit(limit).lean(),
+    Document.countDocuments(query),
+  ]);
+  res.json({ items: items.map((doc) => ({ ...doc, _summary: true })), total, page, limit });
 }));
 
 router.get('/:id', allRoles, asyncHandler(async (req, res) => {

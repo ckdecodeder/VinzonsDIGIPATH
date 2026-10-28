@@ -126,7 +126,7 @@ const buildReportData = async (req, category, dateFrom, dateTo) => {
     documentTypes,
     logs,
   ] = await Promise.all([
-    Document.find(await getScopedDocumentQueryWithTransmissions(req)).sort({ createdAt: -1, dateReceived: -1, _id: -1 }).lean(),
+    Document.find(await getScopedDocumentQueryWithTransmissions(req)).select('-scannedImageUrl -scannedFiles -scannedText -timeline').sort({ createdAt: -1, dateReceived: -1, _id: -1 }).lean(),
     Transmission.find(getScopedTransmissionQuery(req)).sort({ createdAt: -1, transmissionDate: -1, _id: -1 }).lean(),
     Archive.find().sort({ createdAt: -1, date: -1, _id: -1 }).lean(),
     Office.find().sort({ id: 1 }).lean(),

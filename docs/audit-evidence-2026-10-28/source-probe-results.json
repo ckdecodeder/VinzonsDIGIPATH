@@ -1,0 +1,127 @@
+{
+  "sourceCommit": "73cf88fd14a7ddc85771a3431c6dd9a5e50a0328",
+  "kind": "isolated source probes; not live capacity measurements",
+  "requestsPerFullReload": {
+    "Admin": {
+      "count": 11,
+      "paths": [
+        "/api/users",
+        "/api/documents",
+        "/api/transmissions",
+        "/api/archives",
+        "/api/device",
+        "/api/logs",
+        "/api/offices",
+        "/api/document-types",
+        "/api/device-events",
+        "/api/notifications",
+        "/api/sender-notifications"
+      ]
+    },
+    "Mayor": {
+      "count": 11,
+      "paths": [
+        "/api/users",
+        "/api/documents",
+        "/api/transmissions",
+        "/api/archives",
+        "/api/device",
+        "/api/logs",
+        "/api/offices",
+        "/api/document-types",
+        "/api/device-events",
+        "/api/notifications",
+        "/api/sender-notifications"
+      ]
+    },
+    "Receptionist": {
+      "count": 10,
+      "paths": [
+        "/api/documents",
+        "/api/transmissions",
+        "/api/archives",
+        "/api/device",
+        "/api/logs",
+        "/api/offices",
+        "/api/document-types",
+        "/api/device-events",
+        "/api/notifications",
+        "/api/sender-notifications"
+      ]
+    },
+    "Office": {
+      "count": 8,
+      "paths": [
+        "/api/documents",
+        "/api/transmissions",
+        "/api/archives",
+        "/api/logs",
+        "/api/offices",
+        "/api/document-types",
+        "/api/notifications",
+        "/api/sender-notifications"
+      ]
+    }
+  },
+  "ordinaryRequestsHaveAbortSignal": false,
+  "threeOverlappingAdminReloads": {
+    "httpRequests": 33,
+    "expectedWithDeduplication": 11
+  },
+  "oneFailedCollectionRejectsEntireLoad": true,
+  "hangingCollection": {
+    "afterMs": 75,
+    "result": "still pending",
+    "abortedBySource": false
+  },
+  "oneDeviceEventForFourBrowsers": {
+    "fullReloads": 4,
+    "allAdminHttpRequests": 44,
+    "mixedRolesHttpRequests": 40
+  },
+  "selectIdProjection": {
+    "sequelizeAttributes": null,
+    "returnedKeys": [
+      "id",
+      "scannedText",
+      "timeline"
+    ]
+  },
+  "concurrentModelUpdates": {
+    "intendedEvents": 2,
+    "actualEvents": 1,
+    "intendedCounter": 2,
+    "actualCounter": 1
+  },
+  "presenceRegistrationBeforeHubInit": {
+    "handlerRegistered": false
+  },
+  "cameraRelay": {
+    "jpegBytes": 100000,
+    "subscribers": 4,
+    "sendsForOneFrame": 4,
+    "outgoingBytesPerFrame": 400000,
+    "outgoingMbpsAt15fps": 48
+  },
+  "httpPreviewLimiter": {
+    "allowed": 300,
+    "blocked": 1,
+    "configuredRequestsPerMinute": 300,
+    "minutesAt15fps": 0.3333333333333333
+  },
+  "apiDiscovery": {
+    "unavailableApiProbes": 2,
+    "selectedApi": "https://frontend.audit.invalid/api",
+    "acceptedHtmlAsApiStatus": true
+  },
+  "localProxyAfterConfigPreload": {
+    "before": "/api",
+    "after": "https://tunnel.audit.invalid/api"
+  },
+  "databaseFailureInAuthentication": {
+    "status": 401,
+    "body": {
+      "message": "Invalid or expired token"
+    }
+  }
+}

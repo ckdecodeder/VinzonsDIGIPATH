@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { Device, DeviceEvent, Command, Document } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
-const { deviceLimiter } = require('../utils/rateLimit');
+const { deviceLimiter, streamFrameLimiter } = require('../utils/rateLimit');
 const { requireDeviceApiKey, getBridgeBaseUrl, fetchBridgeEndpoint, cleanBridgeErrorText, normalizeBridgeBaseUrl, isPrivateBridgeHost } = require('../utils/bridge');
 const { toUserFacingError } = require('../utils/userFacingError');
 const {
@@ -406,10 +406,16 @@ router.put('/devices/scans/:documentId', deviceLimiter, requireDeviceApiKey, asy
 // Pi uploads preview JPEG over HTTPS when dev-tunnel binary WS is unreliable.
 router.post(
   '/devices/stream/frame',
-  deviceLimiter,
   requireDeviceApiKey,
+  (req, res, next) => {
+    const deviceId = String(req.query.deviceId || 'DEV-001').trim();
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(deviceId)) return res.status(400).json({ message: 'Invalid device identifier' });
+    req.streamDeviceId = deviceId;
+    next();
+  },
+  streamFrameLimiter,
   asyncHandler(async (req, res) => {
-    const deviceId = req.query.deviceId?.trim() || 'DEV-001';
+    const deviceId = req.streamDeviceId;
     const frame = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || []);
     if (!frame.length || frame.length < 64) {
       return res.status(400).json({ message: 'Empty preview frame' });

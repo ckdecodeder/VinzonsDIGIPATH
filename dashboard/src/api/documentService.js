@@ -1,4 +1,7 @@
-import { getApiBase } from './apiBase';
+import { bootstrapApiBase, recoverApiConnection } from './apiBase';
+import { requestWithDeadline } from './httpClient.mjs';
+import { createCollectionLoader, sectionsForPage } from './collectionLoader.mjs';
+import { collectPages } from './pagination.mjs';
 
 const STORAGE_KEYS = {
   currentUser: 'dp_currentUser',
@@ -96,71 +99,30 @@ const clearCachedAppData = () => {
   ].forEach(key => localStorage.removeItem(key));
 };
 
-const parseResponse = async (res) => {
-  const text = await res.text();
-  if (!text) return null;
-
+const configuredMs = (value, fallback) => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
+const performRequest = async (path, options = {}, responseType = 'json') => {
+  const token = getAuthToken();
+  const { headers = {}, ...rest } = options;
+  const isWrite = !['GET', 'HEAD'].includes((options.method || 'GET').toUpperCase());
+  const timeoutMs = responseType === 'blob'
+    ? configuredMs(import.meta.env.VITE_EXPORT_TIMEOUT_MS, 90000)
+    : isWrite ? configuredMs(import.meta.env.VITE_UPLOAD_TIMEOUT_MS, 60000)
+    : configuredMs(import.meta.env.VITE_READ_TIMEOUT_MS, 15000);
   try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-};
-
-const apiRequest = async (path, options = {}) => {
-  const token = getAuthToken();
-  const { headers = {}, ...fetchOptions } = options;
-
-  const res = await fetch(`${getApiBase()}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    ...fetchOptions,
-  });
-  const data = await parseResponse(res);
-
-  if (!res.ok) {
-    const message = data?.message || data?.error || `API request failed with status ${res.status}`;
-    const error = new Error(message);
-    error.status = res.status;
-    error.data = data;
-    if (res.status === 401 && path !== '/auth/login') {
-      notifyAuthExpired();
-    }
+    const base = await bootstrapApiBase();
+    return await requestWithDeadline(`${base}${path}`, {
+      timeoutMs, responseType, ...rest,
+      headers: { ...(responseType === 'json' ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
+    });
+  } catch (error) {
+    if (error.status === 401 && error.data?.message && path !== '/auth/login') notifyAuthExpired();
+    if (['NETWORK_ERROR', 'TIMEOUT', 'INVALID_RESPONSE'].includes(error.code)) recoverApiConnection();
     throw error;
   }
-
-  return data;
 };
-
-const apiBlobRequest = async (path, options = {}) => {
-  const token = getAuthToken();
-  const { headers = {}, ...fetchOptions } = options;
-
-  const res = await fetch(`${getApiBase()}${path}`, {
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    ...fetchOptions,
-  });
-
-  if (!res.ok) {
-    const data = await parseResponse(res);
-    const message = data?.message || data?.error || `API request failed with status ${res.status}`;
-    const error = new Error(message);
-    error.status = res.status;
-    error.data = data;
-    if (res.status === 401) {
-      notifyAuthExpired();
-    }
-    throw error;
-  }
-
-  return res.blob();
-};
+const apiRequest = (path, options) => performRequest(path, options);
+const apiBlobRequest = (path, options) => performRequest(path, options, 'blob');
 
 const buildQuery = (params = {}) => {
   const search = new URLSearchParams();
@@ -174,8 +136,8 @@ const buildQuery = (params = {}) => {
 };
 
 const createCollectionService = (path) => ({
-  getAll() {
-    return apiRequest(path);
+  getAll(options = {}) {
+    return apiRequest(path, options);
   },
 
   create(item) {
@@ -211,12 +173,22 @@ const senderNotifications = createCollectionService('/sender-notifications');
 export const documentService = {
   ...documents,
 
-  getById(id) {
-    return apiRequest(`/documents/${id}`);
+  getPage(params = {}, options = {}) {
+    return apiRequest(`/documents${buildQuery(params)}`, options);
+  },
+
+  // Complete metadata, never a silently truncated first page. Media is detail-only.
+  getAll(options = {}) {
+    return collectPages((params, requestOptions) => this.getPage(params, requestOptions), options);
+  },
+
+  getById(id, options = {}) {
+    return apiRequest(`/documents/${encodeURIComponent(id)}`, options);
   },
 
   update(updatedDoc) {
-    return documents.update(updatedDoc.id, updatedDoc);
+    const { _summary, attachmentCount, ...record } = updatedDoc;
+    return documents.update(record.id, record);
   },
 
   verify(id, intakeStatus, rejectionReason = '') {
@@ -275,7 +247,11 @@ export const scannerService = {
 
 export const transmissionService = transmissions;
 export const archiveService = archives;
-export const logService = logs;
+export const logService = {
+  ...logs,
+  getPage(params = {}, options = {}) { return apiRequest(`/logs${buildQuery(params)}`, options); },
+  getAll(options = {}) { return collectPages((params, requestOptions) => this.getPage(params, requestOptions), options); },
+};
 export const officeService = offices;
 export const userService = {
   ...users,
@@ -411,6 +387,7 @@ export const commandService = {
 export const reportService = {
   exportOfficialReport(payload = {}) {
     return apiBlobRequest(`/reports/export${buildQuery(payload)}`, {
+      retries: 0,
       headers: { Accept: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
     });
   },
@@ -426,6 +403,7 @@ export const authService = {
     setAuthToken(result.token || null);
     saveCurrentUser(user);
     clearCachedAppData();
+    appDataService.clear();
     return user;
   },
 
@@ -436,6 +414,7 @@ export const authService = {
       // Still clear the local session even if the audit log request fails.
     }
     clearAuthSession();
+    appDataService.clear();
   },
 
   async getCurrentUser() {
@@ -443,55 +422,25 @@ export const authService = {
   },
 };
 
+const collectionLoader = createCollectionLoader({
+  documents: () => documentService.getAll(),
+  transmissions: () => transmissionService.getAll(),
+  archives: () => archiveService.getAll(),
+  device: () => ['Admin', 'Mayor', 'Receptionist'].includes(getCurrentUser()?.role) ? deviceService.get() : null,
+  logs: () => logService.getAll(),
+  users: () => ['Admin', 'Mayor'].includes(getCurrentUser()?.role) ? userService.getAll() : [getCurrentUser()].filter(Boolean),
+  offices: () => officeService.getAll(),
+  documentTypes: () => documentTypeService.getAll(),
+  deviceEvents: () => ['Admin', 'Mayor', 'Receptionist'].includes(getCurrentUser()?.role) ? deviceEventService.getAll() : [],
+  notifications: () => notificationService.getAll(),
+  senderNotifications: () => senderNotificationService.getAll(),
+}, { stableKeys: ['offices', 'documentTypes', 'users'] });
+
 export const appDataService = {
-  async loadAll() {
-    const currentUser = getCurrentUser();
-    const usersRequest = currentUser?.role === 'Admin' || currentUser?.role === 'Mayor'
-      ? userService.getAll()
-      : Promise.resolve(currentUser ? [currentUser] : []);
-    // Device APIs are Admin/Mayor/Receptionist only — Office staff must not hit them on bootstrap.
-    const canAccessDevice = ['Admin', 'Mayor', 'Receptionist'].includes(currentUser?.role);
-
-    const [
-      documentsData,
-      transmissionsData,
-      archivesData,
-      deviceData,
-      logsData,
-      usersData,
-      officesData,
-      documentTypesData,
-      deviceEventsData,
-      notificationsData,
-      senderNotificationsData,
-    ] = await Promise.all([
-      documentService.getAll(),
-      transmissionService.getAll(),
-      archiveService.getAll(),
-      canAccessDevice ? deviceService.get() : Promise.resolve(null),
-      logService.getAll(),
-      usersRequest,
-      officeService.getAll(),
-      documentTypeService.getAll(),
-      canAccessDevice ? deviceEventService.getAll() : Promise.resolve([]),
-      notificationService.getAll(),
-      senderNotificationService.getAll(),
-    ]);
-
-    return {
-      documents: documentsData || [],
-      transmissions: transmissionsData || [],
-      archives: archivesData || [],
-      device: deviceData || null,
-      logs: logsData || [],
-      users: usersData || [],
-      offices: officesData || [],
-      documentTypes: documentTypesData || [],
-      deviceEvents: deviceEventsData || [],
-      notifications: notificationsData || [],
-      senderNotifications: senderNotificationsData || [],
-    };
-  },
+  sectionsForPage,
+  load: (keys, callbacks) => collectionLoader.load(keys, callbacks),
+  invalidate: (keys) => collectionLoader.invalidate(keys),
+  clear: () => collectionLoader.clear(),
 };
 
 export const systemService = {

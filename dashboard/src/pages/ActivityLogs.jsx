@@ -17,7 +17,8 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { users as defaultUsers } from "../data/mockData";
-import { filterActivityLogs } from "../utils/reportFilters";
+import { logService } from "../api/documentService";
+import { realtimeClient } from "../ws/realtimeClient";
 
 const actionConfig = {
   document_received: {
@@ -145,6 +146,10 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
   const [dateTo, setDateTo] = useState("");
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
+  const [result, setResult] = useState({ items: [], total: 0 });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
 
   const getUserFullName = (userId) => {
     const user = users.find((u) => u.id === userId);
@@ -160,7 +165,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
     return [user.fname, middleInitial, user.lname].filter(Boolean).join(" ");
   };
 
-  const actionTypes = ["All", ...new Set(logs.map((l) => l.action))];
+  const actionTypes = ["All", ...new Set([...Object.keys(actionConfig), ...result.items.map((item) => item.action)])];
   const formatActionLabel = (action) => {
     if (action === "All") return "All Activities";
     return (
@@ -172,25 +177,36 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
     );
   };
 
-  const filtered = filterActivityLogs(logs, {
-    search,
-    action: filterAction,
-    userId: filterUser,
-    reference: filterReference,
-    dateFrom,
-    dateTo,
-    users,
-    actionLabels: Object.fromEntries(Object.entries(actionConfig).map(([action, config]) => [action, config.label])),
-  })
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true); setError('');
+    const timer = setTimeout(() => {
+      const searchActions = Object.keys(actionConfig).filter((action) => formatActionLabel(action).toLowerCase().includes(search.trim().toLowerCase())).join(',');
+      logService.getPage({ search, action: filterAction, userId: filterUser, reference: filterReference,
+        dateFrom, dateTo, page, limit: pageSize, searchActions }, { signal: controller.signal }).then((value) => {
+        if (!controller.signal.aborted) setResult(value);
+      }).catch((failure) => {
+        if (failure.code !== 'ABORTED') setError(failure.message);
+      }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    }, 200);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [search, filterAction, filterUser, filterReference, dateFrom, dateTo, page, pageSize, revision]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const paginatedLogs = filtered.slice((page - 1) * pageSize, page * pageSize);
-  const showFrom = filtered.length === 0 ? 0 : (page - 1) * pageSize + 1;
-  const showTo = Math.min(page * pageSize, filtered.length);
+  useEffect(() => {
+    const off = realtimeClient.on('data:invalidate', (message) => {
+      if (!message.collections?.length || message.collections.includes('logs')) setRevision((value) => value + 1);
+    });
+    const reconnect = realtimeClient.on('connection:open', () => setRevision((value) => value + 1));
+    return () => { off(); reconnect(); };
+  }, []);
+
+  const totalPages = Math.max(1, Math.ceil(result.total / pageSize));
+  const paginatedLogs = result.items;
+  const showFrom = result.total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const showTo = Math.min(page * pageSize, result.total);
 
   const handlePageSizeChange = (value) => {
-    setPageSize(value);
+    setPageSize(Math.min(100, Math.max(1, Math.floor(value))));
     setPage(1);
   };
 
@@ -201,7 +217,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
 
   useEffect(() => {
     setPage(1);
-  }, [search, filterAction, filterUser, filterReference, dateFrom, dateTo, logs]);
+  }, [search, filterAction, filterUser, filterReference, dateFrom, dateTo]);
 
   const formatTimestamp = (ts) => {
     const d = new Date(ts);
@@ -317,13 +333,17 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
 
           <div className="activity-entries-count ml-auto self-center whitespace-nowrap text-right">
             <span className="activity-entries-text">
-              {filtered.length} entries
+              {loading || error ? "—" : result.total} entries
             </span>
           </div>
         </div>
       }
     >
-      <div className="table-container">
+      {(loading || error) && <div role="status" className="page-content-alert">
+        {loading ? 'Loading activity logs…' : error}
+        {error && <button className="btn btn-secondary btn-sm" onClick={() => setRevision((value) => value + 1)}>Retry</button>}
+      </div>}
+      <div className="table-container" aria-busy={loading}>
         <table className="activity-logs-table">
           <thead>
             <tr>
@@ -399,7 +419,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
 
       <div className="pagination-toolbar">
         <div className="pagination-summary">
-          Showing {showFrom}-{showTo} of {filtered.length} matching logs
+          Showing {showFrom}-{showTo} of {loading || error ? "—" : result.total} matching logs
         </div>
         <div className="pagination-controls">
           <label>

@@ -29,9 +29,16 @@ const connectDB = async () => {
 };
 
 const getDatabaseStatus = () => (_isConnected ? 'connected' : 'disconnected');
+const checkDatabaseReadiness = async () => {
+  if (!sequelizeInstance) return false;
+  try { await sequelizeInstance.authenticate(); _isConnected = true; }
+  catch { _isConnected = false; }
+  return _isConnected;
+};
 
 module.exports = {
   sequelize: sequelizeInstance,
   connectDB,
   getDatabaseStatus,
+  checkDatabaseReadiness,
 };

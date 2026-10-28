@@ -1,0 +1,37 @@
+{
+  "auditDate": "2026-10-28",
+  "timezone": "Asia/Manila",
+  "sourceCommit": "73cf88fd14a7ddc85771a3431c6dd9a5e50a0328",
+  "reportedUsers": 4,
+  "reportedNetworks": "Sometimes different internet connections",
+  "existingTests": {
+    "command": "node --test backend/test/*.test.js dashboard/src/utils/*.test.js scripts/start-all.test.js",
+    "passed": 33,
+    "failed": 0,
+    "testRunnerDurationMs": 954.9041
+  },
+  "dashboardBuild": {
+    "command": "npm.cmd --prefix dashboard run build",
+    "passed": true,
+    "viteVersion": "4.5.14",
+    "durationSeconds": 9.74,
+    "mainJavaScriptKilobytes": 1494.31,
+    "mainJavaScriptGzipKilobytes": 433.16,
+    "pdfWorkerKilobytes": 1375.84,
+    "warning": "Main bundle exceeds 500 kB; code splitting recommended by build output."
+  },
+  "hostSnapshot": {
+    "logicalProcessors": 16,
+    "physicalMemoryBytes": 16890716160,
+    "freePhysicalMemoryKiB": 5926936,
+    "postgresListening": true,
+    "apiPort5000Listening": false,
+    "dashboardPort5173Listening": false,
+    "scope": "Point-in-time idle snapshot; not a multi-user CPU or memory benchmark."
+  },
+  "limitations": [
+    "No four-device live authenticated load test was possible because the local API was not listening and configured tunnel checks did not return valid API health.",
+    "No browser profiles or physical Pi throughput measurements were captured.",
+    "No database records, application configuration, services, deployments, or branches were changed."
+  ]
+}

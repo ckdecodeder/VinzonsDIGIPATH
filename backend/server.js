@@ -1,14 +1,14 @@
 require('dotenv').config({ quiet: true });
-const path = require('path');
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
-const { connectDB, getDatabaseStatus } = require('./config/db');
+const { connectDB, getDatabaseStatus, checkDatabaseReadiness } = require('./config/db');
 const { syncModels } = require('./models');
 const { corsOriginCallback } = require('./utils/cors');
 const { formatServerUrls } = require('./utils/lanIp');
 const { getPublicApiUrl } = require('./utils/publicApiUrl');
 const { parseIceServers } = require('./utils/webrtcConfig');
+const { uploadsRoot } = require('./config/storage');
 
 const app = express();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -42,7 +42,7 @@ app.use(cors({
 }));
 app.use('/api/devices/stream/frame', express.raw({ type: ['image/jpeg', 'application/octet-stream'], limit: '2mb' }));
 app.use(express.json({ limit: '15mb' }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(uploadsRoot));
 
 const apiRoutes = require('./routes/index');
 const { initRealtimeHub } = require('./ws/realtimeHub');
@@ -52,10 +52,15 @@ const startServer = async () => {
   await connectDB();
   await syncModels();
 
-  app.get('/api/status', (req, res) => {
-    res.json({
+  app.get('/api/status', async (req, res) => {
+    const databaseReady = await checkDatabaseReadiness();
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(databaseReady ? 200 : 503).json({
       status: 'API is running',
       database: getDatabaseStatus(),
+      api: 'running',
+      ready: databaseReady,
+      publicReachability: 'not-probed',
       timestamp: new Date(),
     });
   });

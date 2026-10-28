@@ -1,0 +1,142 @@
+{
+  "date": "2026-10-28",
+  "timezone": "Asia/Manila",
+  "branch": "main",
+  "startingRevision": "73cf88f",
+  "publication": "Local, uncommitted, unpushed, not deployed",
+  "hostingDecision": "Backend and database remain on this laptop; physical acceptance deferred by user",
+  "backup": {
+    "restoredTables": 12,
+    "tableCounts": {
+      "archives": 6,
+      "commands": 123,
+      "device_events": 531,
+      "devices": 1,
+      "document_types": 9,
+      "documents": 80,
+      "logs": 9462,
+      "notifications": 258,
+      "offices": 11,
+      "sender_notifications": 40,
+      "transmissions": 30,
+      "users": 17
+    },
+    "scanFiles": 64,
+    "scanBytes": 33004896,
+    "restoreVerified": true,
+    "separateStorageCopy": "Pending before live migration/cutover"
+  },
+  "regressions": {
+    "tests": 55,
+    "passed": 55,
+    "failed": 0
+  },
+  "productionBuild": {
+    "result": "passed",
+    "initialJavaScriptBytes": 312675,
+    "initialJavaScriptGzipBytes": 90727,
+    "optionalPages": "Loaded on demand"
+  },
+  "listingAndAtomicChecks": {
+    "verifiedAt": "2026-10-28T07:40:44.557Z",
+    "state": "Isolated local HTTP, four concurrent role clients; not four physical devices or a public-tunnel test",
+    "roles": [
+      {
+        "role": "Admin",
+        "scopedDocuments": 80,
+        "pages": [
+          {
+            "page": 1,
+            "bytes": 56244,
+            "ms": 97.69
+          },
+          {
+            "page": 2,
+            "bytes": 34653,
+            "ms": 9.2
+          }
+        ],
+        "firstLogPageBytes": 3911,
+        "logTotal": 9462
+      },
+      {
+        "role": "Mayor",
+        "scopedDocuments": 80,
+        "pages": [
+          {
+            "page": 1,
+            "bytes": 56244,
+            "ms": 83.86
+          },
+          {
+            "page": 2,
+            "bytes": 34653,
+            "ms": 19.81
+          }
+        ],
+        "firstLogPageBytes": 3911,
+        "logTotal": 9462
+      },
+      {
+        "role": "Receptionist",
+        "scopedDocuments": 54,
+        "pages": [
+          {
+            "page": 1,
+            "bytes": 58113,
+            "ms": 73.74
+          },
+          {
+            "page": 2,
+            "bytes": 5039,
+            "ms": 18.3
+          }
+        ],
+        "firstLogPageBytes": 1159,
+        "logTotal": 6
+      },
+      {
+        "role": "Office",
+        "scopedDocuments": 4,
+        "pages": [
+          {
+            "page": 1,
+            "bytes": 5382,
+            "ms": 76.59
+          }
+        ],
+        "firstLogPageBytes": 3911,
+        "logTotal": 9462
+      }
+    ],
+    "atomicUpdates": {
+      "concurrentWrites": 20,
+      "retainedEvents": 22,
+      "finalCounter": 21,
+      "previousValueSemantics": "verified"
+    },
+    "persistedCover": {
+      "inlineCoverReplacedByStoredUrl": true,
+      "imageDownloadMatches": true
+    }
+  },
+  "proxyChecks": {
+    "verifiedAt": "2026-10-28T07:36:07.813Z",
+    "apiProxy": "passed",
+    "websocketProxyAndAuthentication": "passed",
+    "uploadProxyChecksum": "passed",
+    "authenticatedPreviewBurst": {
+      "accepted": 30,
+      "limited": 1
+    },
+    "physicalPi": "not tested"
+  },
+  "unchangedLiveState": {
+    "configurationFiles": 5,
+    "scanChecksums": 64,
+    "tableCounts": 12
+  },
+  "testFixtureCleanup": "All 12 table counts and 64 scan files match baseline; test services stopped",
+  "physicalDeviceAcceptance": "Pending; not a physical four-device/public-tunnel test",
+  "authenticatedBrowserUI": "Pending; Computer Use stopped because Windows browser URL could not be verified reliably"
+}

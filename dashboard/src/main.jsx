@@ -27,14 +27,10 @@ if (typeof window !== "undefined") {
   } catch {}
 }
 
-bootstrapApiBase()
-  .then(() => preloadIceServers())
-  .finally(() => {
-    ReactDOM.createRoot(document.getElementById("root")).render(
-      <React.StrictMode>
-        <ThemeProvider>
-          <App />
-        </ThemeProvider>
-      </React.StrictMode>,
-    );
-  });
+// Render immediately; requests share bounded discovery in the background.
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <ThemeProvider><App /></ThemeProvider>
+  </React.StrictMode>,
+);
+bootstrapApiBase().then(() => preloadIceServers()).catch(() => {});

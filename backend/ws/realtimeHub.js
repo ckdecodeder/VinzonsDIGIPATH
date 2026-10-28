@@ -669,11 +669,17 @@ class RealtimeHub {
 }
 
 let hubInstance = null;
+let pendingPresenceHandler = null;
+const registerPresenceHandler = (handler) => {
+  pendingPresenceHandler = handler;
+  hubInstance?.setPresenceHandler(handler);
+};
 
 const initRealtimeHub = (server) => {
   if (!hubInstance) {
     hubInstance = new RealtimeHub();
   }
+  if (pendingPresenceHandler) hubInstance.setPresenceHandler(pendingPresenceHandler);
   hubInstance.attach(server);
   return hubInstance;
 };
@@ -684,4 +690,5 @@ module.exports = {
   RealtimeHub,
   initRealtimeHub,
   getRealtimeHub,
+  registerPresenceHandler,
 };

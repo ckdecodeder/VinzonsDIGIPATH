@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { preservePiSetting } = require('./network-settings.cjs');
 
 const root = path.resolve(__dirname, '..');
 const networkEnvPath = path.join(root, 'network.env');
@@ -73,6 +74,9 @@ if (!fs.existsSync(networkEnvPath)) {
 }
 
 const cfg = parseEnvFile(networkEnvPath);
+const syncPiSetting = (content, key, value) => preservePiSetting(
+  content, key, value, upsertEnvLine, cfg.DIGIPATH_SYNC_PI_TUNING === '1',
+);
 const publicRoot = (cfg.DIGIPATH_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
 const deviceKey = cfg.DIGIPATH_DEVICE_API_KEY || 'dev-device-key-change-me';
 const groqApiKey = (cfg.DIGIPATH_GROQ_API_KEY || '').trim();
@@ -158,25 +162,25 @@ bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_DEVICE_API_KEY', deviceKey);
 bridgeEnv = upsertOrComment(bridgeEnv, 'DIGIPATH_DEVTUNNEL_TOKEN', devtunnelToken);
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_USE_WEBSOCKET', '1');
 bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_ENABLE_MJPEG_HTTP', '1');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_FPS', cfg.DIGIPATH_STREAM_FPS || '20');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_WIDTH', cfg.DIGIPATH_STREAM_WIDTH || '2560');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_HEIGHT', cfg.DIGIPATH_STREAM_HEIGHT || '1440');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_JPEG_QUALITY', cfg.DIGIPATH_STREAM_JPEG_QUALITY || '92');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_FAST', cfg.DIGIPATH_STREAM_FAST || '1');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_WS_MAX_FPS', cfg.DIGIPATH_STREAM_WS_MAX_FPS || '20');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_PREVIEW_WIDTH', cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_PREVIEW_HEIGHT', cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_PREVIEW_JPEG_QUALITY', cfg.DIGIPATH_PREVIEW_JPEG_QUALITY || '68');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_JPEG_MAX_BYTES', cfg.DIGIPATH_STREAM_JPEG_MAX_BYTES || '650000');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_JPEG_MIN_QUALITY', cfg.DIGIPATH_STREAM_JPEG_MIN_QUALITY || '68');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_PREVIEW_ROTATE', cfg.DIGIPATH_PREVIEW_ROTATE || 'none');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_SCAN_WIDTH', cfg.DIGIPATH_SCAN_WIDTH || cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_SCAN_HEIGHT', cfg.DIGIPATH_SCAN_HEIGHT || cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_SCAN_ORIENTATION', cfg.DIGIPATH_SCAN_ORIENTATION || 'landscape');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_CAPTURE_MATCH_PREVIEW', cfg.DIGIPATH_CAPTURE_MATCH_PREVIEW || '1');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_STREAM_COLOR_MODE', cfg.DIGIPATH_STREAM_COLOR_MODE || 'jpeg');
-bridgeEnv = upsertEnvLine(bridgeEnv, 'DIGIPATH_RESTART_ON_IP_CHANGE', cfg.DIGIPATH_RESTART_ON_IP_CHANGE || '1');
-bridgeEnv = upsertEnvLine(
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_FPS', cfg.DIGIPATH_STREAM_FPS || '20');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_WIDTH', cfg.DIGIPATH_STREAM_WIDTH || '2560');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_HEIGHT', cfg.DIGIPATH_STREAM_HEIGHT || '1440');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_JPEG_QUALITY', cfg.DIGIPATH_STREAM_JPEG_QUALITY || '92');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_FAST', cfg.DIGIPATH_STREAM_FAST || '1');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_WS_MAX_FPS', cfg.DIGIPATH_STREAM_WS_MAX_FPS || '20');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_PREVIEW_WIDTH', cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_PREVIEW_HEIGHT', cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_PREVIEW_JPEG_QUALITY', cfg.DIGIPATH_PREVIEW_JPEG_QUALITY || '68');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_JPEG_MAX_BYTES', cfg.DIGIPATH_STREAM_JPEG_MAX_BYTES || '650000');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_JPEG_MIN_QUALITY', cfg.DIGIPATH_STREAM_JPEG_MIN_QUALITY || '68');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_PREVIEW_ROTATE', cfg.DIGIPATH_PREVIEW_ROTATE || 'none');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_SCAN_WIDTH', cfg.DIGIPATH_SCAN_WIDTH || cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_SCAN_HEIGHT', cfg.DIGIPATH_SCAN_HEIGHT || cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_SCAN_ORIENTATION', cfg.DIGIPATH_SCAN_ORIENTATION || 'landscape');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_CAPTURE_MATCH_PREVIEW', cfg.DIGIPATH_CAPTURE_MATCH_PREVIEW || '1');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_STREAM_COLOR_MODE', cfg.DIGIPATH_STREAM_COLOR_MODE || 'jpeg');
+bridgeEnv = syncPiSetting(bridgeEnv, 'DIGIPATH_RESTART_ON_IP_CHANGE', cfg.DIGIPATH_RESTART_ON_IP_CHANGE || '1');
+bridgeEnv = syncPiSetting(
   bridgeEnv,
   'DIGIPATH_IP_RESTART_DEBOUNCE_SECS',
   cfg.DIGIPATH_IP_RESTART_DEBOUNCE_SECS || '30',
@@ -194,43 +198,43 @@ const syncPiWsEnv = (filePath) => {
     isExample ? 'dev-device-key-change-me' : deviceKey,
   );
   piEnv = upsertOrComment(piEnv, 'DIGIPATH_DEVTUNNEL_TOKEN', isExample ? '' : devtunnelToken);
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_FPS', cfg.DIGIPATH_STREAM_FPS || '20');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_WIDTH', cfg.DIGIPATH_STREAM_WIDTH || '2560');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_HEIGHT', cfg.DIGIPATH_STREAM_HEIGHT || '1440');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_SCAN_WIDTH', cfg.DIGIPATH_SCAN_WIDTH || cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_SCAN_HEIGHT', cfg.DIGIPATH_SCAN_HEIGHT || cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_SCAN_ORIENTATION', cfg.DIGIPATH_SCAN_ORIENTATION || 'landscape');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_SCAN_JPEG_QUALITY', cfg.DIGIPATH_SCAN_JPEG_QUALITY || '98');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_SCAN_ENHANCE', cfg.DIGIPATH_SCAN_ENHANCE || '1');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_SCAN_SHARPEN', cfg.DIGIPATH_SCAN_SHARPEN || '1');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_SCAN_BURST_FRAMES', cfg.DIGIPATH_SCAN_BURST_FRAMES || '6');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_JPEG_QUALITY', cfg.DIGIPATH_STREAM_JPEG_QUALITY || '92');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_FAST', cfg.DIGIPATH_STREAM_FAST || '1');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAPTURE_MATCH_PREVIEW', cfg.DIGIPATH_CAPTURE_MATCH_PREVIEW || '1');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAMERA_INDEX', cfg.DIGIPATH_CAMERA_INDEX || '0');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_WS_MAX_FPS', cfg.DIGIPATH_STREAM_WS_MAX_FPS || '15');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_ADAPTIVE', cfg.DIGIPATH_STREAM_ADAPTIVE || '1');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_ADAPTIVE_MIN_FPS', cfg.DIGIPATH_STREAM_ADAPTIVE_MIN_FPS || '8');
-  piEnv = upsertEnvLine(
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_FPS', cfg.DIGIPATH_STREAM_FPS || '20');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_WIDTH', cfg.DIGIPATH_STREAM_WIDTH || '2560');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_HEIGHT', cfg.DIGIPATH_STREAM_HEIGHT || '1440');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_SCAN_WIDTH', cfg.DIGIPATH_SCAN_WIDTH || cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_SCAN_HEIGHT', cfg.DIGIPATH_SCAN_HEIGHT || cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_SCAN_ORIENTATION', cfg.DIGIPATH_SCAN_ORIENTATION || 'landscape');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_SCAN_JPEG_QUALITY', cfg.DIGIPATH_SCAN_JPEG_QUALITY || '98');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_SCAN_ENHANCE', cfg.DIGIPATH_SCAN_ENHANCE || '1');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_SCAN_SHARPEN', cfg.DIGIPATH_SCAN_SHARPEN || '1');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_SCAN_BURST_FRAMES', cfg.DIGIPATH_SCAN_BURST_FRAMES || '6');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_JPEG_QUALITY', cfg.DIGIPATH_STREAM_JPEG_QUALITY || '92');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_FAST', cfg.DIGIPATH_STREAM_FAST || '1');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_CAPTURE_MATCH_PREVIEW', cfg.DIGIPATH_CAPTURE_MATCH_PREVIEW || '1');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_CAMERA_INDEX', cfg.DIGIPATH_CAMERA_INDEX || '0');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_WS_MAX_FPS', cfg.DIGIPATH_STREAM_WS_MAX_FPS || '15');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_ADAPTIVE', cfg.DIGIPATH_STREAM_ADAPTIVE || '1');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_ADAPTIVE_MIN_FPS', cfg.DIGIPATH_STREAM_ADAPTIVE_MIN_FPS || '8');
+  piEnv = syncPiSetting(
     piEnv,
     'DIGIPATH_STREAM_ADAPTIVE_MAX_FPS',
     cfg.DIGIPATH_STREAM_ADAPTIVE_MAX_FPS || cfg.DIGIPATH_STREAM_WS_MAX_FPS || '25',
   );
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_BUFFER_FRAMES', cfg.DIGIPATH_STREAM_BUFFER_FRAMES || '1');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_DRIVER_DRAIN', cfg.DIGIPATH_STREAM_DRIVER_DRAIN || '1');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAMERA_READ_TIMEOUT_MS', cfg.DIGIPATH_CAMERA_READ_TIMEOUT_MS || '10000');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAMERA_READ_RETRIES', cfg.DIGIPATH_CAMERA_READ_RETRIES || '4');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAMERA_RECOVER_AFTER_MISSES', cfg.DIGIPATH_CAMERA_RECOVER_AFTER_MISSES || '24');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_CAMERA_REOPEN_AFTER_MISSES', cfg.DIGIPATH_CAMERA_REOPEN_AFTER_MISSES || '120');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_PREVIEW_WIDTH', cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_PREVIEW_HEIGHT', cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_PREVIEW_JPEG_QUALITY', cfg.DIGIPATH_PREVIEW_JPEG_QUALITY || '68');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_JPEG_MAX_BYTES', cfg.DIGIPATH_STREAM_JPEG_MAX_BYTES || '380000');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_JPEG_MIN_QUALITY', cfg.DIGIPATH_STREAM_JPEG_MIN_QUALITY || '68');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_PREVIEW_ROTATE', cfg.DIGIPATH_PREVIEW_ROTATE || 'none');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_STREAM_HTTP_UPLOAD', cfg.DIGIPATH_STREAM_HTTP_UPLOAD || 'auto');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_WS_PING_INTERVAL', cfg.DIGIPATH_WS_PING_INTERVAL || '0');
-  piEnv = upsertEnvLine(piEnv, 'DIGIPATH_WS_STALE_SECS', cfg.DIGIPATH_WS_STALE_SECS || '90');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_BUFFER_FRAMES', cfg.DIGIPATH_STREAM_BUFFER_FRAMES || '1');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_DRIVER_DRAIN', cfg.DIGIPATH_STREAM_DRIVER_DRAIN || '1');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_CAMERA_READ_TIMEOUT_MS', cfg.DIGIPATH_CAMERA_READ_TIMEOUT_MS || '10000');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_CAMERA_READ_RETRIES', cfg.DIGIPATH_CAMERA_READ_RETRIES || '4');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_CAMERA_RECOVER_AFTER_MISSES', cfg.DIGIPATH_CAMERA_RECOVER_AFTER_MISSES || '24');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_CAMERA_REOPEN_AFTER_MISSES', cfg.DIGIPATH_CAMERA_REOPEN_AFTER_MISSES || '120');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_PREVIEW_WIDTH', cfg.DIGIPATH_PREVIEW_WIDTH || '1920');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_PREVIEW_HEIGHT', cfg.DIGIPATH_PREVIEW_HEIGHT || '1080');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_PREVIEW_JPEG_QUALITY', cfg.DIGIPATH_PREVIEW_JPEG_QUALITY || '68');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_JPEG_MAX_BYTES', cfg.DIGIPATH_STREAM_JPEG_MAX_BYTES || '380000');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_JPEG_MIN_QUALITY', cfg.DIGIPATH_STREAM_JPEG_MIN_QUALITY || '68');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_PREVIEW_ROTATE', cfg.DIGIPATH_PREVIEW_ROTATE || 'none');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_STREAM_HTTP_UPLOAD', cfg.DIGIPATH_STREAM_HTTP_UPLOAD || 'auto');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_WS_PING_INTERVAL', cfg.DIGIPATH_WS_PING_INTERVAL || '0');
+  piEnv = syncPiSetting(piEnv, 'DIGIPATH_WS_STALE_SECS', cfg.DIGIPATH_WS_STALE_SECS || '90');
   piEnv = upsertOrComment(piEnv, 'DIGIPATH_GROQ_API_KEY', isExample ? '' : groqApiKey);
   piEnv = upsertEnvLine(
     piEnv,

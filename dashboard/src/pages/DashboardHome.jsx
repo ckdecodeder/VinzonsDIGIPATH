@@ -34,6 +34,7 @@ const STATUS_ACTION_HINT = {
 };
 
 const AdminDashboard = ({
+  dataStates = {},
   documents,
   transmissions,
   archives,
@@ -77,7 +78,7 @@ const AdminDashboard = ({
   const statCards = [
     {
       label: "Total Documents",
-      value: totalDocs,
+      value: dataStates.documents?.status === 'ready' ? totalDocs : '—',
       icon: <FileText size={22} />,
       color: "blue",
       trend: "+12%",
@@ -85,7 +86,7 @@ const AdminDashboard = ({
     },
     {
       label: "Urgent Items",
-      value: urgentCount,
+      value: dataStates.documents?.status === 'ready' ? urgentCount : '—',
       icon: <Flag size={22} />,
       color: "red",
       trend: "Active",
@@ -93,15 +94,15 @@ const AdminDashboard = ({
     },
     {
       label: "Active Transmissions",
-      value: transmissions.filter((t) => !t.receivedBy).length,
+      value: dataStates.transmissions?.status === 'ready' ? transmissions.filter((t) => !t.receivedBy).length : '—',
       icon: <ArrowRightLeft size={22} />,
       color: "purple",
-      trend: `${transmissions.length} total`,
+      trend: dataStates.transmissions?.status === 'ready' ? `${transmissions.length} total` : 'Unavailable',
       page: "transmissions",
     },
     {
       label: "Archived",
-      value: archived,
+      value: dataStates.archives?.status === 'ready' ? archived : '—',
       icon: <Archive size={22} />,
       color: "green",
       trend: "All time",

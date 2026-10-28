@@ -4,6 +4,10 @@ Municipal document tracking dashboard with a React frontend, Express backend, an
 
 > **Full setup guide (database, ports, dev tunnel):** see [docs/SETUP_AT_DATABASE_GUIDE.md](docs/SETUP_AT_DATABASE_GUIDE.md)
 
+> **Change recording:** read and update [CHANGELOG.md](CHANGELOG.md) for each meaningful work batch. It contains instructions, an entry template, validation/deployment status, and recovery notes. The current loading work follows the [performance and deployment plan](docs/PERFORMANCE_AND_DEPLOYMENT_PLAN_2026-10-28.md).
+
+> **Local performance fixes and later acceptance:** see [the implementation handoff](docs/PERFORMANCE_IMPROVEMENTS_2026-10-28.md). Backend and PostgreSQL remain on the laptop. `npm start` preserves existing configuration; network synchronization now requires an explicit command or opt-in.
+
 ## Project Structure
 
 ```text
@@ -39,7 +43,7 @@ npm install
 Create `backend/.env` from `backend/.env.example`:
 
 ```env
-MONGODB_URI=mongodb://127.0.0.1:27017/vinzons_digipath
+DATABASE_URL=postgres://YOUR_DB_USER:YOUR_DB_PASSWORD@127.0.0.1:5432/vinzons_digipath
 PORT=5000
 NODE_ENV=development
 JWT_SECRET=change_this_to_a_long_random_secret
@@ -54,18 +58,14 @@ MAX_ATTACHMENTS_PER_DOCUMENT=8
 MAX_ATTACHMENT_BYTES=10485760
 ```
 
-Seed MongoDB:
+Seed only a new, empty development/test PostgreSQL database:
 
 ```powershell
 cd ../backend
 npm.cmd run seed
 ```
 
-Backfill older database records after pulling this update:
-
-```powershell
-npm.cmd run migrate
-```
+Existing installations do not need reseeding or data migration to try the loading fixes. Use the isolated test instructions in the implementation handoff before testing writes.
 
 Run both backend and dashboard from the project root:
 
