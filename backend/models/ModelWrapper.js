@@ -15,6 +15,7 @@ const { sequelize } = require('../config/db');
 
 const JSONB_ARRAY_FIELDS = new Set([
   'timeline',
+  'sendHistory',
   'readBy',
   'scannedFiles',
   'senderNotificationChannels',

@@ -14,8 +14,8 @@ const getWorkflowStatus = (doc) => {
 
 /**
  * Non-global users only see documents assigned to their office:
- * Reception → Selected Office → Received by Selected Office.
- * In Transit: destination office only. Otherwise: current office only.
+ * Current custody and all recipients of the latest delivery retain access.
+ * Older copy recipients lose access when the document is sent onward.
  */
 export const isDocumentVisibleToUser = (doc, currentUser, { role } = {}) => {
   if (!currentUser || !doc) return false;
@@ -28,6 +28,7 @@ export const isDocumentVisibleToUser = (doc, currentUser, { role } = {}) => {
     return true;
   }
 
+  if ((doc.sendHistory || []).some((event) => event.recipientOfficeId === officeId)) return true;
   if (getWorkflowStatus(doc) === 'In Transit') {
     return doc.destinationOfficeId === officeId;
   }

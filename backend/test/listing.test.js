@@ -2,6 +2,19 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ModelWrapper } = require('../models/ModelWrapper');
 const { parsePagination } = require('../utils/listing');
+const { Op } = require('sequelize');
+const { getScopedDocumentQuery } = require('../utils/documentScope');
+
+test('office history filters produce constrained JSON SQL instead of an empty visibility clause', async () => {
+  let where;
+  const model = new ModelWrapper({ tableName: 'documents', findAll: async (options) => { where = options.where; return []; } });
+  await model.find(getScopedDocumentQuery({ user: { role: 'Office', officeId: "OFF-'SECOND" } })).lean();
+  for (const clause of where[Op.or]) assert(Reflect.ownKeys(clause).length > 0, 'No office visibility clause may match every document');
+  const sql = where[Op.or].flatMap((clause) => clause[Op.and] || []).map((literal) => literal.val).join(' ');
+  assert.match(sql, /sendHistory/);
+  assert.match(sql, /recipientOfficeId/);
+  assert.match(sql, /OFF-''SECOND/);
+});
 
 test('positive and negative projections reach SQL and retain password exclusion', async () => {
   const calls = [];

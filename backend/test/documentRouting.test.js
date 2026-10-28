@@ -102,7 +102,7 @@ test('test_resubmission_resets_mayor_approval', () => {
   });
 });
 
-test('test_send_transition_keeps_custody_at_source_and_queues_later_offices', () => {
+test('sending to multiple offices creates every delivery and keeps custody until confirmed', () => {
   const transition = buildSendTransition({
     document: {
       id: 'DOC-001', status: 'Signed', currentOfficeId: 'OFF-003', routePlan: ['OFF-003'],
@@ -115,11 +115,41 @@ test('test_send_transition_keeps_custody_at_source_and_queues_later_offices', ()
   assert.equal(transition.documentUpdates.preTransitStatus, 'Signed');
   assert.equal(transition.documentUpdates.currentOfficeId, 'OFF-003');
   assert.equal(transition.documentUpdates.destinationOfficeId, 'OFF-004');
-  assert.deepEqual(transition.documentUpdates.sendQueue, ['OFF-005']);
+  assert.deepEqual(transition.documentUpdates.sendQueue, []);
+  assert.deepEqual(transition.transmissions.map((item) => item.toOfficeId), ['OFF-004', 'OFF-005']);
+  assert.equal(new Set(transition.transmissions.map((item) => item.id)).size, 2);
+  assert.deepEqual(transition.documentUpdates.sendHistory.map((event) => event.recipientOfficeId), ['OFF-004', 'OFF-005']);
   assert.equal(transition.transmission.fromOfficeId, 'OFF-003');
   assert.equal(transition.transmission.toOfficeId, 'OFF-004');
   assert.equal(transition.transmission.sentBy, 'USR-003');
   assert.equal(transition.transmission.receivedBy, null);
+});
+
+test('all recipients can confirm in either order without moving primary custody to a copy office', () => {
+  for (const order of [['OFF-004', 'OFF-005'], ['OFF-005', 'OFF-004']]) {
+    const initial = { id: 'DOC-001', status: 'Signed', currentOfficeId: 'OFF-003', sendHistory: [] };
+    const sent = buildSendTransition({ document: initial, toOfficeIds: ['OFF-004', 'OFF-005'], sentBy: 'SENDER', sentAt: '2026-10-29T00:00:00Z' });
+    let doc = { ...initial, ...sent.documentUpdates };
+    for (const officeId of order) {
+      const transmissionId = sent.transmissions.find((item) => item.toOfficeId === officeId).id;
+      doc = { ...doc, ...buildReceiveTransition({ document: doc, toOfficeId: officeId, transmissionId, receivedBy: officeId, receivedAt: '2026-10-29T00:05:00Z' }) };
+      assert.equal(doc.sendHistory.find((event) => event.toOfficeId === officeId).active, false);
+    }
+    assert.equal(doc.currentOfficeId, 'OFF-004');
+    assert.equal(doc.status, 'Signed');
+    assert(doc.sendHistory.every((event) => event.receivedBy && !event.active));
+  }
+});
+
+test('new delivery deduplicates recipients, clears old copy visibility, and retires legacy queues', () => {
+  const sent = buildSendTransition({
+    document: { id: 'DOC-001', status: 'Received', currentOfficeId: 'OFF-003', sendQueue: ['OFF-009'], sendHistory: [{ id: 'OLD', recipientOfficeId: 'OFF-008', receivedBy: 'USER' }] },
+    toOfficeIds: ['OFF-004', 'OFF-004', '', 'OFF-003', 'OFF-005'], sentBy: 'SENDER', sentAt: '2026-10-29T00:00:00Z',
+  });
+  assert.deepEqual(sent.transmissions.map((item) => item.toOfficeId), ['OFF-004', 'OFF-005']);
+  assert.equal(sent.documentUpdates.sendHistory[0].recipientOfficeId, '');
+  assert.equal(sent.documentUpdates.sendHistory[0].receivedBy, 'USER');
+  assert.deepEqual(sent.documentUpdates.sendQueue, []);
 });
 
 test('test_receive_transition_moves_custody_only_after_destination_receipt', () => {

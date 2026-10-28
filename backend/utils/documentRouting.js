@@ -1,4 +1,4 @@
-const { generateId } = require('./helpers');
+const { randomUUID } = require('node:crypto');
 
 const normalizePriorityLevel = (value) => {
   const level = String(value || '').trim().toLowerCase();
@@ -75,38 +75,29 @@ const buildSendTransition = ({
     throw err;
   }
   const requestedOfficeIds = [...new Set((toOfficeIds || []).map((id) => String(id || '').trim()).filter((id) => id && id !== fromOfficeId))];
-  const queuedOfficeIds = Array.isArray(document.sendQueue) ? document.sendQueue.filter(Boolean) : [];
-  const firstOfficeId = requestedOfficeIds[0] || queuedOfficeIds[0];
+  const queuedOfficeIds = Array.isArray(document.sendQueue) ? document.sendQueue.filter((id) => id && id !== fromOfficeId) : [];
+  const destinationOfficeIds = requestedOfficeIds.length ? requestedOfficeIds : [...new Set(queuedOfficeIds)];
+  const firstOfficeId = destinationOfficeIds[0];
   if (!firstOfficeId) {
     const err = new Error('Select a destination office before sending');
     err.status = 400;
     throw err;
   }
-  if (queuedOfficeIds.length && firstOfficeId !== queuedOfficeIds[0]) {
-    const err = new Error('Send to the next office in the queued route first');
-    err.status = 400;
-    throw err;
-  }
-
-  const remainingOfficeIds = [...new Set([
-    ...requestedOfficeIds.slice(1),
-    ...queuedOfficeIds.filter((officeId) => officeId !== firstOfficeId),
-  ])];
   const existingRoutePlan = Array.isArray(document.routePlan) ? [...document.routePlan] : [];
   const sourceIndex = existingRoutePlan.lastIndexOf(fromOfficeId);
   const routePlan = existingRoutePlan.length ? existingRoutePlan : [fromOfficeId];
   const currentRouteIndex = sourceIndex >= 0 ? sourceIndex : routePlan.length - 1;
   const plannedAfterSource = new Set(routePlan.slice(currentRouteIndex + 1));
-  for (const officeId of [firstOfficeId, ...remainingOfficeIds]) {
+  for (const officeId of destinationOfficeIds) {
     if (!plannedAfterSource.has(officeId)) routePlan.push(officeId);
   }
 
-  const transmissionId = generateId('TRN');
-  const transmission = {
-    id: transmissionId,
+  const deliveryGroupId = randomUUID();
+  const transmissions = destinationOfficeIds.map((toOfficeId) => ({
+    id: `TRN-${randomUUID()}`,
     documentId: document.id,
     fromOfficeId,
-    toOfficeId: firstOfficeId,
+    toOfficeId,
     sentBy,
     receivedBy: null,
     receivedAt: null,
@@ -115,20 +106,24 @@ const buildSendTransition = ({
     acknowledgementRemarks,
     createdAt: sentAt,
     updatedAt: sentAt,
-  };
-  const sendHistoryEntry = {
-    id: transmissionId,
-    transmissionId,
+  }));
+  const sendHistoryEntries = transmissions.map((transmission, index) => ({
+    id: transmission.id,
+    transmissionId: transmission.id,
+    deliveryGroupId,
+    primary: index === 0,
+    recipientOfficeId: transmission.toOfficeId,
     fromOfficeId,
-    toOfficeId: firstOfficeId,
+    toOfficeId: transmission.toOfficeId,
     sentBy,
     sentAt,
-    order: (document.sendHistory || []).length + 1,
+    order: (document.sendHistory || []).length + index + 1,
     active: true,
-  };
+  }));
 
   return {
-    transmission,
+    transmissions,
+    transmission: transmissions[0],
     documentUpdates: {
       status: 'In Transit',
       preTransitStatus: document.status || 'Received',
@@ -137,8 +132,9 @@ const buildSendTransition = ({
       lastRoutedAt: sentAt,
       routePlan,
       routeStep: currentRouteIndex,
-      sendHistory: [...(document.sendHistory || []), sendHistoryEntry],
-      sendQueue: remainingOfficeIds,
+      // Only recipients of the latest delivery retain copy access. Older events remain auditable.
+      sendHistory: [...(document.sendHistory || []).map((event) => ({ ...event, recipientOfficeId: '' })), ...sendHistoryEntries],
+      sendQueue: [],
       updatedAt: sentAt,
     },
   };
@@ -161,6 +157,12 @@ const buildReceiveTransition = ({
       ? { ...event, active: false, receivedBy, receivedAt }
       : event
   ));
+
+  const receipt = sendHistory.find((event) => event.transmissionId === transmissionId || event.id === transmissionId);
+  if (receipt?.deliveryGroupId && !receipt.primary) {
+    // Copy recipients acknowledge independently; the primary destination owns custody.
+    return { sendHistory, updatedAt: receivedAt };
+  }
 
   return {
     status: document.preTransitStatus || 'Received',

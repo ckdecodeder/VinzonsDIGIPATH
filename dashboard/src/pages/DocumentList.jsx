@@ -61,7 +61,7 @@ const DocumentList = ({
 }) => {
   const sendDocument = onSendDocument || (async (documentId, toOfficeIds) => {
     if (onRouteDocument && toOfficeIds?.[0]) {
-      return onRouteDocument({ documentId, toOfficeId: toOfficeIds[0], fromOfficeId: currentUser?.officeId });
+      return onRouteDocument({ documentId, toOfficeIds, toOfficeId: toOfficeIds[0], fromOfficeId: currentUser?.officeId });
     }
     return null;
   });
@@ -134,6 +134,7 @@ const DocumentList = ({
   const [documentFormErrors, setDocumentFormErrors] = useState({});
   const [documentFormErrorSummary, setDocumentFormErrorSummary] = useState('');
   const [sendOfficeIds, setSendOfficeIds] = useState([]);
+  const [receivingDocumentId, setReceivingDocumentId] = useState('');
 
   const detailVersion = documents.find((item) => item.id === detailDoc?.id)?.updatedAt;
   useEffect(() => {
@@ -197,6 +198,9 @@ const DocumentList = ({
     if (intake === 'Rejected') {
       return { label: 'Rejected', className: 'status-archived' };
     }
+    const delivery = (doc.sendHistory || []).find((event) => event.recipientOfficeId === currentUser?.officeId);
+    if (delivery?.active) return { label: 'Awaiting receipt', className: 'status-in-transit' };
+    if (delivery?.receivedBy && doc.currentOfficeId !== currentUser?.officeId) return { label: 'Received copy', className: 'status-received' };
     return {
       label: getWorkflowStatus(doc),
       className: `status-${getStatusClass(doc)}`,
@@ -224,7 +228,20 @@ const DocumentList = ({
   };
 
   const getOriginOfficeLabel = (doc) => doc.originOfficeOther || getOfficeName(doc.originOfficeId);
-  const getDestinationOfficeLabel = (doc) => doc.destinationOfficeOther || (doc.destinationOfficeId ? getOfficeName(doc.destinationOfficeId) : '-');
+  const getDeliveryRecipients = (doc) => (doc.sendHistory || []).filter((event) => event.recipientOfficeId);
+  const getDestinationOfficeLabel = (doc) => getDeliveryRecipients(doc).map((event) => getOfficeName(event.toOfficeId)).join(', ')
+    || doc.destinationOfficeOther || (doc.destinationOfficeId ? getOfficeName(doc.destinationOfficeId) : '-');
+  const renderDeliveryStatus = (doc) => {
+    const recipients = getDeliveryRecipients(doc);
+    if (!recipients.length) return null;
+    return <div className="document-detail-section">
+      <h4><Send size={14} /> Office Deliveries</h4>
+      {recipients.map((event) => <div key={event.id} className="detail-pair">
+        <span>{getOfficeName(event.toOfficeId)}{event.primary ? ' (custody)' : ''}</span>
+        <strong>{event.receivedBy ? `Received — ${formatDateTime(event.receivedAt)}` : 'Awaiting receipt'}</strong>
+      </div>)}
+    </div>;
+  };
 
   const getUserFullName = (userId) => {
     const user = users.find(u => u.id === userId);
@@ -276,7 +293,8 @@ const DocumentList = ({
   const getPendingTransmission = (documentId) => {
     return [...transmissions]
       .filter(t => t.documentId === documentId && !t.receivedBy)
-      .sort((a, b) => new Date(b.transmissionDate || 0) - new Date(a.transmissionDate || 0))[0];
+      .sort((a, b) => Number(b.toOfficeId === currentUser?.officeId) - Number(a.toOfficeId === currentUser?.officeId)
+        || new Date(b.transmissionDate || 0) - new Date(a.transmissionDate || 0))[0];
   };
 
   const getWorkflowExplanation = (doc) => {
@@ -316,6 +334,8 @@ const DocumentList = ({
     const pending = getPendingTransmission(doc.id);
     const latest = getLatestTransmission(doc.id);
 
+    const pendingOffices = getDeliveryRecipients(doc).filter((event) => event.active).map((event) => getOfficeName(event.toOfficeId));
+    if (pendingOffices.length) return `At ${getOfficeName(doc.currentOfficeId)} — awaiting receipt: ${pendingOffices.join(', ')}`;
     if (doc.status === 'In Transit' && pending) {
       const detected = doc.lastDetectedOfficeId
         ? ` (last detected at ${getOfficeName(doc.lastDetectedOfficeId)})`
@@ -651,16 +671,17 @@ const DocumentList = ({
   };
 
   const handleReceive = async (doc) => {
-    const pending = getPendingTransmission(doc.id);
-    if (!pending || !onReceiveTransmission) return;
-
+    const pending = transmissions.find((item) => item.documentId === doc.id && !item.receivedBy && item.toOfficeId === currentUser?.officeId);
+    if (!pending || !onReceiveTransmission || receivingDocumentId) return;
+    setReceivingDocumentId(doc.id);
     try {
       await onReceiveTransmission(pending.id, {
         receivedBy: currentUser?.id,
-        receivedAt: new Date().toISOString(),
       });
     } catch {
       // The shared save handler already shows the API error.
+    } finally {
+      setReceivingDocumentId('');
     }
   };
 
@@ -902,11 +923,13 @@ const DocumentList = ({
   const canRouteDocument = (doc) => {
     const status = getWorkflowStatus(doc);
     const finalStatus = finalWorkflowStatuses.includes(status);
-    return canRoute && isApprovedForWorkflow(doc) && transmittableStatuses.includes(status) && (
+    return canRoute && !(doc.sendHistory || []).some((event) => event.active) && !getPendingTransmission(doc.id) && isApprovedForWorkflow(doc) && transmittableStatuses.includes(status) && (
       isApprovalUser || (!finalStatus && doc.currentOfficeId === currentUser?.officeId)
     );
   };
-  const canReceiveTransmission = () => false;
+  const canReceiveTransmission = (doc) => Boolean(onReceiveTransmission && transmissions.some((item) => (
+    item.documentId === doc.id && !item.receivedBy && item.toOfficeId === currentUser?.officeId
+  )));
   const approvalActor = {
     role: currentRole === 'admin' ? 'Admin' : currentRole === 'mayor' ? 'Mayor' : currentUser?.role,
     officeId: currentUser?.officeId,
@@ -918,7 +941,7 @@ const DocumentList = ({
   const canRejectDocument = (doc) => canVerify && canRejectByWorkflow(doc, approvalActor);
   const pageTitle = isOfficeUser ? 'My Documents' : 'Documents';
   const pageSubtitle = isOfficeUser
-    ? 'Send documents to other offices in chronological order and track progress'
+    ? 'Send documents to selected offices and confirm incoming deliveries'
     : 'Register external documents, mayor actions, and office-to-office sending';
   const createButtonLabel = isOfficeUser ? 'Send Document' : (currentRole === 'receptionist' ? 'Register Document' : 'New Document');
   const destinationOffices = offices.filter(o => o.id !== (currentUser?.officeId || formData.currentOfficeId));
@@ -927,6 +950,11 @@ const DocumentList = ({
     const status = getWorkflowStatus(doc);
     return (
       <div className="workflow-actions">
+        {canReceiveTransmission(doc) && (
+          <button className="btn btn-sm btn-success" disabled={Boolean(receivingDocumentId)} onClick={() => handleReceive(doc)}>
+            <CheckCircle2 size={14} /> {receivingDocumentId === doc.id ? 'Receiving…' : 'Receive document'}
+          </button>
+        )}
         {canVerify && doc.intakeStatus === 'Pending Review' && (
           <button className="btn btn-sm btn-success" onClick={() => onVerifyDocument?.(doc.id, 'Approved')}>
             <CheckCircle2 size={14} /> Approve
@@ -967,7 +995,7 @@ const DocumentList = ({
             <Archive size={14} /> Archive
           </button>
         )}
-        {!canVerify && !canReturnToSender(doc) && !canRouteDocument(doc) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
+        {!canReceiveTransmission(doc) && !canVerify && !canReturnToSender(doc) && !canRouteDocument(doc) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
           <p className="detail-empty">No actions are currently available for your role and this document status.</p>
         )}
       </div>
@@ -1125,6 +1153,11 @@ const DocumentList = ({
                         <button className="btn-icon" title="Open details" onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
                           <Eye size={14} />
                         </button>
+                        {canReceiveTransmission(doc) && (
+                          <button className="btn btn-sm btn-success" disabled={Boolean(receivingDocumentId)} onClick={(e) => { e.stopPropagation(); handleReceive(doc); }}>
+                            <CheckCircle2 size={14} /> {receivingDocumentId === doc.id ? 'Receiving…' : 'Receive'}
+                          </button>
+                        )}
                         {canEdit && (
                           <button className="btn-icon" title="Edit" onClick={(e) => { e.stopPropagation(); handleOpenForm(doc); }}>
                             <Edit2 size={14} />
@@ -1151,7 +1184,8 @@ const DocumentList = ({
                         />
 
                         {/* Phase 4 — Route Progress Stepper */}
-                        {Array.isArray(doc.routePlan) && doc.routePlan.length > 1 && (
+                        {renderDeliveryStatus(doc)}
+                        {!getDeliveryRecipients(doc).length && Array.isArray(doc.routePlan) && doc.routePlan.length > 1 && (
                           <div style={{
                             margin: '0.75rem 0 1rem',
                             padding: '0.85rem 1.1rem',
@@ -1383,6 +1417,7 @@ const DocumentList = ({
                   workflowNote={workflowExplanation}
                 />
                 <div className="document-detail-grid">
+                  {renderDeliveryStatus(doc)}
                   <div className="document-detail-section">
                     <h4><MapPin size={14} /> Location</h4>
                     <div className="detail-pair"><span>Status</span><strong>{getWorkflowStatus(doc)}</strong></div>
@@ -1988,7 +2023,7 @@ const DocumentList = ({
                   <input className="form-input" value={getOfficeName(routeDoc.currentOfficeId)} readOnly />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Destination Offices (chronological order)</label>
+                  <label className="form-label">Destination Offices</label>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '220px', overflow: 'auto' }}>
                     {offices
                       .filter((office) => office.id !== routeDoc.currentOfficeId)
@@ -2011,13 +2046,13 @@ const DocumentList = ({
                               />
                               {office.name}
                             </span>
-                            {checked && <span className="field-hint" style={{ margin: 0 }}>#{order}</span>}
+                            {checked && <span className="field-hint" style={{ margin: 0 }}>{order === 1 ? 'Custody office' : 'Copy'}</span>}
                           </label>
                         );
                       })}
                   </div>
                   <p className="field-hint">
-                    Select one or more offices. Custody moves to the first selected office; remaining destinations stay in the chronological send queue.
+                    Every selected office receives a copy and confirms receipt independently. The first selected office takes custody after confirming receipt.
                   </p>
                 </div>
               </div>

@@ -3,10 +3,10 @@ const { getUserOfficeId } = require('./helpers');
 /**
  * Admin/Mayor see everything.
  * Offices see documents currently assigned to them and their own outbox history:
- * - In Transit → destination office only
+ * - In Transit → primary destination and every recipient in the latest delivery
  * - Receptionists retain read access to records first registered at their office
  *
- * Flow: Reception → Selected Office → Received by Selected Office
+ * Flow: Reception → Selected Offices → Independently confirmed receipts
  * Office users retain current operational access; Receptionists retain lifecycle tracking.
  */
 const isGlobalDocumentViewer = (req) => {
@@ -20,6 +20,7 @@ const getOfficeDocumentVisibilityClauses = (officeId) => [
   { originOfficeId: officeId },
   { intakeOfficeId: officeId },
   { 'sendHistory.fromOfficeId': officeId },
+  { 'sendHistory.recipientOfficeId': officeId },
 ];
 
 const getScopedDocumentQuery = (req) => {
@@ -54,8 +55,7 @@ const getScopedTransmissionQuery = (req) => {
   };
 };
 
-// Do not expand document access via historical transmission IDs —
-// that was leaking documents to offices that already forwarded them.
+// Copy access uses markers on the latest delivery, rather than all historical recipients.
 const getScopedDocumentQueryWithTransmissions = async (req) => getScopedDocumentQuery(req);
 
 module.exports = {

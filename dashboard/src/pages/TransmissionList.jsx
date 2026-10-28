@@ -36,6 +36,7 @@ const TransmissionList = ({
   const [filterDate, setFilterDate] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [detailTransmission, setDetailTransmission] = useState(null);
+  const [receivingId, setReceivingId] = useState('');
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
 
@@ -101,6 +102,8 @@ const TransmissionList = ({
     const finalStatus = finalWorkflowStatuses.includes(status);
     return (
       Boolean(doc) &&
+      !(doc.sendHistory || []).some((event) => event.active) &&
+      !transmissions.some((item) => item.documentId === doc.id && !item.receivedBy) &&
       isApprovedForWorkflow(doc) &&
       transmittableStatuses.includes(status) &&
       (isApprovalUser ||
@@ -305,10 +308,16 @@ const TransmissionList = ({
     transmission.toOfficeId === currentUser?.officeId;
 
   const handleReceive = async (id) => {
-    await onUpdate(id, {
-      receivedBy: currentUser?.id || "USR-001",
-      receivedAt: new Date().toISOString(),
-    });
+    if (receivingId || !currentUser?.id) return;
+    setReceivingId(id);
+    try {
+      const saved = await onUpdate(id, { receivedBy: currentUser.id });
+      if (saved) setDetailTransmission(saved);
+    } catch {
+      // The shared save handler shows the error; leave the receipt available for retry.
+    } finally {
+      setReceivingId('');
+    }
   };
 
   return (
@@ -663,19 +672,10 @@ const TransmissionList = ({
                         {canReceiveTransmission(transmission) ? (
                           <button
                             className="btn btn-success"
-                            onClick={async () => {
-                              try {
-                                await handleReceive(transmission.id);
-                                setDetailTransmission({
-                                  ...transmission,
-                                  receivedBy: currentUser?.id,
-                                });
-                              } catch {
-                                // The shared save handler already shows the API error.
-                              }
-                            }}
+                            disabled={Boolean(receivingId)}
+                            onClick={() => handleReceive(transmission.id)}
                           >
-                            <CheckCircle2 size={14} /> Receive Transmission
+                            <CheckCircle2 size={14} /> {receivingId === transmission.id ? 'Receiving…' : 'Receive document'}
                           </button>
                         ) : (
                           <p className="detail-empty">

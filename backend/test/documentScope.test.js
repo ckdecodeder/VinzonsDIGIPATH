@@ -8,6 +8,7 @@ test('office visibility includes originated and previously sent documents', () =
 
   assert(clauses.some((clause) => clause.originOfficeId === 'OFF-008'));
   assert(clauses.some((clause) => clause['sendHistory.fromOfficeId'] === 'OFF-008'));
+  assert(clauses.some((clause) => clause['sendHistory.recipientOfficeId'] === 'OFF-008'));
 });
 
 test('receptionist document visibility is limited to incoming documents', () => {

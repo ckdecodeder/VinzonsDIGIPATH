@@ -27,8 +27,8 @@ const {
   normalizePriorityLevel,
   canSendDocument,
   buildResubmissionUpdates,
-  buildSendTransition,
 } = require('../utils/documentRouting');
+const { sendHandoffs } = require('../utils/documentHandoffs');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
@@ -95,6 +95,7 @@ const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'I
   const isMayorApprovalHandoff = requiresMayorApproval
     && !doc.mayorApprovalCleared
     && doc.currentOfficeId !== mayorsOfficeId
+    && toOfficeIds.length === 1
     && toOfficeIds[0] === mayorsOfficeId;
   if (!canSendDocument({ requiresMayorApproval, mayorApprovalCleared: doc.mayorApprovalCleared }) && !isMayorApprovalHandoff) {
     const err = new Error('Mayor approval must be recorded before routing this document onward');
@@ -102,37 +103,24 @@ const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'I
     throw err;
   }
   const sentAt = new Date().toISOString();
-  const transition = buildSendTransition({
-    document: doc,
+  const fromOffice = await getOfficeLabel(doc.currentOfficeId || doc.originOfficeId);
+  const officeLabels = new Map(offices.map((office) => [office.id, office.name]));
+  const result = await sendHandoffs({
+    documentId: doc.id,
+    fromOfficeId: doc.currentOfficeId,
     toOfficeIds,
     sentBy: req.user.id,
     sentAt,
     transmissionType,
+    requiresMayorApproval,
+    mayorsOfficeId,
+    eventFor: (transmission) => createTimelineEvent(req, 'document_routed', 'Sent to office',
+      `Sent from ${fromOffice} to ${officeLabels.get(transmission.toOfficeId) || transmission.toOfficeId}`,
+      transmission.fromOfficeId, transmission.id),
   });
-  const pending = await Transmission.findOne({ documentId: doc.id, receivedBy: null }).lean();
-  if (pending) {
-    const err = new Error('This document already has a pending transmission that must be received first');
-    err.status = 409;
-    throw err;
-  }
-
-  const transmission = new Transmission(transition.transmission);
-  await transmission.save();
-  try {
-    const fromOffice = await getOfficeLabel(doc.currentOfficeId || doc.originOfficeId);
-    const toOffice = await getOfficeLabel(transmission.toOfficeId);
-    const savedDoc = await appendDocumentTimeline(
-      doc.id,
-      createTimelineEvent(
-        req,
-        'document_routed',
-        'Sent to office',
-        `Sent from ${fromOffice} to ${toOffice}`,
-        transmission.fromOfficeId,
-        transmission.id,
-      ),
-      transition.documentUpdates,
-    );
+  const savedDoc = result.document;
+  for (const transmission of result.transmissions) {
+    const toOffice = officeLabels.get(transmission.toOfficeId) || transmission.toOfficeId;
     await runPostSaveSideEffects('transmission_log', () =>
       createLogEntry(req, 'transmission_created', `Routed "${doc.subject}" from ${fromOffice} to ${toOffice}`, transmission.id));
     await runPostSaveSideEffects('transmission_notify', () => createNotification({
@@ -149,12 +137,9 @@ const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'I
         message: `Your document ${doc.trackingNumber} was routed from ${fromOffice} to ${toOffice}.`,
         metadata: { transmissionId: transmission.id },
       }));
-    broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
-    return { document: savedDoc, transmission };
-  } catch (err) {
-    await Transmission.deleteMany({ id: transmission.id });
-    throw err;
   }
+  broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
+  return result;
 };
 
 const assertCanAccessDocument = async (req, documentId) => {
@@ -663,6 +648,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   delete updates._id;
   delete updates.__v;
   delete updates.timeline;
+  for (const field of ['sendHistory', 'sendQueue', 'routePlan', 'routeStep', 'preTransitStatus', 'lastRoutedAt']) delete updates[field];
   // Current office still moves via route/receive/RFID only.
   delete updates.currentOfficeId;
   // While still in intake, allow From/To from the scanner form so the destined
@@ -1019,7 +1005,7 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
   res.json(savedDoc);
 }));
 
-// Office / Mayor send to one or many offices (chronological send history; custody to first).
+// Deliver to every selected office; first destination retains primary custody.
 router.post('/:id/send', sendRoles, asyncHandler(async (req, res) => {
   const doc = await assertCanAccessDocument(req, req.params.id);
   const toOfficeIds = [...new Set(
@@ -1039,6 +1025,7 @@ router.post('/:id/send', sendRoles, asyncHandler(async (req, res) => {
   const isMayorApprovalHandoff = requiresMayorApproval
     && !doc.mayorApprovalCleared
     && doc.currentOfficeId !== mayorsOfficeId
+    && toOfficeIds.length === 1
     && toOfficeIds[0] === mayorsOfficeId;
   if (!canSendDocument({ requiresMayorApproval, mayorApprovalCleared: doc.mayorApprovalCleared }) && !isMayorApprovalHandoff) {
     return res.status(400).json({ message: 'Mayor approval must be recorded before routing this document onward' });

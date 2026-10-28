@@ -40,6 +40,7 @@ import { toDocumentSummary } from './api/pagination.mjs';
 import { bootstrapApiBase } from './api/apiBase';
 import DataSectionStatus from './components/DataSectionStatus';
 import { sortNewest } from './utils/sorting';
+import { receiveDocumentWithConfirmation } from './utils/receiveDocument';
 import { RealtimeProvider } from './context/RealtimeContext';
 import { realtimeClient } from './ws/realtimeClient';
 
@@ -114,6 +115,7 @@ function App() {
 
   const [documents, setDocuments] = useState([]);
   const [transmissions, setTransmissions] = useState([]);
+  const transmissionUpdatesInFlight = useRef(new Set());
   const [archives, setArchives] = useState([]);
   const [device, setDevice] = useState(null);
   const [logs, setLogs] = useState([]);
@@ -495,7 +497,7 @@ function App() {
     const toOfficeId = transmission?.toOfficeId;
     const documentId = transmission?.documentId;
     if (!documentId || !toOfficeId) return null;
-    return handleSendDocument(documentId, [toOfficeId]);
+    return handleSendDocument(documentId, transmission.toOfficeIds || [toOfficeId]);
   };
 
   const handleSendDocument = async (documentId, toOfficeIds = []) => {
@@ -522,11 +524,31 @@ function App() {
   };
 
   const handleUpdateTransmission = async (id, updates) => {
-    const savedTransmission = await runMutation(() => transmissionService.update(id, updates));
-    upsertTransmission(savedTransmission);
-    showActionToast('saved', getTransmissionUpdateToastMessage(updates));
-    refreshAfterMutation();
-    return savedTransmission;
+    if (transmissionUpdatesInFlight.current.has(id)) return null;
+    transmissionUpdatesInFlight.current.add(id);
+    try {
+      let savedTransmission;
+      if (updates.receivedBy) {
+        const transmission = transmissions.find((item) => item.id === id);
+        savedTransmission = await receiveDocumentWithConfirmation({
+          transmission, currentUser, updates,
+          document: documents.find((item) => item.id === transmission?.documentId),
+          office: offices.find((item) => item.id === transmission?.toOfficeId),
+        }, {
+          confirm: confirmUser,
+          save: (transmissionId, payload) => runMutation(() => transmissionService.update(transmissionId, payload)),
+        });
+        if (!savedTransmission) return null;
+      } else {
+        savedTransmission = await runMutation(() => transmissionService.update(id, updates));
+      }
+      upsertTransmission(savedTransmission);
+      showActionToast('saved', getTransmissionUpdateToastMessage(updates));
+      refreshAfterMutation();
+      return savedTransmission;
+    } finally {
+      transmissionUpdatesInFlight.current.delete(id);
+    }
   };
 
   const handleAddArchive = async (archive) => {

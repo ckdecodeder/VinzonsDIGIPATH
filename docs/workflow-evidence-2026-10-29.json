@@ -1,0 +1,29 @@
+{
+  "date": "2026-10-29",
+  "timezone": "Asia/Manila",
+  "branch": "main",
+  "startingRevision": "f5bfa866879c36e449055320a85f19f820e80520",
+  "state": "LOCAL",
+  "regularTests": { "passed": 77, "failed": 0, "optInIntegrationSkipped": 11 },
+  "separatePostgresHttpIntegration": {
+    "passed": 11,
+    "failed": 0,
+    "storage": "Synthetic records in a temporary schema of the restored test database; schema removed by teardown",
+    "coverage": ["both HTTP send paths", "all selected recipients and notifications", "document scope", "confirmation required", "server receipt identity and time", "receipt order", "concurrent receipts", "duplicate receipt", "concurrent sends", "Mayor approval gate", "transaction rollback", "cancellation", "legacy receipt"]
+  },
+  "browser": {
+    "fixture": "dashboard/test/delivery-harness.html",
+    "storage": "Synthetic in-memory records; no API or database writes",
+    "verified": ["three selected offices", "second office receives independently", "cancel saves nothing", "failed receipt remains pending", "successful retry", "third office receipt", "primary office receipt and custody", "all three per-office receipt states"],
+    "screenshot": "database-export/workflow-validation-2026-10-29/delivery-browser.jpg"
+  },
+  "dashboardProductionBuild": "passed",
+  "initialFailures": ["obsolete queue assertion updated for simultaneous deliveries", "integration fixture missing intakeOfficeId corrected", "sandbox localhost restrictions resolved by running tests with local network access"],
+  "liveRecordsChanged": false,
+  "liveSchemaChanged": false,
+  "liveServicesRestarted": false,
+  "committed": false,
+  "pushed": false,
+  "deployed": false,
+  "outstanding": ["authorized publication and coordinated backend/frontend rollout", "real role and multi-device acceptance", "explicit resend of any remaining legacy queued destinations"]
+}

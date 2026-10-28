@@ -32,3 +32,12 @@ test('office-originated documents outside office custody are tracking-only', () 
     { role: 'Office', officeId: 'OFF-008' },
   ), true);
 });
+
+test('archiving remains unavailable until all selected offices have confirmed receipt', () => {
+  const doc = { status: 'Signed', intakeStatus: 'Approved', currentOfficeId: 'OFF-001', sendHistory: [
+    { active: false, receivedBy: 'FIRST' }, { active: true },
+  ] };
+  assert.equal(canArchiveDocument(doc, approvalUser), false);
+  doc.sendHistory[1] = { active: false, receivedBy: 'SECOND' };
+  assert.equal(canArchiveDocument(doc, approvalUser), true);
+});

@@ -47,4 +47,6 @@ export const canArchiveDocument = (doc, user) => (
   approvalRoles.includes(user?.role)
   && (doc?.intakeStatus || 'Approved') === 'Approved'
   && ['Signed', 'Acknowledged'].includes(statusOf(doc))
+  && !(doc?.sendHistory || []).some((event) => event.active)
+  && !(doc?.sendQueue || []).some(Boolean)
 );
