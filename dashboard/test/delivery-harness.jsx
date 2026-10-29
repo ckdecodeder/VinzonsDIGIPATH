@@ -7,18 +7,32 @@ import { documentService } from '../src/api/documentService.js';
 import { receiveDocumentWithConfirmation } from '../src/utils/receiveDocument.js';
 import '../src/index.css';
 
-const offices = ['SOURCE', 'FIRST', 'SECOND', 'THIRD'].map((id) => ({ id, name: `${id} office` }));
+const layoutCheck = new URLSearchParams(window.location.search).get('layout') === 'multi-office';
+const offices = layoutCheck ? [
+  "Mayor's Office", 'Municipal Planning & Development', 'Municipal Engineering',
+  'Municipal Treasurer', 'Municipal Health Office', 'Municipal Assessor',
+  'Municipal Agriculture', 'Municipal Social Welfare & Development',
+].map((name, index) => ({ id: index ? `DEST-${index}` : 'SOURCE', name }))
+  : ['SOURCE', 'FIRST', 'SECOND', 'THIRD'].map((id) => ({ id, name: `${id} office` }));
+const layoutDeliveries = layoutCheck ? offices.slice(1).map((office, index) => ({
+  id: `LAYOUT-${index}`, transmissionId: `LAYOUT-${index}`, documentId: 'SYNTHETIC-DOC',
+  toOfficeId: office.id, recipientOfficeId: office.id, fromOfficeId: 'SOURCE',
+  active: index !== 5, primary: index === 0, deliveryGroupId: 'LAYOUT-GROUP',
+  receivedBy: index === 5 ? 'SYNTHETIC-RECEIVER' : null,
+  receivedAt: index === 5 ? '2026-10-29T14:17:29.000Z' : null,
+  transmissionDate: '2026-10-29T13:00:00.000Z',
+})) : [];
 const initialDocument = {
   id: 'SYNTHETIC-DOC', trackingNumber: 'SYNTHETIC-001', subject: 'Multiple office delivery check',
-  status: 'Received', intakeStatus: 'Approved', documentDirection: 'Outgoing',
+  status: layoutCheck ? 'In Transit' : 'Received', intakeStatus: 'Approved', documentDirection: 'Outgoing',
   documentTypeId: 'TEST-TYPE', currentOfficeId: 'SOURCE', originOfficeId: 'SOURCE',
-  dateReceived: '2026-10-29', sendHistory: [], timeline: [], routePlan: ['SOURCE'],
+  dateReceived: '2026-10-29', sendHistory: layoutDeliveries, timeline: [], routePlan: ['SOURCE'],
 };
 function Harness() {
   const [doc, setDoc] = useState(initialDocument);
   const docRef = useRef(doc); docRef.current = doc;
   documentService.getById = async () => structuredClone(docRef.current);
-  const [transmissions, setTransmissions] = useState([]);
+  const [transmissions, setTransmissions] = useState(layoutDeliveries);
   const [officeId, setOfficeId] = useState('SOURCE');
   const [dialog, setDialog] = useState(null);
   const [mutations, setMutations] = useState(0);
@@ -65,6 +79,7 @@ function Harness() {
       {error && <p role="alert">{error}</p>}
     </div>
     <DocumentList documents={[doc]} transmissions={transmissions} offices={offices} users={[user]} currentUser={user} currentRole="office"
+      focusDocumentId={layoutCheck ? doc.id : ''}
       documentTypes={[{ id: 'TEST-TYPE', category: 'Synthetic test' }]} onNotify={(notice) => setError(notice.message)}
       onReceiveTransmission={receive} onSendDocument={async (id, destinations) => {
         const created = destinations.map((toOfficeId, index) => ({ id: `TEST-TRN-${index}`, documentId: id, toOfficeId, fromOfficeId: doc.currentOfficeId, sentBy: user.id, receivedBy: null, transmissionDate: '2026-10-29' }));

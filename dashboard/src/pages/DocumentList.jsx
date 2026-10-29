@@ -234,11 +234,14 @@ const DocumentList = ({
   const renderDeliveryStatus = (doc) => {
     const recipients = getDeliveryRecipients(doc);
     if (!recipients.length) return null;
-    return <div className="document-detail-section">
+    return <div className="document-detail-section document-deliveries-section">
       <h4><Send size={14} /> Office Deliveries</h4>
       {recipients.map((event) => <div key={event.id} className="detail-pair">
-        <span>{getOfficeName(event.toOfficeId)}{event.primary ? ' (custody)' : ''}</span>
-        <strong>{event.receivedBy ? `Received — ${formatDateTime(event.receivedAt)}` : 'Awaiting receipt'}</strong>
+        <span>{getOfficeName(event.toOfficeId)}{event.primary && <small className="document-delivery-custody">Custody destination</small>}</span>
+        <strong>{event.receivedBy ? <>
+          Received
+          {event.receivedAt && <time dateTime={event.receivedAt}>{formatDateTime(event.receivedAt)}</time>}
+        </> : 'Awaiting receipt'}</strong>
       </div>)}
     </div>;
   };
@@ -330,11 +333,12 @@ const DocumentList = ({
     return '';
   };
 
-  const getCurrentLocation = (doc) => {
+  const getCurrentLocation = (doc, summarizeDeliveries = false) => {
     const pending = getPendingTransmission(doc.id);
     const latest = getLatestTransmission(doc.id);
 
     const pendingOffices = getDeliveryRecipients(doc).filter((event) => event.active).map((event) => getOfficeName(event.toOfficeId));
+    if (summarizeDeliveries && pendingOffices.length > 1) return `At ${getOfficeName(doc.currentOfficeId)} — ${pendingOffices.length} offices awaiting receipt`;
     if (pendingOffices.length) return `At ${getOfficeName(doc.currentOfficeId)} — awaiting receipt: ${pendingOffices.join(', ')}`;
     if (doc.status === 'In Transit' && pending) {
       const detected = doc.lastDetectedOfficeId
@@ -1179,7 +1183,7 @@ const DocumentList = ({
                         <DocumentWorkflowPipeline
                           doc={doc}
                           hasPendingTransmission={Boolean(pendingTransmission)}
-                          locationLabel={getCurrentLocation(doc)}
+                          locationLabel={getCurrentLocation(doc, true)}
                           workflowNote={workflowExplanation}
                         />
 
@@ -1250,7 +1254,7 @@ const DocumentList = ({
                             <h4><ArrowRightLeft size={14} /> Workflow Actions</h4>
                             {renderDocumentActions(doc, pendingTransmission)}
                             <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
-                            <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc)}</strong></div>
+                            <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc, true)}</strong></div>
                             <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
                           </div>
 
@@ -1413,7 +1417,7 @@ const DocumentList = ({
                 <DocumentWorkflowPipeline
                   doc={doc}
                   hasPendingTransmission={Boolean(pendingTransmission)}
-                  locationLabel={getCurrentLocation(doc)}
+                  locationLabel={getCurrentLocation(doc, true)}
                   workflowNote={workflowExplanation}
                 />
                 <div className="document-detail-grid">
@@ -1430,7 +1434,7 @@ const DocumentList = ({
                         <strong className="documents-custody-badge">Outgoing / In Transit</strong>
                       </div>
                     )}
-                    <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc)}</strong></div>
+                    <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc, true)}</strong></div>
                     <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
                     <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
                     {currentRole !== 'receptionist' && (
@@ -1446,7 +1450,6 @@ const DocumentList = ({
                     <div className="detail-pair"><span>Name</span><strong>{doc.senderName || '-'}</strong></div>
                     <div className="detail-pair"><span>Contact</span><strong>{doc.senderContact || '-'}</strong></div>
                     <div className="detail-pair"><span>From Organization</span><strong>{doc.originOfficeOther || '-'}</strong></div>
-                    <div className="detail-pair"><span>Contact</span><strong>{doc.senderContact || '-'}</strong></div>
                     <div className="detail-pair"><span>Updates</span><strong>{doc.notifySender === false ? 'Disabled' : (doc.senderNotificationChannels || []).join(', ').toUpperCase() || 'Enabled'}</strong></div>
                   </div>
 

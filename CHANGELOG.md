@@ -37,6 +37,27 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-10-30] — Multiple-office document detail layout
+
+- **Type / state:** FIX / LOCAL; implementation and validation complete, included in the local UI commit containing this entry.
+- **Request / reason:** User screenshot shows a long destination badge escaping the modal, a squeezed workflow heading, crowded delivery rows, and duplicate sender contact.
+- **Branch / revision:** `main`, `73753da`; existing local startup-recovery documentation retained.
+- **Intended scope:** Keep workflow summaries concise, allow location text to wrap without shrinking the heading, improve delivery/date and detail-row sizing, remove duplicate contact, and verify synthetic multi-office layouts across screen widths. No business data, backend, credential, Pi, SMS or deployment change.
+- **Actual changes:** Workflow/detail location text summarizes multiple pending offices while the delivery card retains every recipient/status. Banner wraps with a stable heading; location icons do not shrink. Detail columns wrap long office names; delivery custody labels and received timestamps use separate lines. Removed the duplicate Sender Contact row. Extended the development-only delivery harness with seven synthetic destinations, six pending and one received; no real record copied into the fixture.
+- **Validation:** All 46 frontend tests passed; production dashboard build passed. Synthetic browser verified modal/banner/card overflow absent at widths 390, 768, 1024 and 1280, all seven recipients and the received timestamp retained, no browser warnings/errors. Desktop proof saved in ignored `database-export/ui-layout-2026-10-30/after.jpg`. The sandbox-only preview could not be reached initially; rerunning the loopback fixture outside the sandbox resolved that check. Temporary preview server/tab stopped after validation; existing user services were not restarted.
+- **Publication / recovery / outstanding:** Source and documentation are local on `main`; no push or deployment. Includes previously local startup-recovery documentation; private configurations remain ignored. Revert the focused UI change if needed; no database/file rollback required. Verify the actual record after the next frontend publication; physical Pi pairing and SMS remain separate pending work.
+
+## [2026-10-30] — Scanner credential startup recovery
+
+- **Type / state:** CONFIG | SERVICE / LOCAL; startup recovery validated.
+- **Request / reason:** After syncing and stopping services, user reported backend startup blocked by the old weak device credential.
+- **Branch / revision:** `main`, `73753da77189bfdb9834fe9a586975ca43ce6418`; checkout initially clean and aligned with local `origin/main`.
+- **Intended scope:** Preserve current private configuration, apply only a coordinated strong scanner credential to local backend/network/Pi configuration copies, validate runtime and local readiness. Preserve existing database, URLs, JWT secret and device tuning. Physical Pi configuration/reconnect requires its actual update method; no hardware command or SMS.
+- **Actual changes:** Applied the previously prepared strong scanner key to five ignored local files: `backend/.env`, `network.env`, `pi_ws_scanner.env`, `bridge.env`, and `raspberry_pi/.env`. All other parsed settings, including existing JWT secret, endpoints, database and device tuning, were preserved. No application source change or weakened startup guard.
+- **Recovery evidence:** Previous bytes and before/after checksum manifest retained under ignored `database-export/credential-startup-recovery-2026-10-29T16-43-08-957Z/`. Configuration recovery evidence only, not a database backup; physical Pi not modified. Old weak values will still be rejected by the guard and should not be reused for normal startup.
+- **Validation:** All five local copies match the strong credential; runtime validation passed. Briefly started the current backend bound to loopback port 5000: `/api/status` returned HTTP 200, ready=true, database=connected, revision `73753da`. Normal startup schema checks ran; no business-record mutation or hardware command was issued by verification. Stopped only that temporary backend afterward so the user can start it in their terminal.
+- **Publication / outstanding:** User reported syncing and a Vercel build; local checkout aligns with local `origin/main` at `73753da`. No push or frontend deployment performed/independently verified in this recovery. User says physical Pi is not connected yet; copy matching private key settings to its actual runtime when connected, then verify heartbeat/scanning. User can now rerun backend start and restore port forwarding. SMS remains outbox-only. This log update is local.
+
 ## [2026-10-30] — Audit remediation: plan, implementation, tests and commits
 
 - **Type / state:** FIX | CONFIG | DOCS | GIT / COMMITTED source; implementation and local validation complete. Final verification/handoff documentation accompanies this entry.

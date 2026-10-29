@@ -5704,10 +5704,16 @@ body.modal-open .notification-dock {
 
 .document-workflow-pipeline-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 0.9rem;
+}
+
+.document-workflow-pipeline-banner > div {
+  flex: 1 1 16rem;
+  min-width: 0;
 }
 
 .document-workflow-pipeline-banner strong {
@@ -5728,13 +5734,20 @@ body.modal-open .notification-dock {
   align-items: center;
   gap: 0.35rem;
   padding: 0.35rem 0.65rem;
-  border-radius: 999px;
+  border-radius: var(--radius-md);
   background: rgba(8, 145, 178, 0.08);
   border: 1px solid rgba(8, 145, 178, 0.18);
   color: var(--primary-light);
   font-size: 0.72rem;
   font-weight: 600;
-  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.document-workflow-location svg {
+  flex-shrink: 0;
 }
 
 .document-workflow-track {
@@ -5855,6 +5868,8 @@ body.modal-open .notification-dock {
 }
 
 .document-detail-section {
+  min-width: 0;
+  overflow-wrap: anywhere;
   background: var(--bg-surface);
   border: 1.5px solid var(--border-light);
   border-radius: var(--radius-md);
@@ -5883,8 +5898,8 @@ body.modal-open .notification-dock {
 }
 
 .detail-pair {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 0.75rem;
   padding: 0.35rem 0;
   font-size: 0.78rem;
@@ -5903,6 +5918,19 @@ body.modal-open .notification-dock {
   color: var(--text-main);
   text-align: right;
   font-weight: 600;
+}
+
+.document-deliveries-section .detail-pair {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+}
+
+.document-delivery-custody,
+.document-deliveries-section time {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
 }
 
 .detail-empty {
@@ -7069,6 +7097,10 @@ body.modal-open .notification-dock {
   .document-workflow-pipeline-banner {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .document-workflow-pipeline-banner > div {
+    flex: 0 1 auto;
   }
 
   .document-workflow-location {
