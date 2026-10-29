@@ -1,47 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { Archive, Document, Transmission, Notification } = require('../models');
+const { Archive, Document, Notification } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const {
   asyncHandler,
   requireFields,
   createLogEntry,
-  generateId,
   createNotification,
-  appendDocumentTimeline,
   createTimelineEvent,
 } = require('../utils/helpers');
 const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions, isGlobalDocumentViewer } = require('../utils/documentScope');
-const { canArchiveDocument } = require('../utils/documentRouting');
 
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 const approvalRoles = allowRoles('Admin', 'Mayor');
 const updateOptions = { new: true, runValidators: true };
-
-const assertCanAccessDocument = async (req, documentId) => {
-  const doc = await Document.findOne({ id: documentId, ...(await getScopedDocumentQueryWithTransmissions(req)) });
-  if (!doc) {
-    const err = new Error('Document not found or not visible to your office');
-    err.status = 404;
-    throw err;
-  }
-  return doc;
-};
-
-const storedWorkflowStatuses = ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
-const normalizeWorkflowStatus = (value, fallback = 'Received') => {
-  const { normalizeText } = require('../utils/helpers');
-  const status = normalizeText(value);
-  if (!status) return fallback;
-  if (status === 'For Signature') return 'For Signing';
-  if (status === 'Acknoweledged') return 'Acknowledged';
-  return storedWorkflowStatuses.includes(status) ? status : fallback;
-};
-const normalizeWorkflowStatusValue = (status, fallback = 'Received') => {
-  return normalizeWorkflowStatus(status, fallback);
-};
 
 router.use(protect);
 
@@ -57,108 +31,42 @@ router.get('/', allRoles, asyncHandler(async (req, res) => {
   res.json(archives);
 }));
 
+const { archiveDocument, restoreArchive } = require('../utils/archiveWorkflow');
+const sideEffect = async (work) => { try { await work(); } catch (error) { console.error('Archive side effect failed:', error.name); } };
+const validDate = value => typeof value === 'string' && !Number.isNaN(Date.parse(value)) && /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(value).toISOString().slice(0, 10) === value;
+
 router.post('/', approvalRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['documentId']);
-  const doc = await assertCanAccessDocument(req, req.body.documentId);
-  const currentStatus = normalizeWorkflowStatusValue(doc.status, doc.status);
-  const pendingTransmission = await Transmission.findOne({ documentId: doc.id, receivedBy: null }).lean();
-  if (!canArchiveDocument({
-    status: currentStatus,
-    hasPendingTransmission: Boolean(pendingTransmission),
-    sendQueue: doc.sendQueue,
-  })) {
-    if (pendingTransmission || (Array.isArray(doc.sendQueue) && doc.sendQueue.some(Boolean))) {
-      return res.status(400).json({ message: 'Complete all pending office handoffs before archiving this document' });
-    }
-    return res.status(400).json({ message: 'Only Signed, Acknowledged, or For Filing documents can be archived' });
-  }
-
-  const existingArchive = await Archive.findOne({ documentId: req.body.documentId }).lean();
-  if (existingArchive) {
-    return res.status(409).json({ message: 'This document is already archived' });
-  }
-
-  const now = new Date().toISOString();
-  const arc = new Archive({
-    id: req.body.id || generateId('ARC'),
-    documentId: req.body.documentId,
-    userId: req.user.id,
-    date: req.body.date || now.split('T')[0],
-    statusBeforeArchive: currentStatus,
-    createdAt: now,
-    updatedAt: now,
+  if (req.body.date !== undefined && !validDate(req.body.date)) return res.status(400).json({ message: 'Use a valid archive date (YYYY-MM-DD).' });
+  const result = await archiveDocument({
+    documentId: req.body.documentId, userId: req.user.id, date: req.body.date,
+    eventFor: (archive, doc) => createTimelineEvent(req, 'document_archived', 'Archived', `Archived by ${req.user.fname || req.user.username}`, doc.currentOfficeId, archive.id),
   });
-  await arc.save();
-
-  const archivedDoc = await appendDocumentTimeline(
-    doc.id,
-    createTimelineEvent(
-      req,
-      'document_archived',
-      'Archived',
-      `Archived by ${req.user.fname || req.user.username}`,
-      doc.currentOfficeId,
-      arc.id,
-    ),
-    {
-      status: 'Archived',
-      archivedAt: new Date().toISOString(),
-    }
-  );
-  await createLogEntry(req, 'document_archived', `Archived document: ${doc.subject}`, arc.id);
-  await createNotification({
-    officeId: doc.originOfficeId || doc.currentOfficeId,
-    title: 'Document archived',
-    message: `${doc.trackingNumber} was archived as a completed record.`,
-    type: 'success',
-    referenceType: 'archive',
-    referenceId: arc.id,
-    page: 'archives',
-  });
-  await queueSenderNotifications(req, archivedDoc, 'document_archived', {
-    message: `Your document ${doc.trackingNumber} was archived as a completed record.`,
-    metadata: { archiveId: arc.id },
-  });
+  const { archive, document: doc } = result;
+  await sideEffect(() => createLogEntry(req, 'document_archived', `Archived document: ${doc.subject}`, archive.id));
+  await sideEffect(() => createNotification({ officeId: doc.originOfficeId || doc.currentOfficeId, title: 'Document archived', message: `${doc.trackingNumber} was archived as a completed record.`, type: 'success', referenceType: 'archive', referenceId: archive.id, page: 'archives' }));
+  await sideEffect(() => queueSenderNotifications(req, doc, 'document_archived', { message: `Your document ${doc.trackingNumber} was archived as a completed record.`, metadata: { archiveId: archive.id } }));
   broadcastDataInvalidate(['archives', 'documents', 'logs', 'notifications', 'senderNotifications']);
-  res.json(arc);
+  res.json(archive);
 }));
 
 router.put('/:id', approvalRoles, asyncHandler(async (req, res) => {
-  const updates = { ...req.body };
-  delete updates._id;
-  delete updates.__v;
-  updates.updatedAt = new Date().toISOString();
-  const archive = await Archive.findOneAndUpdate({ id: req.params.id }, updates, updateOptions);
+  if (Object.keys(req.body || {}).some(key => key !== 'date')) return res.status(400).json({ message: 'Only the archive date may be edited; document linkage and workflow history are immutable.' });
+  if (!validDate(req.body.date)) return res.status(400).json({ message: 'Use a valid archive date (YYYY-MM-DD).' });
+  const archive = await Archive.findOneAndUpdate({ id: req.params.id }, { date: req.body.date, updatedAt: new Date().toISOString() }, updateOptions);
   if (!archive) return res.status(404).json({ message: 'Archive not found' });
-  await createLogEntry(req, 'archive_updated', `Updated archive ${archive.id}`, archive.id);
-  broadcastDataInvalidate(['archives', 'documents', 'logs']);
+  await sideEffect(() => createLogEntry(req, 'archive_updated', `Updated archive ${archive.id}`, archive.id));
+  broadcastDataInvalidate(['archives', 'logs']);
   res.json(archive);
 }));
 
 router.delete('/:id', approvalRoles, asyncHandler(async (req, res) => {
-  const archive = await Archive.findOne({ id: req.params.id }).lean();
-  if (!archive) return res.status(404).json({ message: 'Archive not found' });
-
-  await Archive.findOneAndDelete({ id: req.params.id });
-  await appendDocumentTimeline(
-    archive.documentId,
-    createTimelineEvent(
-      req,
-      'archive_removed',
-      'Archive record removed',
-      'Archive record removed and document returned to completed status',
-      null,
-      archive.id,
-    ),
-    {
-      status: archive.statusBeforeArchive || 'Acknowledged',
-      archivedAt: '',
-    }
-  );
-  await Notification.deleteMany({ referenceId: archive.id });
-  await createLogEntry(req, 'archive_deleted', `Deleted archive ${archive.id}`, req.params.id);
+  const { archive } = await restoreArchive({ archiveId: req.params.id,
+    eventFor: item => createTimelineEvent(req, 'archive_removed', 'Archive record removed', 'Archive record removed and document returned to completed status', null, item.id),
+  });
+  await sideEffect(() => Notification.deleteMany({ referenceId: archive.id }));
+  await sideEffect(() => createLogEntry(req, 'archive_deleted', `Deleted archive ${archive.id}`, archive.id));
   broadcastDataInvalidate(['archives', 'documents', 'logs']);
   res.json({ success: true });
 }));
-
 module.exports = router;

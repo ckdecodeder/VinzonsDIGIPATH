@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { jsPDF } from "jspdf";
 import PageShell from "./PageShell";
 import PdfFitPreview from "./PdfFitPreview";
+import ProtectedImage from './ProtectedImage';
+import { readMediaBlob } from '../utils/protectedMedia';
 import {
   Camera as CameraIcon,
   Scan,
@@ -111,7 +113,7 @@ const renderScannedDocumentPreview = (src, { alt = 'Scanned document', isPdf = f
   }
   return (
     <div className="scanner-scanned-preview-shell">
-      <img src={resolved} alt={alt} className="scanner-scanned-preview-image" />
+      <ProtectedImage src={resolved} alt={alt} className="scanner-scanned-preview-image" />
     </div>
   );
 };
@@ -133,9 +135,7 @@ const loadCapturedPage = async (file) => {
   const src = resolveUploadUrl(file?.dataUrl || file?.previewUrl || file?.url);
   if (!src) throw new Error('A captured page is missing its image URL.');
 
-  const response = await fetch(src);
-  if (!response.ok) throw new Error(`Unable to load captured page "${file.name || 'scan'}".`);
-  const blob = await response.blob();
+  const blob = await readMediaBlob(src);
   const objectUrl = URL.createObjectURL(blob);
 
   try {

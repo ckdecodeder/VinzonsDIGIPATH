@@ -2,7 +2,8 @@
  * Wipe documents, transmissions, and archives (and related dependent rows).
  * Usage: node backend/scripts/wipe-workflow-data.js
  */
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
+require('../utils/maintenanceGuard').requireTestWrite(process.env.DATABASE_URL, process.argv);
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');

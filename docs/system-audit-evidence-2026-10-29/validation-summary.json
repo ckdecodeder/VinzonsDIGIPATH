@@ -1,0 +1,56 @@
+{
+  "auditedRevision": "7d0631dc534fbac9a58e9c85ade12ea731055727",
+  "branch": "main",
+  "remoteMainVerified": true,
+  "validation": {
+    "regularTests": {
+      "passed": 77,
+      "failed": 0,
+      "skippedOptIn": 11
+    },
+    "isolatedPostgresHttpTests": {
+      "passed": 11,
+      "failed": 0,
+      "temporarySchemasRemovedByTeardown": true
+    },
+    "distinctPassingTests": 88,
+    "syntheticFindingProbes": 10,
+    "dashboardProductionBuild": "passed",
+    "syntax": {
+      "commonJs": 80,
+      "python": 23,
+      "powerShell": 6,
+      "shell": 55,
+      "errors": 0
+    },
+    "rootAndRaspberryPiPythonShellCopiesMatch": true,
+    "dependencyTopLevelResolution": "passed",
+    "browser": {
+      "publishedEntry": "rendered",
+      "nonexistentSyntheticTrackingNumber": "Tracking number not found; controls recovered",
+      "capturedWarningsOrErrors": 0
+    }
+  },
+  "state": {
+    "applicationChanges": false,
+    "productionRecordWrites": false,
+    "hardwareCommands": false,
+    "environmentChanges": false,
+    "serviceRestarts": false,
+    "commit": false,
+    "push": false,
+    "deployment": false
+  },
+  "limits": [
+    "No physical-device/camera/motor/native-print acceptance",
+    "No authenticated production browser workflow mutation",
+    "No running backend source revision identity",
+    "Public device-key probe declined by automatic review; no device credential transmitted",
+    "Dependency exploitability not established solely by registry severity",
+    "Initial sandbox readiness/Bash/registry failures resolved on authorized reruns"
+  ],
+  "trackedExportPasswordMaterial": {
+    "bcryptRows": 15,
+    "plaintextPasswordRows": 0
+  }
+}

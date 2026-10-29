@@ -1,7 +1,7 @@
 const { getDatabaseStatus } = require('../config/db');
 
 // ─── ID & Tracking ─────────────────────────────────────────────────────────────
-const generateId = (prefix) => `${prefix}-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
+const generateId = (prefix) => `${prefix}-${require('node:crypto').randomUUID()}`;
 
 const generateTrackingNumber = () => {
   const year = new Date().getFullYear();
@@ -83,7 +83,7 @@ const createTimelineEvent = (req, action, label, details, officeId = null, refer
   timestamp: new Date().toISOString(),
 });
 
-const appendDocumentTimeline = async (documentId, event, updates = {}) => {
+const appendDocumentTimeline = async (documentId, event, updates = {}, options = {}) => {
   const { Document } = require('../models');
   const now = new Date().toISOString();
   return Document.findOneAndUpdate(
@@ -92,7 +92,7 @@ const appendDocumentTimeline = async (documentId, event, updates = {}) => {
       $set: { ...updates, updatedAt: updates.updatedAt || now },
       $push: { timeline: event },
     },
-    { new: true, runValidators: true }
+    { new: true, runValidators: true, ...options }
   );
 };
 

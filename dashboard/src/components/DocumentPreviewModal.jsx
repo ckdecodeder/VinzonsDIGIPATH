@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   X,
   MapPin,
@@ -12,6 +12,7 @@ import DocumentWorkflowPipeline from './DocumentWorkflowPipeline';
 import { getWorkflowStatus } from '../utils/documentWorkflow';
 import { getDocumentFiles } from '../utils/documentFiles';
 import { resolveUploadUrl } from '../utils/mediaUrl';
+import { readMediaBlob } from '../utils/protectedMedia';
 import { getTimelineEventLabel, getTimelineEventOffice, getTimelineEventUser } from '../utils/documentTimeline';
 
 const formatDateTime = (value) => {
@@ -37,6 +38,18 @@ const DocumentPreviewModal = ({
   currentUser,
   onClose,
 }) => {
+  const [fileError, setFileError] = useState('');
+  const openFile = async (event, href) => {
+    event.preventDefault();
+    const popup = window.open('', '_blank');
+    if (!popup) { setFileError('Allow popups to open this file.'); return; }
+    try {
+      const objectUrl = URL.createObjectURL(await readMediaBlob(href));
+      popup.opener = null;
+      popup.location.replace(objectUrl);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    } catch (error) { popup.close(); setFileError(error.message || 'Unable to open this file.'); }
+  };
   if (!doc) return null;
 
   const getOfficeName = (officeId) =>
@@ -181,6 +194,7 @@ const DocumentPreviewModal = ({
 
             <div className="document-detail-section">
               <h4><Paperclip size={14} /> Attachments</h4>
+              {fileError && <p role="alert">{fileError}</p>}
               {files.length ? (
                 <div className="attachment-list">
                   {files.map((file) => {
@@ -193,6 +207,7 @@ const DocumentPreviewModal = ({
                             href={href}
                             target="_blank"
                             rel="noreferrer"
+                            onClick={event => openFile(event, href)}
                           >
                             <Eye size={14} />
                             <span>{file.name}</span>

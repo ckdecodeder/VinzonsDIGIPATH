@@ -20,7 +20,7 @@ const {
 const { normalizeSenderNotificationChannels, queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
-const { persistAttachments, removeOrphanedAttachments } = require('../utils/attachments');
+const { persistAttachments } = require('../utils/attachments');
 const { parsePagination, contains, andFilters, documentSummaryAttributes } = require('../utils/listing');
 const {
   buildInitialOfficeRoute,
@@ -29,6 +29,8 @@ const {
   buildResubmissionUpdates,
 } = require('../utils/documentRouting');
 const { sendHandoffs } = require('../utils/documentHandoffs');
+const { withModelTransaction } = require('../utils/transactionContext');
+const { snapshotGuard, assertCurrentCustody } = require('../utils/workflowGuard');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
@@ -81,7 +83,7 @@ const staysAtMayorForApproval = async (doc) => (
   && !doc.mayorApprovalCleared
 );
 
-const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'Internal') => {
+const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'Internal', deferredEffects = null) => {
   const offices = await Office.find({}).lean();
   const knownOfficeIds = new Set((offices || []).map((office) => office.id));
   const invalidOfficeIds = toOfficeIds.filter((id) => !knownOfficeIds.has(id));
@@ -118,27 +120,30 @@ const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'I
       `Sent from ${fromOffice} to ${officeLabels.get(transmission.toOfficeId) || transmission.toOfficeId}`,
       transmission.fromOfficeId, transmission.id),
   });
-  const savedDoc = result.document;
-  for (const transmission of result.transmissions) {
-    const toOffice = officeLabels.get(transmission.toOfficeId) || transmission.toOfficeId;
-    await runPostSaveSideEffects('transmission_log', () =>
-      createLogEntry(req, 'transmission_created', `Routed "${doc.subject}" from ${fromOffice} to ${toOffice}`, transmission.id));
-    await runPostSaveSideEffects('transmission_notify', () => createNotification({
-      officeId: transmission.toOfficeId,
-      title: 'Incoming document route',
-      message: `${doc.trackingNumber} was routed from ${fromOffice}.`,
-      type: doc.priorityLevel === 'urgent' ? 'danger' : 'warning',
-      referenceType: 'transmission',
-      referenceId: transmission.id,
-      page: 'transmissions',
-    }));
-    await runPostSaveSideEffects('transmission_sender', () =>
-      queueSenderNotifications(req, savedDoc, 'document_routed', {
-        message: `Your document ${doc.trackingNumber} was routed from ${fromOffice} to ${toOffice}.`,
-        metadata: { transmissionId: transmission.id },
+  const effects = async () => {
+    const savedDoc = result.document;
+    for (const transmission of result.transmissions) {
+      const toOffice = officeLabels.get(transmission.toOfficeId) || transmission.toOfficeId;
+      await runPostSaveSideEffects('transmission_log', () =>
+        createLogEntry(req, 'transmission_created', `Routed "${doc.subject}" from ${fromOffice} to ${toOffice}`, transmission.id));
+      await runPostSaveSideEffects('transmission_notify', () => createNotification({
+        officeId: transmission.toOfficeId,
+        title: 'Incoming document route',
+        message: `${doc.trackingNumber} was routed from ${fromOffice}.`,
+        type: doc.priorityLevel === 'urgent' ? 'danger' : 'warning',
+        referenceType: 'transmission',
+        referenceId: transmission.id,
+        page: 'transmissions',
       }));
-  }
-  broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
+      await runPostSaveSideEffects('transmission_sender', () =>
+        queueSenderNotifications(req, savedDoc, 'document_routed', {
+          message: `Your document ${doc.trackingNumber} was routed from ${fromOffice} to ${toOffice}.`,
+          metadata: { transmissionId: transmission.id },
+        }));
+    }
+    broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
+  };
+  if (deferredEffects) deferredEffects.push(effects); else await effects();
   return result;
 };
 
@@ -237,6 +242,7 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
   }
 
   if (updates.status && updates.status !== existingDoc.status) {
+    assertCurrentCustody(req, existingDoc);
     if (isPendingRegistrationStatusChange) {
       return;
     }
@@ -295,7 +301,8 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
   }
 
   const now = new Date().toISOString();
-  const scannedFiles = await persistAttachments(req, body.scannedFiles || []);
+  const sourceFiles = body.scannedFiles?.length ? body.scannedFiles : body.scannedImageUrl ? [{ name: 'scan', dataUrl: body.scannedImageUrl }] : [];
+  const scannedFiles = await persistAttachments(req, sourceFiles);
   // External docs go straight to Mayor as actionable (no Pending Review gate).
   const defaultIntakeStatus = (isReceptionist || scanner)
     ? 'Approved'
@@ -368,14 +375,14 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
 
   return {
     ...body,
-    id: body.id || generateId('DOC'),
+    id: generateId('DOC'),
     trackingNumber: body.trackingNumber || generateTrackingNumber(),
     documentDirection,
     status: finalStatus,
     intakeStatus: requestedIntakeStatus,
     priorityLevel: normalizePriorityLevel(body.priorityLevel),
     dateReceived: body.dateReceived || now.split('T')[0],
-    createdAt: body.createdAt || now,
+    createdAt: now,
     updatedAt: now,
     documentTypeId,
     documentTypeOther: normalizeText(body.documentTypeOther),
@@ -393,13 +400,14 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     notifySender: body.notifySender !== undefined ? Boolean(body.notifySender) : true,
     senderNotificationConsent: body.senderNotificationConsent !== undefined ? Boolean(body.senderNotificationConsent) : true,
     scannedFiles,
-    scannedImageUrl: scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || body.scannedImageUrl,
+    scannedImageUrl: scannedFiles[0]?.url || scannedFiles[0]?.dataUrl || '',
     sendHistory: startsAtOrigin ? initialRoute.sendHistory : (Array.isArray(body.sendHistory) ? body.sendHistory : []),
     sendQueue: startsAtOrigin ? initialRoute.sendQueue : (Array.isArray(body.sendQueue) ? body.sendQueue : []),
     routePlan: startsAtOrigin ? initialRoute.routePlan : (Array.isArray(body.routePlan) ? body.routePlan : []),
     routeStep: startsAtOrigin ? initialRoute.routeStep : (Number(body.routeStep) || 0),
     // Never trust client-provided approval state during registration.
     mayorApprovalCleared: false,
+    verifiedBy: '', verifiedAt: '', rejectionReason: '', completedAt: '', archivedAt: '', timeline: [],
   };
 };
 
@@ -449,16 +457,19 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
       },
     ],
   });
-  await doc.save();
-
   const initialDestinations = (documentPayload.routePlan || []).slice(1);
   let savedDoc = doc;
   let transmission = null;
-  if (initialDestinations.length && !(await staysAtMayorForApproval(doc))) {
-    const handoff = await startDocumentHandoff(req, doc, initialDestinations, 'External');
-    savedDoc = handoff.document;
-    transmission = handoff.transmission;
-  }
+  const deferred = [];
+  await withModelTransaction(Document._Model, async () => {
+    await doc.save();
+    if (initialDestinations.length && !(await staysAtMayorForApproval(doc))) {
+      const handoff = await startDocumentHandoff(req, doc, initialDestinations, 'External', deferred);
+      savedDoc = handoff.document;
+      transmission = handoff.transmission;
+    }
+  });
+  for (const effect of deferred) await effect();
 
   let deviceEvent = null;
   if (req.body.deviceId) {
@@ -569,18 +580,21 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
       ...initialRouteTimeline,
     ],
   });
-  await doc.save();
-
   let savedDoc = doc;
   let createdTransmission = null;
-  if (['Office', 'Receptionist'].includes(req.user?.role)) {
-    const initialDestinations = (documentPayload.routePlan || []).slice(1);
-    if (initialDestinations.length && !(await staysAtMayorForApproval(doc))) {
-      const handoff = await startDocumentHandoff(req, doc, initialDestinations);
-      savedDoc = handoff.document;
-      createdTransmission = handoff.transmission;
+  const deferred = [];
+  await withModelTransaction(Document._Model, async () => {
+    await doc.save();
+    if (['Office', 'Receptionist'].includes(req.user?.role)) {
+      const initialDestinations = (documentPayload.routePlan || []).slice(1);
+      if (initialDestinations.length && !(await staysAtMayorForApproval(doc))) {
+        const handoff = await startDocumentHandoff(req, doc, initialDestinations, 'Internal', deferred);
+        savedDoc = handoff.document;
+        createdTransmission = handoff.transmission;
+      }
     }
-  }
+  });
+  for (const effect of deferred) await effect();
 
   await runPostSaveSideEffects('create_log', () =>
     createLogEntry(req, 'document_received', `Registered document: ${doc.subject}`, doc.id));
@@ -645,6 +659,9 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   }
 
   const updates = { ...requestedUpdates };
+  if (updates.id !== undefined && updates.id !== existingDoc.id) return res.status(400).json({ message: 'Document identity is immutable.' });
+  if (updates.trackingNumber !== undefined && updates.trackingNumber !== existingDoc.trackingNumber) return res.status(400).json({ message: 'Tracking number is immutable.' });
+  for (const field of ['id', 'trackingNumber', 'intakeOfficeId', 'createdAt', 'lastDetectedOfficeId', 'lastDetectedAt', 'rfidTag', 'scannedImageUrl', 'completedAt', 'archivedAt']) delete updates[field];
   delete updates._id;
   delete updates.__v;
   delete updates.timeline;
@@ -665,13 +682,11 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     if (updates.scannedFiles.length === 0) {
       return res.status(400).json({ message: 'A document must keep at least one scanned file attachment' });
     }
-    const previousFiles = existingDoc.scannedFiles || [];
-    updates.scannedFiles = await persistAttachments(req, updates.scannedFiles);
+    updates.scannedFiles = await persistAttachments(req, updates.scannedFiles, { existingFiles: existingDoc.scannedFiles || [] });
     // Always derive cover URL from the remaining files (supports removals).
     updates.scannedImageUrl = updates.scannedFiles[0]?.url
       || updates.scannedFiles[0]?.dataUrl
       || '';
-    await removeOrphanedAttachments(previousFiles, updates.scannedFiles);
   }
 
   const timelineEvents = [];
@@ -738,7 +753,10 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     $set: updates,
     ...(timelineEvents.length ? { $push: { timeline: { $each: timelineEvents } } } : {}),
   };
-  const doc = await Document.findOneAndUpdate({ id: req.params.id }, updateCommand, updateOptions);
+  // Recheck the state and permission under the same lock used by routing/receipt/archive.
+  const doc = await Document.findOneAndUpdate({ id: req.params.id }, updateCommand, {
+    ...updateOptions, validate: current => { snapshotGuard(req, existingDoc)(current); assertValidDocumentUpdate(req, current, requestedUpdates); },
+  });
   if (!doc) return res.status(404).json({ message: 'Document not found' });
   await createLogEntry(req, 'document_updated', `Updated document: ${doc.subject}`, doc.id);
   const existingSenderOutboxCount = await SenderNotification.countDocuments({ documentId: doc.id });
@@ -786,6 +804,7 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
   }
 
   const doc = await assertCanAccessDocument(req, req.params.id);
+  assertCurrentCustody(req, doc);
   const currentStatus = normalizeWorkflowStatus(doc.status, doc.status);
   const canReviewPending = doc.intakeStatus === 'Pending Review';
   const canRejectApproved = intakeStatus === 'Rejected'
@@ -824,7 +843,7 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
     rejectionReason: intakeStatus === 'Rejected' ? String(rejectionReason).trim() : '',
     ...(intakeStatus === 'Rejected' ? { mayorApprovalCleared: false } : {}),
     ...(intakeStatus === 'Rejected' ? { currentOfficeId: nextOfficeId, destinationOfficeId: nextOfficeId } : {}),
-  });
+  }, { validate: snapshotGuard(req, doc, { custody: true }) });
 
   await runPostSaveSideEffects('verify_log', () => createLogEntry(
     req,
@@ -879,7 +898,8 @@ router.post('/:id/resubmit', documentCreateRoles, asyncHandler(async (req, res) 
     ),
     {
       ...buildResubmissionUpdates(),
-    }
+    },
+    { validate: snapshotGuard(req, doc, { custody: !isApprovalRole(req) }) }
   );
 
   await createLogEntry(req, 'document_resubmitted', `Resubmitted document for review: ${doc.subject}`, doc.id);
@@ -925,6 +945,7 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
   }
 
   const doc = await assertCanAccessDocument(req, req.params.id);
+  assertCurrentCustody(req, doc);
   const currentStatus = normalizeWorkflowStatus(doc.status, doc.status);
   if (currentStatus === 'Archived') {
     return res.status(400).json({ message: 'Archived documents can no longer be updated' });
@@ -973,6 +994,7 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
       doc.id,
     ),
     updates,
+    { validate: snapshotGuard(req, doc, { custody: true }) },
   );
 
   await runPostSaveSideEffects('process_log', () => createLogEntry(req, action, `${labels[action]}: ${doc.subject}`, doc.id));
@@ -1082,6 +1104,7 @@ router.post('/:id/return-to-sender', allowRoles('Admin', 'Receptionist'), asyncH
       destinationOfficeId: '',
       sendQueue: [],
     },
+    { validate: snapshotGuard(req, doc, { custody: !isApprovalRole(req) }) },
   );
 
   await runPostSaveSideEffects('return_log', () =>
@@ -1096,32 +1119,35 @@ router.post('/:id/return-to-sender', allowRoles('Admin', 'Receptionist'), asyncH
 }));
 
 router.delete('/:id', adminOnly, asyncHandler(async (req, res) => {
-  const doc = await Document.findOne({ id: req.params.id }).lean();
-  if (!doc) return res.status(404).json({ message: 'Document not found' });
-  const [relatedTransmissions, relatedArchives, relatedEvents, relatedCommands] = await Promise.all([
-    Transmission.find({ documentId: req.params.id }).select('id').lean(),
-    Archive.find({ documentId: req.params.id }).select('id').lean(),
-    DeviceEvent.find({ documentId: req.params.id }).select('id').lean(),
-    Command.find({ resultDocumentId: req.params.id }).select('id').lean(),
-  ]);
-  const relatedReferenceIds = [
-    req.params.id,
-    ...relatedTransmissions.map((item) => item.id),
-    ...relatedArchives.map((item) => item.id),
-    ...relatedEvents.map((item) => item.id),
-    ...relatedCommands.map((item) => item.id),
-  ];
+  let doc;
+  await withModelTransaction(Document._Model, async () => {
+    doc = await Document.findOne({ id: req.params.id }).forUpdate();
+    if (!doc) { const error = new Error('Document not found'); error.status = 404; throw error; }
+    const [relatedTransmissions, relatedArchives, relatedEvents, relatedCommands] = await Promise.all([
+      Transmission.find({ documentId: req.params.id }).select('id').lean(),
+      Archive.find({ documentId: req.params.id }).select('id').lean(),
+      DeviceEvent.find({ documentId: req.params.id }).select('id').lean(),
+      Command.find({ resultDocumentId: req.params.id }).select('id').lean(),
+    ]);
+    const relatedReferenceIds = [
+      req.params.id,
+      ...relatedTransmissions.map((item) => item.id),
+      ...relatedArchives.map((item) => item.id),
+      ...relatedEvents.map((item) => item.id),
+      ...relatedCommands.map((item) => item.id),
+    ];
 
-  await Document.findOneAndDelete({ id: req.params.id });
-  await Promise.all([
-    Transmission.deleteMany({ documentId: req.params.id }),
-    Archive.deleteMany({ documentId: req.params.id }),
-    DeviceEvent.deleteMany({ documentId: req.params.id }),
-    Command.deleteMany({ resultDocumentId: req.params.id }),
-    SenderNotification.deleteMany({ documentId: req.params.id }),
-    Notification.deleteMany({ referenceId: { $in: relatedReferenceIds } }),
-  ]);
-  await createLogEntry(req, 'document_deleted', `Deleted document and related workflow records: ${doc.subject}`, req.params.id);
+    await Document.findOneAndDelete({ id: req.params.id });
+    await Promise.all([
+      Transmission.deleteMany({ documentId: req.params.id }),
+      Archive.deleteMany({ documentId: req.params.id }),
+      DeviceEvent.deleteMany({ documentId: req.params.id }),
+      Command.deleteMany({ resultDocumentId: req.params.id }),
+      SenderNotification.deleteMany({ documentId: req.params.id }),
+      Notification.deleteMany({ referenceId: { $in: relatedReferenceIds } }),
+    ]);
+  });
+  await runPostSaveSideEffects('delete_log', () => createLogEntry(req, 'document_deleted', `Deleted document and related workflow records: ${doc.subject}`, req.params.id));
   broadcastDataInvalidate(['documents', 'transmissions', 'archives', 'logs', 'notifications', 'senderNotifications']);
   res.json({ success: true });
 }));

@@ -9,6 +9,7 @@ dashboard/dist/
 backend/uploads/
 backend/pgdata/
 database-export/
+dbcollections/*.json
 
 *.log
 .DS_Store

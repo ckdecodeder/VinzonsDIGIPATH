@@ -8,19 +8,17 @@ const { corsOriginCallback } = require('./utils/cors');
 const { formatServerUrls } = require('./utils/lanIp');
 const { getPublicApiUrl } = require('./utils/publicApiUrl');
 const { parseIceServers } = require('./utils/webrtcConfig');
-const { uploadsRoot } = require('./config/storage');
+const { createFileRouter } = require('./routes/files');
+const { validateRuntimeConfig } = require('./config/runtime');
 
 const app = express();
-const isProduction = process.env.NODE_ENV === 'production';
-
-if (isProduction) {
-  const weakJwtSecret = !process.env.JWT_SECRET || process.env.JWT_SECRET === 'dev-only-change-this-secret';
-  const weakDeviceKey = !process.env.DEVICE_API_KEY || process.env.DEVICE_API_KEY === 'dev-device-key-change-me';
-
-  if (weakJwtSecret || weakDeviceKey) {
-    throw new Error('Production requires strong JWT_SECRET and DEVICE_API_KEY values.');
-  }
-}
+validateRuntimeConfig();
+const startedAt = new Date().toISOString();
+const revision = (() => {
+  if (/^[a-f0-9]{7,40}$/i.test(process.env.DIGIPATH_REVISION || '')) return process.env.DIGIPATH_REVISION;
+  try { return require('node:child_process').execFileSync('git', ['rev-parse', 'HEAD'], { cwd: require('node:path').join(__dirname, '..'), encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+  catch { return 'unversioned'; }
+})();
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -35,14 +33,14 @@ app.use(cors({
   origin: corsOriginCallback,
   credentials: true,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-device-key', 'X-Requested-With'],
-  exposedHeaders: ['Content-Type', 'Content-Length'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Range', 'x-device-key', 'X-Requested-With'],
+  exposedHeaders: ['Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges'],
   optionsSuccessStatus: 204,
   maxAge: 86400,
 }));
 app.use('/api/devices/stream/frame', express.raw({ type: ['image/jpeg', 'application/octet-stream'], limit: '2mb' }));
 app.use(express.json({ limit: '15mb' }));
-app.use('/uploads', express.static(uploadsRoot));
+app.use('/uploads', createFileRouter());
 
 const apiRoutes = require('./routes/index');
 const { initRealtimeHub } = require('./ws/realtimeHub');
@@ -61,6 +59,8 @@ const startServer = async () => {
       api: 'running',
       ready: databaseReady,
       publicReachability: 'not-probed',
+      revision,
+      startedAt,
       timestamp: new Date(),
     });
   });

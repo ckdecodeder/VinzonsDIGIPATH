@@ -1,0 +1,345 @@
+{
+  "observedAt": "2026-10-29T14:35:39.104Z",
+  "configuration": {
+    "productionModeEnabled": false,
+    "databaseConfigured": true,
+    "jwtConfigured": true,
+    "jwtUsesKnownDefault": false,
+    "deviceKeyUsesKnownDefault": true,
+    "piDeviceKeyMatches": true,
+    "frontendApiMatchesBackend": false,
+    "frontendWsMatchesBackend": false,
+    "networkMatchesBackend": false,
+    "piMatchesBackend": true,
+    "senderDeliveryIsOutboxOnly": true
+  },
+  "database": {
+    "counts": {
+      "users": 17,
+      "documents": 85,
+      "transmissions": 41,
+      "archives": 6,
+      "offices": 11,
+      "document_types": 9,
+      "devices": 1,
+      "device_events": 531,
+      "logs": 9524,
+      "notifications": 292,
+      "sender_notifications": 40,
+      "commands": 123
+    },
+    "checks": {
+      "invalidUserRoles": 0,
+      "usersMissingOffice": 0,
+      "orphanTransmissions": 0,
+      "orphanArchives": 0,
+      "duplicateArchives": 0,
+      "archiveStatusMismatch": 0,
+      "archivedWithoutArchiveRow": 0,
+      "archivedWithPendingDelivery": 0,
+      "multipleActiveCommands": 0,
+      "receiptIdentityMismatch": 4,
+      "missingCustodyOffice": 8,
+      "missingDocumentType": 0,
+      "invalidDocumentState": 0,
+      "transitWithoutPendingTransmission": 0,
+      "inlineCovers": 37,
+      "legacySendQueues": 8
+    },
+    "senderDeliveryStates": [
+      {
+        "status": "Queued",
+        "count": 40
+      }
+    ],
+    "commandStates": [
+      {
+        "status": "Cancelled",
+        "count": 10
+      },
+      {
+        "status": "Executed",
+        "count": 104
+      },
+      {
+        "status": "Failed",
+        "count": 9
+      }
+    ],
+    "foreignKeyCount": 0,
+    "indexes": [
+      {
+        "tablename": "archives",
+        "indexname": "archives_pkey"
+      },
+      {
+        "tablename": "commands",
+        "indexname": "commands_pkey"
+      },
+      {
+        "tablename": "device_events",
+        "indexname": "device_events_pkey"
+      },
+      {
+        "tablename": "devices",
+        "indexname": "devices_pkey"
+      },
+      {
+        "tablename": "document_types",
+        "indexname": "document_types_pkey"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_pkey"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key1"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key2"
+      },
+      {
+        "tablename": "documents",
+        "indexname": "documents_trackingNumber_key3"
+      },
+      {
+        "tablename": "logs",
+        "indexname": "logs_pkey"
+      },
+      {
+        "tablename": "notifications",
+        "indexname": "notifications_pkey"
+      },
+      {
+        "tablename": "offices",
+        "indexname": "offices_pkey"
+      },
+      {
+        "tablename": "sender_notifications",
+        "indexname": "sender_notifications_pkey"
+      },
+      {
+        "tablename": "transmissions",
+        "indexname": "transmissions_pkey"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_pkey"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key1"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key2"
+      },
+      {
+        "tablename": "users",
+        "indexname": "users_username_key3"
+      }
+    ],
+    "restoredTestDatabaseAvailable": true,
+    "indexCount": 20
+  },
+  "storage": {
+    "uniqueStoredReferences": 84,
+    "existing": 69,
+    "missing": 15,
+    "outsideRoot": 0,
+    "invalid": 0,
+    "external": 0,
+    "inlineAttachmentReferences": 0
+  },
+  "http": [
+    {
+      "label": "local-health",
+      "status": 200,
+      "bytes": 152,
+      "ms": 67,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "ready": true,
+      "databaseConnected": true
+    },
+    {
+      "label": "public-health",
+      "status": 200,
+      "bytes": 152,
+      "ms": 489,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "ready": true,
+      "databaseConnected": true
+    },
+    {
+      "label": "frontend",
+      "status": 200,
+      "bytes": 1297,
+      "ms": 169,
+      "contentType": "text/html; charset=utf-8",
+      "contentEncoding": "br",
+      "xFrameOptions": null
+    },
+    {
+      "label": "unauthenticated-documents",
+      "status": 401,
+      "bytes": 37,
+      "ms": 1,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY"
+    },
+    {
+      "label": "unauthenticated-existing-scan",
+      "status": 200,
+      "bytes": 1002807,
+      "ms": 16,
+      "contentType": "application/pdf",
+      "contentEncoding": null,
+      "xFrameOptions": "SAMEORIGIN"
+    },
+    {
+      "label": "Admin/documents",
+      "status": 200,
+      "bytes": 21372,
+      "ms": 15,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 20,
+      "total": 85
+    },
+    {
+      "label": "Admin/logs",
+      "status": 200,
+      "bytes": 228,
+      "ms": 10,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 1,
+      "total": 9524
+    },
+    {
+      "label": "Admin/users",
+      "status": 200,
+      "bytes": 2585,
+      "ms": 5,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 17
+    },
+    {
+      "label": "Mayor/documents",
+      "status": 200,
+      "bytes": 21372,
+      "ms": 7,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 20,
+      "total": 85
+    },
+    {
+      "label": "Mayor/logs",
+      "status": 200,
+      "bytes": 228,
+      "ms": 8,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 1,
+      "total": 9524
+    },
+    {
+      "label": "Mayor/users",
+      "status": 200,
+      "bytes": 2585,
+      "ms": 5,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 17
+    },
+    {
+      "label": "Office/documents",
+      "status": 200,
+      "bytes": 28720,
+      "ms": 13,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 20,
+      "total": 20
+    },
+    {
+      "label": "Office/logs",
+      "status": 200,
+      "bytes": 228,
+      "ms": 6,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 1,
+      "total": 9524
+    },
+    {
+      "label": "Office/users",
+      "status": 403,
+      "bytes": 63,
+      "ms": 3,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY"
+    },
+    {
+      "label": "Receptionist/documents",
+      "status": 200,
+      "bytes": 22031,
+      "ms": 12,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 20,
+      "total": 59
+    },
+    {
+      "label": "Receptionist/logs",
+      "status": 200,
+      "bytes": 232,
+      "ms": 6,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY",
+      "itemCount": 1,
+      "total": 322
+    },
+    {
+      "label": "Receptionist/users",
+      "status": 403,
+      "bytes": 63,
+      "ms": 3,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null,
+      "xFrameOptions": "DENY"
+    }
+  ],
+  "publication": {
+    "servedEntryMatchesLocalBuild": false,
+    "entryGetStatus": 200
+  }
+}

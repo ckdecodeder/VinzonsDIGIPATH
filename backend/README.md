@@ -4,7 +4,7 @@ This guide provides instructions on how to set up and run the Vinzons DigiPath b
 
 ## Prerequisites
 
-- **Node.js** (v18 or higher recommended)
+- **Node.js** (22.12 or newer required)
 - **npm** (comes with Node.js)
 - **PostgreSQL** (running locally or remotely)
 
@@ -39,13 +39,13 @@ Once your PostgreSQL database is running and the `DATABASE_URL` is set, you need
 **Run Migrations:**
 Initialize the database tables:
 ```bash
-npm run migrate
+npm run migrate -- --apply
 ```
 
 **(Optional) Seed the Database:**
 To populate the database with initial dummy or required data, you can run the seed script:
 ```bash
-npm run seed
+npm run seed -- --apply
 ```
 
 ## 4. Running the Server
@@ -70,8 +70,12 @@ Here is a quick overview of the scripts available in `package.json`:
 
 - `npm run dev` - Starts the development server with `nodemon`.
 - `npm start` - Starts the standard Node server.
-- `npm run migrate` - Runs PostgreSQL migrations.
-- `npm run seed` - Runs the database seeder script.
+- `npm run migrate -- --apply` - Runs PostgreSQL migrations.
+- `npm run seed -- --apply` - Runs the database seeder script.
 - `npm run export-db` - Exports the PostgreSQL database to JSON.
 - `npm run smoke` - Runs the workflow smoke tests.
 - `npm run audit:roles` - Audits role-based access control.
+
+## Current maintenance and rollout rules
+
+Use the [repair handoff](../docs/SYSTEM_REPAIR_RESULTS_2026-10-29.md). Migration is schema-only and requires an explicit apply flag; live schema work additionally requires the documented write pause and verified backup. Seed/import/password-reset utilities are restricted to disposable test databases. Never run smoke/role write tests against live records. The current backend and physical Pi must receive matching strong credentials before the repaired backend is restarted.

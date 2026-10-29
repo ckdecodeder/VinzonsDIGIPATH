@@ -33,7 +33,8 @@ export function resolveUploadUrl(url) {
 
   const trimmed = url.trim();
   if (!trimmed) return null;
-  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) return trimmed;
+  if (trimmed.startsWith('blob:')) return trimmed;
+  if (trimmed.startsWith('data:')) return /^data:(image\/(jpeg|png|webp)|application\/pdf);base64,/i.test(trimmed) ? trimmed : null;
 
   if (trimmed.startsWith('/uploads/')) {
     return withBackendOrigin(trimmed);
@@ -48,7 +49,7 @@ export function resolveUploadUrl(url) {
     // Keep original if parsing fails.
   }
 
-  return trimmed;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : null;
 }
 
 export function isPdfMedia(url, mimeType = '') {

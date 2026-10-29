@@ -5,6 +5,7 @@ const { protect, allowRoles } = require('../middleware/auth');
 const { deviceLimiter, streamFrameLimiter } = require('../utils/rateLimit');
 const { requireDeviceApiKey, getBridgeBaseUrl, fetchBridgeEndpoint, cleanBridgeErrorText, normalizeBridgeBaseUrl, isPrivateBridgeHost } = require('../utils/bridge');
 const { toUserFacingError } = require('../utils/userFacingError');
+const { withDeviceCommandLock } = require('../utils/transactionContext');
 const {
   asyncHandler,
   requireFields,
@@ -136,7 +137,13 @@ router.put('/devices/commands/:id', deviceLimiter, requireDeviceApiKey, asyncHan
         ? new Date().toISOString()
         : undefined,
     },
-    updateOptions,
+    { ...updateOptions, validate: current => {
+      if (status === current.status) return false;
+      const allowed = { Pending: ['Executing', 'Executed', 'Failed', 'Cancelled'], Executing: ['Executed', 'Failed', 'Cancelled'] };
+      if (status !== current.status && !(allowed[current.status] || []).includes(status)) {
+        const error = new Error('This command is no longer active. Preserve its recorded outcome.'); error.status = 409; throw error;
+      }
+    } },
   );
 
   if (!command) return res.status(404).json({ message: 'Command not found' });
@@ -473,8 +480,8 @@ router.put('/device', adminOnly, asyncHandler(async (req, res) => {
 
 router.get('/device/bridge/probe', allRoles, asyncHandler(async (req, res) => {
   const deviceId = req.query.deviceId || 'DEV-001';
-  const rawBridgeUrl = req.query.bridgeUrl?.trim();
-  const bridgeUrl = normalizeBridgeBaseUrl(rawBridgeUrl);
+  const registeredDevice = await getDeviceSnapshot(deviceId);
+  const bridgeUrl = getBridgeBaseUrl(req, registeredDevice);
   if (!bridgeUrl) {
     return res.status(400).json({ ok: false, message: 'A valid private LAN bridgeUrl is required.' });
   }
@@ -778,70 +785,109 @@ router.get('/commands/:id/status', allRoles, asyncHandler(async (req, res) => {
 
 router.post('/commands/cancel', scannerCommandRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['deviceId']);
+  if (typeof req.body.deviceId !== 'string') return res.status(400).json({ message: 'Invalid device ID.' });
   const deviceId = req.body.deviceId.trim();
-  const reason = req.body.reason?.trim() || 'Cancelled by dashboard user.';
-  const executedAt = new Date().toISOString();
-
-  const pendingCommands = await Command.find({
-    deviceId,
-    status: { $in: ['Pending', 'Executing'] },
-  }).lean();
-
-  if (!pendingCommands.length) {
-    return res.json({ ok: true, cancelled: 0, message: 'No pending scanner commands.' });
-  }
-
-  await Command.updateMany(
-    {
-      deviceId,
-      status: { $in: ['Pending', 'Executing'] },
-    },
-    {
-      $set: {
-        status: 'Cancelled',
-        errorMessage: reason,
-        executedAt,
-      },
-    },
-  );
-
-  for (const command of pendingCommands) {
-    broadcastCommandUpdated({
-      ...command,
-      status: 'Cancelled',
-      errorMessage: reason,
-      executedAt,
-    });
-    await createLogEntry(
-      req,
-      'device_command_cancelled',
-      `Cancelled ${command.command} command for ${deviceId}`,
-      command.id,
-    );
-  }
-
-  res.json({ ok: true, cancelled: pendingCommands.length });
+  const reason = typeof req.body.reason === 'string' && req.body.reason.trim() || 'Cancelled by dashboard user.';
+  const executedAt = new Date().toISOString(), deferred = [];
+  const count = await withDeviceCommandLock(deviceId, async () => {
+    const pending = await Command.find({ deviceId, status: { $in: ['Pending', 'Executing'] } }).forUpdate().lean();
+    if (!pending.length) return 0;
+    await Command.updateMany({ id: { $in: pending.map(command => command.id) } }, { $set: { status: 'Cancelled', errorMessage: reason, executedAt } });
+    for (const command of pending) {
+      await createLogEntry(req, 'device_command_cancelled', `Cancelled ${command.command} command for ${deviceId}`, command.id);
+      deferred.push(() => broadcastCommandUpdated({ ...command, status: 'Cancelled', errorMessage: reason, executedAt }));
+    }
+    return pending.length;
+  });
+  for (const effect of deferred) effect();
+  res.json({ ok: true, cancelled: count });
 }));
 
 router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['deviceId', 'command']);
-  const commandName = req.body.command?.trim().toUpperCase();
-  if (!['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
-    return res.status(400).json({ message: 'Invalid device command' });
-  }
-  if (req.user.role !== 'Admin' && !['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT'].includes(commandName)) {
-    return res.status(403).json({ message: 'Receptionists can only request scan/sort/motor test/camera light commands' });
-  }
+  if (typeof req.body.deviceId !== 'string' || typeof req.body.command !== 'string') return res.status(400).json({ message: 'Invalid command request.' });
+  const deferred = [];
+  let outcome;
+  const respond = (status, body) => { outcome = { status, body }; };
+  await withDeviceCommandLock(req.body.deviceId, async () => {
+    const commandName = req.body.command?.trim().toUpperCase();
+    if (!['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT', 'RESTART', 'SHUTDOWN'].includes(commandName)) {
+      return respond(400, { message: 'Invalid device command' });
+    }
+    if (req.user.role !== 'Admin' && !['SCAN', 'SORT', 'MOTOR_TEST', 'CAMERA_LIGHT'].includes(commandName)) {
+      return respond(403, { message: 'Receptionists can only request scan/sort/motor test/camera light commands' });
+    }
 
-  const snapshot = await getDeviceSnapshot(req.body.deviceId);
-  if (!snapshot.connected) {
-    return res.status(409).json({ message: 'Physical scanner is not connected. Wait for a hardware heartbeat before sending commands.' });
-  }
+    const snapshot = await getDeviceSnapshot(req.body.deviceId);
+    if (!snapshot.connected) {
+      return respond(409, { message: 'Physical scanner is not connected. Wait for a hardware heartbeat before sending commands.' });
+    }
 
-  // Instant camera setting: never queue behind (or block) a scan/sort.
-  if (commandName === 'CAMERA_LIGHT') {
-    const lightCommand = new Command({
-      id: generateId('CMD'),
+    // Instant camera setting: never queue behind (or block) a scan/sort.
+    if (commandName === 'CAMERA_LIGHT') {
+      const lightCommand = new Command({
+        id: generateId('CMD'),
+        deviceId: req.body.deviceId,
+        command: commandName,
+        status: 'Pending',
+        payload: req.body.payload,
+        requestedBy: req.user.id,
+        createdAt: new Date().toISOString(),
+      });
+      await lightCommand.save();
+      const lightPayload = lightCommand.toObject?.() || lightCommand;
+      deferred.push(() => { broadcastCommandUpdated(lightPayload); const delivered = pushCommandToDevice(lightCommand.deviceId, lightPayload); res.status(201).json({ ...lightPayload, delivered }); });
+      return;
+    }
+
+    const cutoff = (ms) => new Date(Date.now() - ms).toISOString();
+    const staleFilter = {
+      deviceId: req.body.deviceId,
+      $or: [
+        { status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(scannerCommandStaleMs) } },
+        { status: 'Pending', createdAt: { $lt: cutoff(scannerCommandUnackedMs) } },
+        { command: 'MOTOR_TEST', status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(motorTestStaleMs) } },
+      ],
+    };
+    if (commandName === 'MOTOR_TEST') {
+      // Test Motors is a diagnostic — it must not be blocked by a stuck scan/command.
+      // Only a SORT that is actually moving the motors (or another motor test) is kept.
+      staleFilter.$or.push({
+        status: { $in: ['Pending', 'Executing'] },
+        command: { $ne: 'MOTOR_TEST' },
+        $nor: [{ command: 'SORT', status: 'Executing' }],
+      });
+    }
+    const staleCommands = await Command.find(staleFilter).forUpdate().lean();
+    if (staleCommands.length) {
+      const executedAt = new Date().toISOString();
+      const errorMessage = 'Cancelled stale scanner command before starting a new one.';
+      await Command.updateMany(
+        { id: { $in: staleCommands.map((c) => c.id) } },
+        { $set: { status: 'Cancelled', errorMessage, executedAt } },
+      );
+      for (const stale of staleCommands) {
+        deferred.push(() => broadcastCommandUpdated({ ...stale, status: 'Cancelled', errorMessage, executedAt }));
+      }
+    }
+
+    const pendingCommand = await Command.findOne({
+      deviceId: req.body.deviceId,
+      status: { $in: ['Pending', 'Executing'] },
+      command: { $ne: 'CAMERA_LIGHT' },
+    }).lean();
+    if (pendingCommand) {
+      if (commandName === 'MOTOR_TEST' && pendingCommand.command === 'MOTOR_TEST') {
+        return respond(200, pendingCommand);
+      }
+      return respond(409, {
+        message: `The scanner already has a pending ${pendingCommand.command} command.`,
+        pendingCommand: { id: pendingCommand.id, command: pendingCommand.command, status: pendingCommand.status },
+      });
+    }
+
+    const command = new Command({
+      id: req.body.id || generateId('CMD'),
       deviceId: req.body.deviceId,
       command: commandName,
       status: 'Pending',
@@ -849,75 +895,14 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
       requestedBy: req.user.id,
       createdAt: new Date().toISOString(),
     });
-    await lightCommand.save();
-    const lightPayload = lightCommand.toObject?.() || lightCommand;
-    broadcastCommandUpdated(lightPayload);
-    const delivered = pushCommandToDevice(lightCommand.deviceId, lightPayload);
-    return res.status(201).json({ ...lightPayload, delivered });
-  }
+    await command.save();
 
-  const cutoff = (ms) => new Date(Date.now() - ms).toISOString();
-  const staleFilter = {
-    deviceId: req.body.deviceId,
-    $or: [
-      { status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(scannerCommandStaleMs) } },
-      { status: 'Pending', createdAt: { $lt: cutoff(scannerCommandUnackedMs) } },
-      { command: 'MOTOR_TEST', status: { $in: ['Pending', 'Executing'] }, createdAt: { $lt: cutoff(motorTestStaleMs) } },
-    ],
-  };
-  if (commandName === 'MOTOR_TEST') {
-    // Test Motors is a diagnostic — it must not be blocked by a stuck scan/command.
-    // Only a SORT that is actually moving the motors (or another motor test) is kept.
-    staleFilter.$or.push({
-      status: { $in: ['Pending', 'Executing'] },
-      command: { $ne: 'MOTOR_TEST' },
-      $nor: [{ command: 'SORT', status: 'Executing' }],
-    });
-  }
-  const staleCommands = await Command.find(staleFilter).lean();
-  if (staleCommands.length) {
-    const executedAt = new Date().toISOString();
-    const errorMessage = 'Cancelled stale scanner command before starting a new one.';
-    await Command.updateMany(
-      { id: { $in: staleCommands.map((c) => c.id) } },
-      { $set: { status: 'Cancelled', errorMessage, executedAt } },
-    );
-    for (const stale of staleCommands) {
-      broadcastCommandUpdated({ ...stale, status: 'Cancelled', errorMessage, executedAt });
-    }
-  }
-
-  const pendingCommand = await Command.findOne({
-    deviceId: req.body.deviceId,
-    status: { $in: ['Pending', 'Executing'] },
-    command: { $ne: 'CAMERA_LIGHT' },
-  }).lean();
-  if (pendingCommand) {
-    if (commandName === 'MOTOR_TEST' && pendingCommand.command === 'MOTOR_TEST') {
-      return res.status(200).json(pendingCommand);
-    }
-    return res.status(409).json({
-      message: `The scanner already has a pending ${pendingCommand.command} command.`,
-      pendingCommand: { id: pendingCommand.id, command: pendingCommand.command, status: pendingCommand.status },
-    });
-  }
-
-  const command = new Command({
-    id: req.body.id || generateId('CMD'),
-    deviceId: req.body.deviceId,
-    command: commandName,
-    status: 'Pending',
-    payload: req.body.payload,
-    requestedBy: req.user.id,
-    createdAt: new Date().toISOString(),
+    await createLogEntry(req, 'device_command_created', `Queued ${command.command} command for ${command.deviceId}`, command.id);
+    const commandPayload = command.toObject?.() || command;
+    deferred.push(() => { broadcastCommandUpdated(commandPayload); const delivered = pushCommandToDevice(command.deviceId, commandPayload); res.status(201).json({ ...commandPayload, delivered }); });
   });
-  await command.save();
-
-  await createLogEntry(req, 'device_command_created', `Queued ${command.command} command for ${command.deviceId}`, command.id);
-  const commandPayload = command.toObject?.() || command;
-  broadcastCommandUpdated(commandPayload);
-  const delivered = pushCommandToDevice(command.deviceId, commandPayload);
-  res.status(201).json({ ...commandPayload, delivered });
+  for (const effect of deferred) await effect();
+  if (outcome) res.status(outcome.status).json(outcome.body);
 }));
 
 // ─── DEVICE EVENTS ─────────────────────────────────────────────────────────────

@@ -39,3 +39,7 @@ npm run dev
 ## Accessing the Dashboard
 Once the system is running, open your web browser and go to:
 **http://localhost:5173**
+
+## Current maintenance and rollout rules
+
+Use the [repair handoff](docs/SYSTEM_REPAIR_RESULTS_2026-10-29.md). Migration is schema-only and requires an explicit apply flag; live schema work additionally requires the documented write pause and verified backup. Seed/import/password-reset utilities are restricted to disposable test databases. Never run smoke/role write tests against live records. The current backend and physical Pi must receive matching strong credentials before the repaired backend is restarted.

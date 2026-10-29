@@ -78,7 +78,11 @@ const syncPiSetting = (content, key, value) => preservePiSetting(
   content, key, value, upsertEnvLine, cfg.DIGIPATH_SYNC_PI_TUNING === '1',
 );
 const publicRoot = (cfg.DIGIPATH_PUBLIC_BACKEND_URL || '').replace(/\/$/, '');
-const deviceKey = cfg.DIGIPATH_DEVICE_API_KEY || 'dev-device-key-change-me';
+const deviceKey = cfg.DIGIPATH_DEVICE_API_KEY || '';
+if (require('../backend/config/runtime').weakSecret(deviceKey)) {
+  console.error('Network synchronization requires the coordinated strong scanner key. No backend, dashboard or Pi settings were rewritten.');
+  process.exit(1);
+}
 const groqApiKey = (cfg.DIGIPATH_GROQ_API_KEY || '').trim();
 const devtunnelToken = (cfg.DIGIPATH_DEVTUNNEL_TOKEN || '').trim();
 const bridgeUrl = (cfg.DIGIPATH_SCANNER_BRIDGE_URL || '').replace(/\/$/, '');

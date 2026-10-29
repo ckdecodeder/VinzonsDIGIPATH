@@ -14,6 +14,9 @@ export function createDashboardConfig(mode, envDirectory = fileURLToPath(new URL
       '/api': { target: backendTarget, changeOrigin: true },
       '/ws': { target: backendTarget, changeOrigin: true, ws: true },
       '/uploads': { target: backendTarget, changeOrigin: true },
+      // Development-only synthetic acceptance harness; omitted from the production build.
+      '/test/config': { target: backendTarget, changeOrigin: true },
+      '/test/metrics': { target: backendTarget, changeOrigin: true },
     },
   }
   return { plugins: [react()], server: sharedServer, preview: sharedServer }

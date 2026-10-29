@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import ModalOverlay from './ModalOverlay';
 import PdfFitPreview from './PdfFitPreview';
+import ProtectedImage from './ProtectedImage';
 import {
   downloadAttachment,
   getAttachmentSource,
@@ -234,7 +235,7 @@ const ScannedPreviewModal = ({
                   height: fitSize.stageHeight ? `${fitSize.stageHeight}px` : '100%',
                 }}
               >
-                <img
+                <ProtectedImage
                   src={getAttachmentSource(file)}
                   alt={file.name}
                   className={`scanned-preview-image ${isImageReady ? 'is-ready' : ''}`}

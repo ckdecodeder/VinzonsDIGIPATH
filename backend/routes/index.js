@@ -46,22 +46,25 @@ router.use('/', notificationsRouter);
 
 // Universal error handling middleware
 router.use((err, req, res, next) => {
-  console.error(err);
+  console.error('API request failed:', { name: err.name, status: err.status || 500, code: err.code });
 
   if (err.status) {
     return res.status(err.status).json({ message: err.message });
   }
 
+  if (err.name === 'SequelizeUniqueConstraintError') {
+    return res.status(409).json({ message: 'This record or unique value already exists. Refresh before trying again.' });
+  }
   if (err.code === 11000) {
     const fields = Object.keys(err.keyPattern || {}).join(', ');
     return res.status(409).json({ message: `Duplicate value for unique field(s): ${fields}` });
   }
 
-  if (err.name === 'ValidationError') {
+  if (err.name === 'ValidationError' || err.name === 'SequelizeValidationError') {
     return res.status(400).json({ message: err.message });
   }
 
-  res.status(500).json({ message: err.message || 'Server error' });
+  res.status(500).json({ message: 'The operation could not be completed. Please retry.' });
 });
 
 module.exports = router;

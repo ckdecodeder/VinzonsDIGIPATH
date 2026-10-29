@@ -4,6 +4,7 @@ const { Log, User } = require('../models');
 const { parsePagination, contains, andFilters } = require('../utils/listing');
 const { protect, allowRoles } = require('../middleware/auth');
 const { asyncHandler, requireFields, generateId } = require('../utils/helpers');
+const { getScopedLogQuery } = require('../utils/logScope');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
@@ -12,7 +13,7 @@ router.use(protect);
 
 router.get('/', allRoles, asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
-  const scope = req.user.role === 'Receptionist' ? { userId: req.user.id } : {};
+  const scope = await getScopedLogQuery(req);
   const filter = {};
   if (req.query.action && req.query.action !== 'All') filter.action = String(req.query.action);
   if (req.query.userId) filter.userId = String(req.query.userId);

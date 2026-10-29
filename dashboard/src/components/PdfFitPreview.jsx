@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as pdfjs from 'pdfjs-dist';
+import { mediaRequest } from '../utils/protectedMedia';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -22,6 +23,19 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF', allPa
     if (!src) return undefined;
 
     let cancelled = false;
+    let loadingTask;
+    let documentPromise;
+    let deadline;
+    let timedOut = false;
+    const loadDocument = () => {
+      if (!documentPromise) {
+        const request = mediaRequest(src);
+        loadingTask = pdfjs.getDocument({ url: request.url, httpHeaders: request.headers });
+        deadline = setTimeout(() => { timedOut = true; Promise.resolve(loadingTask.destroy()).catch(() => {}); }, 90000);
+        documentPromise = loadingTask.promise.finally(() => clearTimeout(deadline));
+      }
+      return documentPromise;
+    };
     lastRenderedWidthRef.current = 0;
     hasRenderedRef.current = false;
 
@@ -67,7 +81,7 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF', allPa
       setError('');
 
       try {
-        const doc = await pdfjs.getDocument(src).promise;
+        const doc = await loadDocument();
         if (cancelled || generation !== renderGenerationRef.current) return;
 
         const pageCount = allPages ? doc.numPages : 1;
@@ -110,7 +124,9 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF', allPa
       } catch (err) {
         if (cancelled || generation !== renderGenerationRef.current) return;
         if (err?.name === 'RenderingCancelledException') return;
-        setError(err.message || 'Could not render PDF preview.');
+        setError(timedOut ? 'Loading this scan took too long. Reopen it to retry.'
+          : /401|403/.test(err.message || '') ? 'Your session cannot open this scan. Sign in again or check your office access.'
+          : 'Unable to open this scan. Reopen it to retry; a missing original may need recovery.');
         setLoading(false);
       }
     };
@@ -149,6 +165,8 @@ export default function PdfFitPreview({ src, alt = 'Scanned document PDF', allPa
         resizeTimerRef.current = null;
       }
       cancelActiveRender();
+      clearTimeout(deadline);
+      if (loadingTask) Promise.resolve(loadingTask.destroy()).catch(() => {});
       observer?.disconnect();
     };
   }, [src, allPages]);

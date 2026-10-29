@@ -1,10 +1,11 @@
 const { buildSendTransition, buildReceiveTransition, canSendDocument } = require('./documentRouting');
 const { createHttpError, normalizeWorkflowStatus } = require('./helpers');
+const { withModelTransaction } = require('./transactionContext');
 
 // Lock the document first for every operation, then its transmissions. This serializes
 // sends/receipts/cancellations across clients and commits history and deliveries together.
 const createHandoffService = ({ DocumentModel, TransmissionModel }) => {
-  const transaction = (work) => DocumentModel.sequelize.transaction(work);
+  const transaction = (work) => withModelTransaction(DocumentModel, work);
   const lockDocument = async (id, tx) => {
     const row = await DocumentModel.findOne({ where: { id }, transaction: tx, lock: tx.LOCK.UPDATE });
     if (!row) throw createHttpError('Document not found', 404);

@@ -28,13 +28,13 @@ const extensionFromAttachment = (attachment) => {
 
 const getUploadUrl = (req, filename) => `/uploads/scans/${filename}`;
 
-const persistAttachment = async (req, attachment) => {
+const persistAttachment = async (req, attachment, { existingFiles = [] } = {}) => {
   if (!attachment) return attachment;
 
   const normalized = {
     ...attachment,
     id: attachment.id || generateId('ATT'),
-    name: attachment.name || 'scan',
+    name: sanitizeFileName(attachment.name || 'scan'),
     uploadedAt: attachment.uploadedAt || new Date().toISOString(),
     source: attachment.source || 'upload',
   };
@@ -45,7 +45,13 @@ const persistAttachment = async (req, attachment) => {
     throw err;
   }
 
-  if (!normalized.dataUrl || normalized.url) return normalized;
+  if (!normalized.dataUrl) {
+    const diskPath = resolveScanPath(normalized);
+    const original = flattenAttachmentFiles(existingFiles).find(file => diskPath && resolveScanPath(file) === diskPath);
+    if (!original) { const error = new Error('Upload the file contents; stored scans cannot be linked from another record.'); error.status = 400; throw error; }
+    // Retain server-owned paths, page references and media type; only the display name may change.
+    return { ...original, name: normalized.name, dataUrl: undefined };
+  }
 
   const match = normalized.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) {
@@ -56,7 +62,8 @@ const persistAttachment = async (req, attachment) => {
 
   await fs.promises.mkdir(uploadRoot, { recursive: true });
 
-  const mimeType = normalized.type || match[1];
+  const mimeType = match[1];
+  if (normalized.type && normalized.type !== mimeType) { const error = new Error('Attachment type does not match its data.'); error.status = 400; throw error; }
   if (!allowedAttachmentMimeTypes.has(mimeType)) {
     const err = new Error('Only JPG, PNG, WebP, and PDF files can be attached');
     err.status = 400;
@@ -88,17 +95,19 @@ const persistAttachment = async (req, attachment) => {
     dataUrl: undefined,
     url: getUploadUrl(req, filename),
     storagePath: `uploads/scans/${filename}`,
+    pages: undefined,
   };
 };
 
-const persistAttachments = async (req, attachments = []) => {
+const persistAttachments = async (req, attachments = [], options = {}) => {
+  if (!Array.isArray(attachments)) { const error = new Error('Attachments must be a list.'); error.status = 400; throw error; }
   if (attachments.length > maxAttachmentsPerDocument) {
     const err = new Error(`A document can have at most ${maxAttachmentsPerDocument} attachments`);
     err.status = 400;
     throw err;
   }
 
-  return Promise.all(attachments.map((attachment) => persistAttachment(req, attachment)));
+  return Promise.all(attachments.map((attachment) => persistAttachment(req, attachment, options)));
 };
 
 const resolveStoredScanPath = resolveScanPath;
@@ -259,7 +268,7 @@ const buildScanPdfAttachment = async (req, pages = [], { baseName = 'scanned-doc
   };
 };
 
-/** Delete scan files that were dropped from a document's scannedFiles list. */
+/** Retain superseded originals. Cleanup is a separate reviewed operation, never part of saving a record. */
 const removeOrphanedAttachments = async (previous = [], next = []) => {
   const nextFiles = flattenAttachmentFiles(next);
   const keptIds = new Set(nextFiles.map((file) => file?.id).filter(Boolean));
@@ -270,19 +279,15 @@ const removeOrphanedAttachments = async (previous = [], next = []) => {
       .map((p) => path.normalize(p)),
   );
 
-  await Promise.all(flattenAttachmentFiles(previous).map(async (file) => {
-    if (file?.id && keptIds.has(file.id)) return;
+  return flattenAttachmentFiles(previous).flatMap(file => {
+    if (file?.id && keptIds.has(file.id)) return [];
     const diskPath = resolveStoredScanPath(file);
-    if (!diskPath) return;
-    if (keptPaths.has(path.normalize(diskPath))) return;
-    try {
-      await fs.promises.unlink(diskPath);
-    } catch (err) {
-      if (err.code !== 'ENOENT') {
-        console.warn(`Unable to remove orphaned attachment ${diskPath}:`, err.message);
-      }
-    }
-  }));
+    if (!diskPath) return [];
+    if (keptPaths.has(path.normalize(diskPath))) return [];
+    // A later recovery/cleanup manifest must check every document reference before deleting.
+    // Keeping this file also makes failed saves and concurrent edits recoverable.
+    return [diskPath];
+  });
 };
 
 module.exports = {

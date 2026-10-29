@@ -1,0 +1,149 @@
+{
+  "observedAt": "2026-10-29T14:40:56.245Z",
+  "missingCustodyGroups": [
+    {
+      "status": "Archived",
+      "count": 1
+    },
+    {
+      "status": "For Signing",
+      "count": 2
+    },
+    {
+      "status": "In Transit",
+      "count": 2
+    },
+    {
+      "status": "Received",
+      "count": 3
+    }
+  ],
+  "receiptMismatchGroups": [
+    {
+      "receivermissing": false,
+      "timestampmissing": true,
+      "count": 4
+    }
+  ],
+  "mismatchedReceiptsBlockingDocuments": 0,
+  "legacyQueueGroups": [
+    {
+      "status": "Archived",
+      "count": 1
+    },
+    {
+      "status": "In Transit",
+      "count": 6
+    },
+    {
+      "status": "Received",
+      "count": 1
+    }
+  ],
+  "storage": {
+    "documentsWithMissingTopLevelAttachments": 15,
+    "missingTopLevelAttachments": 15,
+    "documentsWithNoExistingTopLevelAttachment": 15,
+    "documentsWithMissingScannerPages": 0,
+    "missingScannerPages": 0,
+    "missingCovers": 7,
+    "missingCoverButExistingAttachment": 0
+  },
+  "publicHttp": [
+    {
+      "label": "unauthenticated-scan-range",
+      "status": 206,
+      "bytes": 16,
+      "contentType": "application/pdf",
+      "contentEncoding": null
+    },
+    {
+      "label": "Admin-public-logs",
+      "status": 200,
+      "bytes": 4378,
+      "total": 9524,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null
+    },
+    {
+      "label": "Admin-public-document-list",
+      "status": 200,
+      "bytes": 21372,
+      "total": 85,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null
+    },
+    {
+      "label": "Office-public-logs",
+      "status": 200,
+      "bytes": 4378,
+      "total": 9524,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null
+    },
+    {
+      "label": "Office-public-document-list",
+      "status": 200,
+      "bytes": 28720,
+      "total": 20,
+      "contentType": "application/json; charset=utf-8",
+      "contentEncoding": null
+    },
+    {
+      "label": "published-home",
+      "status": 200,
+      "bytes": 1297,
+      "contentType": "text/html; charset=utf-8",
+      "contentEncoding": "br"
+    },
+    {
+      "label": "published-main-bundle",
+      "status": 200,
+      "bytes": 313762,
+      "contentType": "application/javascript; charset=utf-8",
+      "contentEncoding": "br"
+    },
+    {
+      "label": "published-DocumentList",
+      "status": 200,
+      "bytes": 53809,
+      "contentType": "application/javascript; charset=utf-8",
+      "contentEncoding": "br"
+    },
+    {
+      "label": "published-ReportsPage",
+      "status": 200,
+      "bytes": 40430,
+      "contentType": "application/javascript; charset=utf-8",
+      "contentEncoding": "br"
+    }
+  ],
+  "officeLogPageIncludesOtherUsers": true,
+  "publication": {
+    "entryAsset": "/assets/index-58ac8ad7.js",
+    "pages": [
+      {
+        "page": "DocumentList-f2b4e8c4.js",
+        "hasReceiptConfirmation": false,
+        "hasReportWorker": false,
+        "matchesLocalArtifact": false
+      },
+      {
+        "page": "ReportsPage-f3dac38b.js",
+        "hasReceiptConfirmation": false,
+        "hasReportWorker": true,
+        "matchesLocalArtifact": false
+      }
+    ],
+    "frontendEmbedsConfiguredBackend": true
+  },
+  "effectiveBuildConfiguration": {
+    "apiMatchesConfiguredBackend": false,
+    "wsMatchesConfiguredBackend": false
+  },
+  "trackedExports": {
+    "files": 11,
+    "rows": 8283,
+    "usersWithPasswordMaterial": 15
+  }
+}

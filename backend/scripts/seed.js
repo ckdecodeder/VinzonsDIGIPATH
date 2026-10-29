@@ -1,81 +1,24 @@
-require('dotenv').config();
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const {
-  Office,
-  User,
-  DocumentType,
-  Document,
-  Transmission,
-  Archive,
-  Device,
-  Log,
-} = require('../models');
-const seedData = require('../data/seedData');
-
-const upsertMany = async (Model, records) => {
-  for (const record of records) {
-    await Model.updateOne(
-      { id: record.id },
-      { $set: record },
-      { upsert: true, runValidators: true }
-    );
-  }
+// Synthetic fixtures only; refuse populated or non-test databases.
+require('dotenv').config({ quiet: true });
+const { requireTestWrite } = require('../utils/maintenanceGuard');
+const main = async () => {
+  requireTestWrite(process.env.DATABASE_URL, process.argv);
+  if (!process.env.SEED_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD.length < 12) throw new Error('Set a synthetic SEED_ADMIN_PASSWORD of at least 12 characters.');
+  const { sequelize, connectDB } = require('../config/db');
+  const { syncModels, _sequelizeModels: models } = require('../models');
+  try {
+    await connectDB(); await sequelize.authenticate(); await syncModels();
+    const counts = await Promise.all(Object.values(models).map(model => model.count()));
+    if (counts.some(Boolean)) throw new Error('Seed requires an empty disposable test database. Existing records were preserved.');
+    const fixture = require('../data/seedData');
+    const password = await require('bcryptjs').hash(process.env.SEED_ADMIN_PASSWORD, 10);
+    await sequelize.transaction(async transaction => {
+      for (const [name, rows] of [['OfficeModel', fixture.offices], ['DocumentTypeModel', fixture.documentTypes], ['UserModel', fixture.users.map(user => ({ ...user, password }))], ['DocumentModel', fixture.documents], ['TransmissionModel', fixture.transmissions], ['ArchiveModel', fixture.archives], ['LogModel', fixture.logs], ['DeviceModel', [fixture.device]]]) {
+        if (rows?.length) await models[name].bulkCreate(rows, { transaction });
+      }
+    });
+    console.log('Synthetic test fixtures created.');
+  } finally { if (sequelize) await sequelize.close(); }
 };
-
-const hashSeedUsers = async (users) => {
-  return Promise.all(users.map(async (user) => ({
-    ...user,
-    password: user.password.startsWith('$2') ? user.password : await bcrypt.hash(user.password, 10),
-  })));
-};
-
-const reseedUsers = async (users) => {
-  const ids = users.map((user) => user.id);
-  const usernames = users.map((user) => user.username);
-
-  await User.deleteMany({
-    $or: [
-      { id: { $in: ids } },
-      { username: { $in: usernames } },
-    ],
-  });
-
-  if (users.length) {
-    await User.insertMany(users, { ordered: true });
-  }
-};
-
-const seed = async () => {
-  if (!process.env.MONGODB_URI) {
-    throw new Error('MONGODB_URI is not set. Add it to backend/.env before seeding.');
-  }
-
-  await mongoose.connect(process.env.MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
-
-  const users = await hashSeedUsers(seedData.users);
-
-  await upsertMany(Office, seedData.offices);
-  await upsertMany(DocumentType, seedData.documentTypes);
-  await reseedUsers(users);
-  await upsertMany(Document, seedData.documents);
-  await upsertMany(Transmission, seedData.transmissions);
-  await upsertMany(Archive, seedData.archives);
-  await upsertMany(Log, seedData.logs);
-  await Device.updateOne(
-    { id: seedData.device.id },
-    { $set: seedData.device },
-    { upsert: true, runValidators: true }
-  );
-
-  console.log('Database seeded successfully.');
-};
-
-seed()
-  .catch((err) => {
-    console.error('Database seed failed:', err.message);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await mongoose.disconnect();
-  });
+if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
+module.exports = { main };

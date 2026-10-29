@@ -57,7 +57,8 @@ const sendRaw = (ws, raw) => {
 };
 
 class RealtimeHub {
-  constructor() {
+  constructor({ resolveUser = async (id) => require('../models').User.findOne({ id }).lean() } = {}) {
+    this.resolveUser = resolveUser;
     this.userClients = new Set();
     this.userClientsById = new Map();
     this.deviceClients = new Map();
@@ -125,6 +126,7 @@ class RealtimeHub {
     });
 
     this.pingTimer = setInterval(() => {
+      this.revalidateUsers().catch(() => {});
       for (const client of this.userClients) {
         if (!client.isAlive) {
           client.terminate();
@@ -227,16 +229,17 @@ class RealtimeHub {
       if (!msg?.type) return;
 
       if (msg.type === 'auth') {
-        this.authenticateUser(ws, msg.token);
+        this.authenticateUser(ws, msg.token).catch(() => this.revokeSocket(ws));
         return;
       }
 
-      if (!ws.auth) {
+      if (!this.isUserLive(ws)) {
         sendJson(ws, { type: 'auth:error', message: 'Authenticate first' });
         return;
       }
 
       if (WEBRTC_SIGNAL_TYPES.has(msg.type)) {
+        if (!this.canViewScanner(ws)) return;
         if (msg.type === 'scanner:webrtc:offer' && msg.channel && msg.sdp) {
           const parts = msg.channel.split(':');
           const deviceId = msg.deviceId || parts[1];
@@ -262,6 +265,8 @@ class RealtimeHub {
       }
 
       if (msg.type === 'subscribe' && msg.channel) {
+        if (typeof msg.channel !== 'string' || ws.subscriptions.size >= 128) return;
+        if (msg.channel.startsWith('scanner:') && !this.canViewScanner(ws)) return;
         ws.subscriptions.add(msg.channel);
         sendJson(ws, { type: 'subscribed', channel: msg.channel });
         const streamMatch = /^scanner:([^:]+):stream$/.exec(msg.channel);
@@ -278,6 +283,7 @@ class RealtimeHub {
       }
 
       if (msg.type === 'stream:consumer' && msg.deviceId) {
+        if (!this.canViewScanner(ws)) return;
         const paintFps = Number(msg.paintFps);
         if (Number.isFinite(paintFps) && paintFps >= 0) {
           this.streamConsumerStats.set(msg.deviceId, {
@@ -291,11 +297,46 @@ class RealtimeHub {
 
     ws.on('close', () => {
       this.clearAuthTimer(ws);
+      clearTimeout(ws.sessionTimer);
       this.untrackUserClient(ws);
     });
   }
 
-  authenticateUser(ws, token) {
+  isUserLive(ws) {
+    return Boolean(ws.auth?.kind === 'user' && ['Admin', 'Mayor', 'Receptionist', 'Office'].includes(ws.auth.role)
+      && ws.auth.expiresAt > Date.now());
+  }
+
+  canViewScanner(ws) {
+    return this.isUserLive(ws) && ['Admin', 'Mayor', 'Receptionist'].includes(ws.auth.role);
+  }
+
+  revokeSocket(ws) {
+    this.untrackUserClient(ws);
+    ws.auth = null;
+    clearTimeout(ws.sessionTimer);
+    ws.close(4401, 'Session expired or account changed');
+  }
+
+  revokeUser(userId) {
+    for (const ws of [...(this.userClientsById.get(userId) || [])]) this.revokeSocket(ws);
+  }
+
+  async revalidateUsers() {
+    if (this.revalidating) return;
+    this.revalidating = true;
+    try {
+      for (const [id, sockets] of this.userClientsById) {
+        let user;
+        try { user = await this.resolveUser(id); } catch { for (const ws of [...sockets]) this.revokeSocket(ws); continue; }
+        for (const ws of [...sockets]) {
+          if (!user || !this.isUserLive(ws) || user.role !== ws.auth.role || user.officeId !== ws.auth.officeId) this.revokeSocket(ws);
+        }
+      }
+    } finally { this.revalidating = false; }
+  }
+
+  async authenticateUser(ws, token) {
     if (!token) {
       sendJson(ws, { type: 'auth:error', message: 'Missing token' });
       ws.close(4401, 'Missing token');
@@ -304,17 +345,29 @@ class RealtimeHub {
 
     try {
       const decoded = jwt.verify(token, getJwtSecret());
+      const attempt = ws.authAttempt = (ws.authAttempt || 0) + 1;
+      const user = await this.resolveUser(decoded.id);
+      if (attempt !== ws.authAttempt || ws.readyState !== ws.OPEN) return;
+      if (!user || !Number.isFinite(decoded.exp) || decoded.exp * 1000 <= Date.now()) throw new Error('Invalid session');
+      this.untrackUserClient(ws);
       ws.auth = {
         kind: 'user',
         userId: decoded.id,
-        role: decoded.role,
+        role: user.role,
+        officeId: user.officeId,
+        expiresAt: decoded.exp * 1000,
       };
-      this.untrackUserClient(ws);
+      if (!this.isUserLive(ws)) throw new Error('Invalid role');
       this.trackUserClient(ws);
       this.clearAuthTimer(ws);
-      sendJson(ws, { type: 'auth:ok', userId: decoded.id, role: decoded.role });
+      clearTimeout(ws.sessionTimer);
+      ws.sessionTimer = setTimeout(() => this.revokeSocket(ws), Math.min(2147483647, ws.auth.expiresAt - Date.now()));
+      ws.sessionTimer.unref?.();
+      sendJson(ws, { type: 'auth:ok', userId: decoded.id, role: user.role });
       this.pushDeviceSnapshotToClient(ws);
     } catch {
+      this.untrackUserClient(ws);
+      ws.auth = null;
       sendJson(ws, { type: 'auth:error', message: 'Invalid or expired token' });
       ws.close(4401, 'Invalid token');
     }
@@ -444,11 +497,12 @@ class RealtimeHub {
   }
 
   pushDeviceSnapshotToClient(ws) {
+    if (!this.canViewScanner(ws)) return;
     setImmediate(async () => {
       try {
         const { getDeviceSnapshot } = require('../services/devicePresence');
         const device = await getDeviceSnapshot('DEV-001');
-        sendJson(ws, { type: 'device:updated', device });
+        if (this.canViewScanner(ws)) sendJson(ws, { type: 'device:updated', device });
       } catch {
         // ignore snapshot errors for a single client
       }
@@ -456,6 +510,7 @@ class RealtimeHub {
   }
 
   pushLatestStreamFrameToClient(ws, deviceId = 'DEV-001') {
+    if (!this.canViewScanner(ws)) return false;
     const cached = this.getLatestStreamFrame(deviceId);
     if (!cached?.frame?.length || ws.readyState !== ws.OPEN) return false;
     const maxAgeMs = Number(process.env.BRIDGE_SNAPSHOT_WS_FALLBACK_MAX_AGE_MS || 30000);
@@ -565,7 +620,7 @@ class RealtimeHub {
     let maxBuffered = 0;
 
     for (const client of this.userClients) {
-      if (!client.auth || !client.subscriptions.has(channel)) continue;
+      if (!this.canViewScanner(client) || !client.subscriptions.has(channel)) continue;
       if (client.readyState !== client.OPEN) continue;
       subscribers += 1;
       maxBuffered = Math.max(maxBuffered, client.bufferedAmount || 0);
@@ -607,22 +662,20 @@ class RealtimeHub {
 
   broadcastToUsers(payload, filterFn = null) {
     for (const client of this.userClients) {
-      if (!client.auth) continue;
+      if (!this.isUserLive(client)) continue;
       if (filterFn && !filterFn(client)) continue;
       sendJson(client, payload);
     }
   }
 
   broadcastDeviceUpdated(device) {
-    this.broadcastToUsers({ type: 'device:updated', device });
+    this.broadcastToUsers({ type: 'device:updated', device }, client => this.canViewScanner(client));
   }
 
   broadcastCommandUpdated(command, resultDocument = null) {
-    const payload = { type: 'command:updated', command, resultDocument };
-    this.broadcastToUsers(payload);
-    if (command?.id) {
-      this.broadcastToUsers(payload, (client) => client.subscriptions.has(`command:${command.id}`));
-    }
+    // Full documents always use the scoped HTTP detail/status route, never a global event.
+    const payload = { type: 'command:updated', command, resultDocumentId: resultDocument?.id || command?.resultDocumentId || null };
+    this.broadcastToUsers(payload, client => this.canViewScanner(client) && (['Admin', 'Mayor'].includes(client.auth.role) || client.auth.userId === command?.requestedBy));
   }
 
   broadcastDataInvalidate(collections = []) {

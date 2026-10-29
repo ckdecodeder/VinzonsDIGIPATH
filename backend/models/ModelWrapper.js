@@ -12,6 +12,7 @@
 const { Op, Sequelize } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const { sequelize } = require('../config/db');
+const { currentTransaction, withModelTransaction } = require('../utils/transactionContext');
 
 const JSONB_ARRAY_FIELDS = new Set([
   'timeline',
@@ -158,13 +159,16 @@ function toPlain(instance) {
 
 // ─── Instance wrapper (returned from find* methods) ───────────────────────────
 class ModelInstance {
-  constructor(plain, wrapper) {
+  constructor(plain, wrapper, persisted = true) {
     Object.assign(this, plain);
     Object.defineProperty(this, '_wrapper', {
       value: wrapper,
       enumerable: false,
       writable: true,
     });
+    Object.defineProperty(this, '_persisted', { value: persisted, writable: true, enumerable: false });
+    Object.defineProperty(this, '_identity', { value: plain.id, writable: true, enumerable: false });
+    Object.defineProperty(this, '_original', { value: structuredClone(plain), writable: true, enumerable: false });
   }
 
   toJSON() {
@@ -173,8 +177,9 @@ class ModelInstance {
     return clone;
   }
 
-  // Mongoose .save() on a modified instance — we implement it as upsert on `id`.
-  async save() {
+  // New instances must INSERT. Existing instances must never recreate deleted records.
+  async save(options = {}) {
+    options = { ...(currentTransaction() ? { transaction: currentTransaction() } : {}), ...options };
     const data = { ...this };
     delete data._wrapper;
 
@@ -183,9 +188,24 @@ class ModelInstance {
       data.password = await bcrypt.hash(data.password, 10);
     }
 
-    const [instance] = await this._wrapper._Model.upsert(data, { returning: true });
+    if (this._persisted && data.id !== this._identity) throw new Error('Record identity is immutable');
+    let instance;
+    if (!this._persisted) {
+      instance = await this._wrapper._Model.create(data, options);
+    } else {
+      instance = await withModelTransaction(this._wrapper._Model, async transaction => {
+        const row = await this._wrapper._Model.findOne({ where: { id: this._identity }, transaction, lock: transaction.LOCK.UPDATE });
+        if (!row) { const error = new Error('Record no longer exists'); error.status = 409; throw error; }
+        const changes = Object.fromEntries(Object.entries(data).filter(([key, value]) => key !== 'id' && JSON.stringify(value) !== JSON.stringify(this._original[key])));
+        await row.update(changes, { transaction });
+        return row;
+      });
+    }
     const plain = toPlain(instance);
     Object.assign(this, plain);
+    this._persisted = true;
+    this._identity = this.id;
+    this._original = structuredClone(plain);
     return this;
   }
 
@@ -226,6 +246,7 @@ class QueryBuilder {
   }
 
   skip(n) { this._options.offset = n; return this; }
+  forUpdate() { this._options.forUpdate = true; return this; }
 
   withAttributes(attributes) { this._options.attributes = attributes; return this; }
 
@@ -247,7 +268,12 @@ class QueryBuilder {
       ...(this._options.limit ? { limit: this._options.limit } : {}),
       ...(this._options.offset ? { offset: this._options.offset } : {}),
       raw: false,
+      ...(currentTransaction() ? { transaction: currentTransaction() } : {}),
     };
+    if (this._options.forUpdate) {
+      if (!opts.transaction) throw new Error('Row locking requires a transaction');
+      opts.lock = opts.transaction.LOCK.UPDATE;
+    }
 
     // By default, exclude password from User queries unless explicitly selected
     const isUserModel = this._Model.tableName === 'users';
@@ -304,7 +330,7 @@ class ModelWrapper {
 
   // new Model({...}) usage — returns a ModelInstance with .save()
   _new(data) {
-    return new ModelInstance({ ...data }, this);
+    return new ModelInstance({ ...data }, this, false);
   }
 
   /**
@@ -326,11 +352,13 @@ class ModelWrapper {
    */
   async findOneAndUpdate(filter, update, opts = {}) {
     const where = this._buildWhere(filter);
-    return this._Model.sequelize.transaction(async (transaction) => {
+    return withModelTransaction(this._Model, async (transaction) => {
       const row = await this._Model.findOne({ where, transaction, lock: transaction.LOCK.UPDATE });
       if (!row) return null;
 
       const current = structuredClone(toPlain(row));
+      // A guarded idempotent replay may return false to preserve the original outcome.
+      if (opts.validate && await opts.validate(current) === false) return new ModelInstance(current, this);
       const changes = {};
 
       // Handle $set, $push, $addToSet, $inc
@@ -369,6 +397,9 @@ class ModelWrapper {
       }
 
       // Hash password if needed
+      if (changes.id !== undefined && changes.id !== current.id) {
+        const error = new Error('Record identity is immutable'); error.status = 400; throw error;
+      }
       if (changes.password && !changes.password.startsWith('$2')) {
         changes.password = await bcrypt.hash(changes.password, 10);
       }
@@ -383,10 +414,11 @@ class ModelWrapper {
    */
   async findOneAndDelete(filter) {
     const where = this._buildWhere(filter);
-    const row = await this._Model.findOne({ where });
+    const transaction = currentTransaction();
+    const row = await this._Model.findOne({ where, transaction });
     if (!row) return null;
     const plain = toPlain(row);
-    await row.destroy();
+    await row.destroy({ transaction });
     return plain;
   }
 
@@ -394,6 +426,9 @@ class ModelWrapper {
    * Model.updateOne(filter, update, opts)
    */
   async updateOne(filter, update, opts = {}) {
+    const requestedId = update.$set?.id ?? update.id;
+    if (requestedId !== undefined && requestedId !== filter.id) throw new Error('Record identity is immutable');
+    const transaction = currentTransaction();
     if (update.$inc || update.$push || update.$addToSet) {
       const updated = await this.findOneAndUpdate(filter, update, opts);
       if (updated) return { modifiedCount: 1 };
@@ -401,7 +436,7 @@ class ModelWrapper {
     }
 
     const where = this._buildWhere(filter);
-    const row = await this._Model.findOne({ where });
+    const row = await this._Model.findOne({ where, transaction });
 
     const changes = {};
     if (update.$set) Object.assign(changes, update.$set);
@@ -411,6 +446,7 @@ class ModelWrapper {
       delete cleaned.__v;
       Object.assign(changes, cleaned);
     }
+    delete changes.id;
     if (update.$addToSet) {
       const current = row ? toPlain(row) : {};
       for (const [field, val] of Object.entries(update.$addToSet)) {
@@ -431,12 +467,12 @@ class ModelWrapper {
     }
 
     if (row) {
-      await row.update(changes);
+      await row.update(changes, { transaction });
     } else if (opts.upsert) {
       const base = {};
       // Pull id from filter if available
       if (filter.id) base.id = filter.id;
-      await this._Model.upsert({ ...base, ...changes });
+      await this._Model.upsert({ ...base, ...changes }, { transaction });
     }
     return { modifiedCount: row ? 1 : 0 };
   }
@@ -445,8 +481,10 @@ class ModelWrapper {
    * Model.updateMany(filter, update)
    */
   async updateMany(filter, update) {
+    if (update.id !== undefined || update.$set?.id !== undefined) throw new Error('Record identity is immutable');
+    const transaction = currentTransaction();
     const where = this._buildWhere(filter);
-    const rows = await this._Model.findAll({ where });
+    const rows = await this._Model.findAll({ where, transaction });
 
     const baseChanges = {};
     if (update.$set) Object.assign(baseChanges, update.$set);
@@ -472,7 +510,7 @@ class ModelWrapper {
           changes[field] = (current[field] || 0) + val;
         }
       }
-      await row.update(changes);
+      await row.update(changes, { transaction });
     }
     return { modifiedCount: rows.length };
   }
@@ -482,7 +520,7 @@ class ModelWrapper {
    */
   async deleteMany(filter) {
     const where = this._buildWhere(filter);
-    const count = await this._Model.destroy({ where });
+    const count = await this._Model.destroy({ where, transaction: currentTransaction() });
     return { deletedCount: count };
   }
 
@@ -491,7 +529,7 @@ class ModelWrapper {
    */
   async countDocuments(filter = {}) {
     const where = this._buildWhere(filter);
-    return this._Model.count({ where });
+    return this._Model.count({ where, transaction: currentTransaction() });
   }
 
   /**
@@ -512,7 +550,7 @@ class ModelWrapper {
       get(target, prop) {
         if (prop in wrapper) {
           const val = wrapper[prop];
-          return typeof val === 'function' ? val.bind(wrapper) : val;
+          return typeof val === 'function' && prop !== '_Model' ? val.bind(wrapper) : val;
         }
         return target[prop];
       },

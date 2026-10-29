@@ -1,145 +1,25 @@
-# Database Setup - Vinzons DigiPath
+# PostgreSQL setup and maintenance
 
-The project now has MongoDB models, API routes, and a seed script that can load the current demo records into the database.
+DigiPath uses PostgreSQL through Sequelize. MongoDB and Prisma files are legacy/reference material, not the active database setup.
 
-## 1. Install Or Create MongoDB
+Use Node.js 22.12 or newer. Create private `backend/.env` from the example, configure `DATABASE_URL`, and generate strong JWT/device credentials. The same device key must be installed on the physical Pi. Default/short secrets are rejected in every runtime mode. Do not publish environment files or database exports.
 
-Use one of these options:
+## Existing installations
 
-- Local MongoDB Community Server
-- MongoDB Atlas cloud cluster
+Do not reseed an existing installation. `npm --prefix backend run migrate -- --apply` is now schema-only; it never imports `dbcollections` or resets accounts. A live target additionally requires `--allow-live --backup <absolute-private-dump-path>` after a coordinated write pause and verified PostgreSQL/scan recovery. A nonempty dump path is a guard, not evidence that restoration was tested. Follow the [repair handoff](SYSTEM_REPAIR_RESULTS_2026-10-29.md) and [operation plan](PERFORMANCE_AND_DEPLOYMENT_PLAN_2026-10-28.md).
 
-## 2. Configure Backend Environment
+## Disposable test setup
 
-Open `backend/.env` and set:
+Use a separate database whose name contains the `_test` suffix pattern, separate `UPLOADS_ROOT`, loopback-only listeners, and an outbox-only sender provider. `seed`, legacy import, workflow wipe, and test password reset refuse a live target and require `--apply`. Seeding also requires an empty test database and a private `SEED_ADMIN_PASSWORD` of at least 12 characters. Never use predictable account-derived passwords.
 
-```env
-MONGODB_URI=mongodb://127.0.0.1:27017/vinzons_digipath
-PORT=5000
-NODE_ENV=development
-JWT_SECRET=change_this_to_a_long_random_secret
-JWT_EXPIRES_IN=8h
-CORS_ORIGIN=http://localhost:5173
-API_BASE_URL=http://localhost:5000/api
-DEVICE_API_KEY=change_this_device_key
-DEVICE_HEARTBEAT_TIMEOUT_MS=30000
-SCANNER_COMMAND_STALE_MS=300000
-SCANNER_BRIDGE_TIMEOUT_MS=4000
-SCANNER_BRIDGE_PORT=8080
-REPORT_TEMPLATE_PATH=
-MAX_ATTACHMENTS_PER_DOCUMENT=8
-MAX_ATTACHMENT_BYTES=10485760
-```
+The automated integration suites create/drop only uniquely named schemas in the existing restored test database. Their opt-in connection string is `WORKFLOW_TEST_DATABASE_URL`; do not print or commit its value.
 
-For MongoDB Atlas, replace `MONGODB_URI` with your Atlas connection string.
-Leave `REPORT_TEMPLATE_PATH` blank to use `backend/templates/Vinzons_Report_Template.docx`, or set it to another official DOCX template path.
+## Backups and exports
 
-## 3. Seed The Database
+Use native PostgreSQL custom-format `pg_dump`, backed-up scan files with checksums, and a successful restore/count/file check. Keep a verified separate-storage copy before any live repair or cutover. The existing guarded backup script refuses an active API/other database clients to enforce a coordinated checkpoint.
 
-From the project folder:
+`npm --prefix backend run export-db` creates a consistent, private JSON snapshot of all 12 application tables under ignored `database-export/`. It includes commands. It does not export scan files or replace the native recovery backup. The old tracked `dbcollections/*.json` snapshots remain locally preserved and ignored; normal migration no longer imports them. Never commit private export contents.
 
-```powershell
-cd .\backend
-npm.cmd run seed
-```
+## Historical anomalies
 
-The seed command upserts records, so it can be run more than once without duplicating records that use the same IDs.
-It also hashes the default account passwords before storing them in MongoDB.
-
-## 3.5. Migrate Existing Records
-
-If the database already has documents from an older version, run:
-
-```powershell
-npm.cmd run migrate
-```
-
-The migration backfills office location fields, timeline entries, archive timestamps, and missing transmission receive timestamps.
-
-## 4. Run The System
-
-From the project root, you can start both services:
-
-```powershell
-npm.cmd run dev
-```
-
-Or run each service separately.
-
-Backend terminal:
-
-```powershell
-cd .\backend
-npm.cmd run dev
-```
-
-Frontend terminal:
-
-```powershell
-cd .\dashboard
-npm.cmd run dev
-```
-
-Open the frontend URL shown by Vite, usually:
-
-```text
-http://localhost:5173/
-```
-
-## 5. Check Connection
-
-Open:
-
-```text
-http://localhost:5000/api/status
-```
-
-Expected database-connected response:
-
-```json
-{
-  "status": "API is running",
-"database": "connected"
-}
-```
-
-## 6. Test The Full Workflow
-
-With the backend running:
-
-```powershell
-npm.cmd run smoke
-```
-
-Expected:
-
-```text
-Workflow smoke test passed.
-```
-
-This creates one temporary test workflow in MongoDB so you can confirm CRUD, routing, receiving, signing, and archiving are connected.
-The smoke test now checks public tracking, persistent notifications, signing/filing actions, and cleanup unless `SMOKE_KEEP_DATA=true` is set.
-
-## Default Seed Login Accounts
-
-```text
-admin / admin123
-mayor / mayor123
-receptionist / recep123
-simon / simon123          (Office)
-janeromarco / office123   (Office)
-```
-
-On the current Postgres DB, passwords were reset with `node scripts/set-demo-passwords.js`.
-Pattern: `{username}123` (e.g. Simon Unc → `unc` / `unc123`).
-
-## Security Notes
-
-- Do not commit `backend/.env`.
-- Do not commit `node_modules`, `dashboard/dist`, or `backend/uploads`.
-- Use a long, unique `JWT_SECRET` for shared deployments.
-- Production mode refuses to start if `JWT_SECRET` or `DEVICE_API_KEY` are missing or left on dev defaults.
-- Uploads are restricted to JPG, PNG, WebP, and PDF files, with the size and count controlled by the attachment environment values.
-- Office, user, and document type deletes are blocked when records still depend on them.
-- Expired or invalid frontend sessions are cleared automatically and return the user to login.
-- Passwords are stored as bcrypt hashes after seeding or creating users through the API.
+`node scripts/reconcile-system-data.cjs` performs read-only queries and file/backup checks, then writes a private manifest under ignored storage. It applies no repair and never guesses a missing receipt time, custody office, recipient queue, or scan. Review original records and verified backups before preparing any live change manifest.

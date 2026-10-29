@@ -3,6 +3,7 @@ const router = express.Router();
 const path = require('path');
 const { Document, Transmission, Archive, Office, User, DocumentType, Log } = require('../models');
 const { protect } = require('../middleware/auth');
+const { getScopedLogQuery } = require('../utils/logScope');
 const { WORD_MIME, buildOfficialReportDocx } = require('../utils/reportDocx');
 const {
   asyncHandler,
@@ -132,7 +133,7 @@ const buildReportData = async (req, category, dateFrom, dateTo) => {
     Office.find().sort({ id: 1 }).lean(),
     User.find().sort({ lname: 1, fname: 1 }).lean(),
     DocumentType.find().sort({ id: 1 }).lean(),
-    Log.find(req.user.role === 'Receptionist' ? { userId: req.user.id } : {}).sort({ timestamp: -1, _id: -1 }).lean(),
+    category === 'activity' ? Log.find(await getScopedLogQuery(req)).sort({ timestamp: -1, _id: -1 }).lean() : [],
   ]);
 
   const visibleDocumentIds = new Set(documents.map((doc) => doc.id));

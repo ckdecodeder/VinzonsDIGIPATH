@@ -1,11 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { User, Office, Transmission, Archive, Document, Command } = require('../models');
+const { User, Office } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const { stripPassword } = require('../utils/sanitize');
 const { asyncHandler, requireFields, createLogEntry, generateId, normalizeText } = require('../utils/helpers');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { validateRoleAssignment } = require('../utils/userRoles');
+const revokeUserSession = (id) => require('../ws/realtimeHub').getRealtimeHub()?.revokeUser(id);
 
 const adminOnly = allowRoles('Admin');
 const approvalRoles = allowRoles('Admin', 'Mayor');
@@ -140,6 +141,7 @@ router.put('/:id', adminOnly, asyncHandler(async (req, res) => {
 
   const user = await User.findOneAndUpdate({ id: req.params.id }, payload, updateOptions);
   if (!user) return res.status(404).json({ message: 'User not found' });
+  revokeUserSession(user.id);
   await createLogEntry(req, 'user_updated', `Updated user account: ${user.username}`, user.id);
   broadcastDataInvalidate(['users', 'logs']);
   res.json(stripPassword(user));
@@ -152,37 +154,10 @@ router.delete('/:id', adminOnly, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'You cannot delete the account you are currently using' });
   }
 
-  // Detach workflow/audit references so Admin can delete accounts during setup.
-  // History text remains; linked user ids are cleared.
-  await Command.deleteMany({ requestedBy: req.params.id });
-  await Transmission.updateMany({ sentBy: req.params.id }, { sentBy: null });
-  await Transmission.updateMany({ receivedBy: req.params.id }, { receivedBy: null });
-  await Archive.updateMany({ userId: req.params.id }, { userId: null });
-  await Document.updateMany({ verifiedBy: req.params.id }, { verifiedBy: null });
-
-  const { sequelize } = require('../config/db');
-  if (sequelize) {
-    await sequelize.query(
-      `UPDATE documents
-       SET timeline = (
-         SELECT COALESCE(jsonb_agg(
-           CASE
-             WHEN elem->>'userId' = :userId THEN (elem - 'userId')
-             ELSE elem
-           END
-         ), '[]'::jsonb)
-         FROM jsonb_array_elements(COALESCE(timeline, '[]'::jsonb)) AS elem
-       )
-       WHERE EXISTS (
-         SELECT 1
-         FROM jsonb_array_elements(COALESCE(timeline, '[]'::jsonb)) AS e
-         WHERE e->>'userId' = :userId
-       )`,
-      { replacements: { userId: req.params.id } },
-    );
-  }
-
+  // Historical receipt and audit identities must survive account removal.
+  // Clearing receivedBy would turn a completed delivery back into a pending one.
   await User.findOneAndDelete({ id: req.params.id });
+  revokeUserSession(req.params.id);
   await createLogEntry(req, 'user_deleted', `Deleted user account: ${user.username}`, req.params.id);
   broadcastDataInvalidate(['users', 'logs', 'documents', 'transmissions', 'archives']);
   res.json({ success: true });

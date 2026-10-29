@@ -1,50 +1,28 @@
-# Deployment Checklist
+# Deployment and local backend rollout
 
-## Required Environment
+The user-selected architecture remains Vercel frontend → public tunnel → laptop backend/PostgreSQL/scans. A source commit does not restart those services or deploy the Pi.
 
-Backend:
+## Before restarting the repaired backend
 
-```env
-MONGODB_URI=mongodb://127.0.0.1:27017/vinzons_digipath
-PORT=5000
-NODE_ENV=production
-JWT_SECRET=replace_with_a_long_random_secret
-JWT_EXPIRES_IN=8h
-CORS_ORIGIN=http://localhost:5173
-API_BASE_URL=http://localhost:5000/api
-DEVICE_API_KEY=replace_with_a_long_random_device_key
-DEVICE_HEARTBEAT_TIMEOUT_MS=30000
-SCANNER_COMMAND_STALE_MS=300000
-SCANNER_BRIDGE_TIMEOUT_MS=4000
-SCANNER_BRIDGE_PORT=8080
-REPORT_TEMPLATE_PATH=
-MAX_ATTACHMENTS_PER_DOCUMENT=8
-MAX_ATTACHMENT_BYTES=10485760
-```
+- Use Node.js 22.12 or newer, the committed lockfiles, and `npm ci` in backend/dashboard.
+- Review [repair results](SYSTEM_REPAIR_RESULTS_2026-10-29.md), including unresolved historical files/records and the explicit SMS exception.
+- Prepare coordinated strong backend/Pi credentials. `node scripts/prepare-secure-config.cjs` writes a private candidate bundle with previous settings; apply matching keys and canonical endpoint configuration during a maintenance window. The repaired backend fails closed with default or short credentials.
+- Keep the intended `DATABASE_URL` and persistent `UPLOADS_ROOT`. Never run seed, import, password-reset or workflow-wipe utilities on live records.
+- Before a live schema/data repair, take a coordinated native PostgreSQL/scan/configuration backup, verify restoration and hashes, and retain a verified separate-storage copy. No historical data repair is authorized solely by an audit or this checklist.
+- Keep sender delivery outbox-only. SMS was explicitly deferred; do not flush the old queue or send test messages.
 
-Dashboard:
+## Source and frontend checks
 
-```env
-VITE_API_BASE_URL=http://localhost:5000/api
-```
+Run the regular suite and separately opt into PostgreSQL/HTTP integration against disposable test schemas. Build the dashboard and exercise protected images/PDFs/downloads, role scopes, session expiry/recovery, registration rollback, concurrent workflows and reports. Confirm scanner/Pi syntax and package parity without moving physical motors.
 
-## Before Sharing With The Team
+Publish the matching frontend before enforcing backend file authorization: the new frontend can read the previous static endpoint with a bearer header, while cached old clients cannot read the protected endpoint. Refresh signed-in clients after cutover. Keep both source revisions/configurations available for coordinated recovery.
 
-- Confirm `backend/.env` is not committed.
-- Confirm `backend/templates/Vinzons_Report_Template.docx` exists, or set `REPORT_TEMPLATE_PATH` to the deployed official report template.
-- Confirm `node_modules/`, `dashboard/dist/`, and `backend/uploads/` are not committed.
-- Run `npm.cmd run build` inside `dashboard`.
-- Run backend syntax checks or start the backend once.
-- Run `npm.cmd run migrate` if the database already has records.
-- Run `npm.cmd run smoke` with the backend running.
+## Running-system acceptance
 
-## Production Notes
+Verify health readiness and `revision`/`startedAt`, expected API and WebSocket destinations, CORS, protected scan range/download behavior for legitimate and unrelated roles, document counts, existing scans, and new captures. Check fresh Pi heartbeat, preview, commands and reconnects after coordinated configuration/restart. Perform actual four-device, multiple-viewer and native-print acceptance separately from synthetic testing.
 
-- Use a real long `JWT_SECRET`.
-- Use a separate long `DEVICE_API_KEY` for the physical scanner.
-- Keep `NODE_ENV=production` in deployed backend environments so weak secrets are rejected at startup.
-- Restrict `CORS_ORIGIN` to the deployed dashboard URL.
-- Keep attachment limits appropriate for your storage budget.
-- Back up MongoDB before running migrations on real data.
-- Back up `backend/uploads/scans` if scanned paper files are stored locally.
-- For shared hosting, prefer persistent storage for `backend/uploads/scans`; otherwise uploaded scans may disappear when the server restarts or redeploys.
+A Windows login shortcut requires a logged-in, powered-on laptop and is not a supervised system service. Keep the backend/tunnel available under the chosen operating arrangement; service management, off-machine recovery and later performance phases remain explicit operational work.
+
+## Recovery
+
+Revert the specific source commit if needed; keep frontend/backend contracts aligned. Restore prior configuration as a coordinated backend/Pi pair. Preserve newer business writes and reconcile them before changing data/storage destinations. Do not restore an older database merely to undo code. Retained superseded scans require a separate ownership-aware cleanup review; saving/removing an attachment no longer deletes its original file automatically.

@@ -1,4 +1,5 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
+require('../utils/maintenanceGuard').requireTestWrite(process.env.DATABASE_URL, process.argv);
 const { connectDB } = require('../config/db');
 const { syncModels, DocumentType } = require('../models');
 

@@ -1,5 +1,7 @@
 import * as pdfjs from 'pdfjs-dist';
 import { isPdfMedia, resolveUploadUrl } from './mediaUrl';
+import { readMediaBlob, mediaRequest } from './protectedMedia';
+import { imagePrintMarkup } from './printMarkup';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -37,13 +39,16 @@ const triggerDownload = (url, filename) => {
   link.click();
 };
 
-const loadImageElement = (source) => new Promise((resolve, reject) => {
+const loadImageElement = async (source) => {
+  const objectUrl = URL.createObjectURL(await readMediaBlob(source));
+  try { return await new Promise((resolve, reject) => {
   const img = new window.Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => resolve(img);
   img.onerror = () => reject(new Error('Unable to load the scanned file for conversion.'));
-  img.src = source;
-});
+  img.src = objectUrl;
+  }); } finally { URL.revokeObjectURL(objectUrl); }
+};
 
 const canvasToBlob = (canvas, mime, quality = 0.92) => new Promise((resolve) => {
   canvas.toBlob(resolve, mime, quality);
@@ -107,7 +112,9 @@ export const rotateImageAttachment = async (file, degrees = 90) => {
 };
 
 const pdfFirstPageToCanvas = async (source) => {
-  const doc = await pdfjs.getDocument(source).promise;
+  const request = mediaRequest(source);
+  const doc = await pdfjs.getDocument({ url: request.url, httpHeaders: request.headers }).promise;
+  try {
   const page = await doc.getPage(1);
   const viewport = page.getViewport({ scale: 2 });
   const canvas = document.createElement('canvas');
@@ -116,6 +123,7 @@ const pdfFirstPageToCanvas = async (source) => {
   const context = canvas.getContext('2d');
   await page.render({ canvasContext: context, viewport, canvas }).promise;
   return canvas;
+  } finally { await doc.destroy(); }
 };
 
 const attachmentToCanvas = async (file) => {
@@ -132,20 +140,22 @@ const attachmentToCanvas = async (file) => {
   throw new Error('This file type cannot be converted.');
 };
 
-export const printImageAsPdf = (file) => {
+export const printImageAsPdf = async (file) => {
   const source = getAttachmentSource(file);
   const popup = window.open('', '_blank', 'width=900,height=1100');
   if (!popup) {
     throw new Error('Allow popups to save the scanned file as PDF.');
   }
-  popup.document.write(`<!doctype html><html><head><title>${file?.name || 'Scanned document'}</title><style>
-    @page { margin: 0.4in; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fff; }
-    img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-  </style></head><body><img src="${source}" alt="Scanned document" /></body></html>`);
-  popup.document.close();
-  popup.focus();
-  popup.print();
+  let objectUrl;
+  try {
+    objectUrl = URL.createObjectURL(await readMediaBlob(source));
+    popup.document.write(imagePrintMarkup(file?.name, objectUrl));
+    popup.document.close();
+    const image = popup.document.querySelector('img');
+    await image.decode();
+    popup.focus(); popup.print();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  } catch (error) { if (objectUrl) URL.revokeObjectURL(objectUrl); popup.close(); throw error; }
 };
 
 const downloadRaster = async (file, format) => {
@@ -164,11 +174,7 @@ const printCanvasAsPdf = (canvas, file) => {
   if (!popup) {
     throw new Error('Allow popups to save the scanned file as PDF.');
   }
-  popup.document.write(`<!doctype html><html><head><title>${file?.name || 'Scanned document'}</title><style>
-    @page { margin: 0.4in; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fff; }
-    img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-  </style></head><body><img src="${dataUrl}" alt="Scanned document" /></body></html>`);
+  popup.document.write(imagePrintMarkup(file?.name, dataUrl));
   popup.document.close();
   popup.focus();
   popup.print();
@@ -180,17 +186,19 @@ export const downloadAttachment = async (file, format = 'original') => {
   if (!source) return;
 
   if (format === 'original') {
-    triggerDownload(source, file?.name || 'scanned-document');
+    const objectUrl = URL.createObjectURL(await readMediaBlob(source));
+    triggerDownload(objectUrl, file?.name || 'scanned-document');
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
     return;
   }
 
   if (format === 'pdf') {
     if (isPdfAttachment(file)) {
-      triggerDownload(source, file?.name || 'scanned-document.pdf');
+      await downloadAttachment(file, 'original');
       return;
     }
     if (isImageAttachment(file)) {
-      printImageAsPdf(file);
+      await printImageAsPdf(file);
       return;
     }
     const canvas = await attachmentToCanvas(file);

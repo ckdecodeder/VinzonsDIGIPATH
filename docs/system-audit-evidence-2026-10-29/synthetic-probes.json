@@ -1,0 +1,67 @@
+{
+  "observedAt": "2026-10-29T14:45:24.441Z",
+  "productionWrites": 0,
+  "hardwareConnections": 0,
+  "results": [
+    {
+      "probe": "create-overwrites-existing-document",
+      "confirmed": true,
+      "httpStatus": 500,
+      "originalOverwrittenBeforeHandoffFailure": true
+    },
+    {
+      "probe": "sign-without-current-custody",
+      "confirmed": true,
+      "httpStatus": 200
+    },
+    {
+      "probe": "attachment-deletion-precedes-failed-database-save",
+      "confirmed": true,
+      "httpStatus": 500
+    },
+    {
+      "probe": "archive-rebinding-changes-unrelated-document",
+      "confirmed": true,
+      "originalStillArchived": true,
+      "unrelatedBecameSigned": true
+    },
+    {
+      "probe": "simultaneous-archive-creation",
+      "confirmed": true,
+      "statuses": [
+        200,
+        200
+      ],
+      "duplicateArchiveRows": 2
+    },
+    {
+      "probe": "simultaneous-scanner-command-check-then-save",
+      "confirmed": true,
+      "statuses": [
+        201,
+        201
+      ],
+      "activeCommands": 2
+    },
+    {
+      "probe": "bridge-status-accepts-arbitrary-user-supplied-host",
+      "confirmed": true,
+      "externalRequestIntercepted": true
+    },
+    {
+      "probe": "websocket-result-document-broadcast-to-unrelated-office",
+      "confirmed": true,
+      "receivedFullResultDocument": true
+    },
+    {
+      "probe": "websocket-accepts-signed-token-without-account-lookup",
+      "confirmed": true
+    },
+    {
+      "probe": "stored-attachment-name-injected-as-active-print-markup",
+      "confirmed": true,
+      "scriptMarkupUnescaped": true,
+      "browserExecutionNotAttempted": true
+    }
+  ]
+}

@@ -24,16 +24,16 @@ const documentTypes = [
 ];
 
 const users = [
-  { id: 'USR-001', lname: 'Santos', fname: 'Maria', mname: 'C.', role: 'Admin', officeId: 'OFF-001', username: 'admin', password: 'admin123' },
-  { id: 'USR-002', lname: 'Reyes', fname: 'Juan', mname: 'D.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist', password: 'recep123' },
-  { id: 'USR-003', lname: 'Cruz', fname: 'Ana', mname: 'B.', role: 'Mayor', officeId: 'OFF-001', username: 'mayor', password: 'mayor123' },
-  { id: 'USR-004', lname: 'Garcia', fname: 'Pedro', mname: 'M.', role: 'Admin', officeId: 'OFF-003', username: 'admin3', password: 'admin789' },
-  { id: 'USR-005', lname: 'Torres', fname: 'Elena', mname: 'R.', role: 'Admin', officeId: 'OFF-004', username: 'admin4', password: 'admin101' },
-  { id: 'USR-006', lname: 'Mendoza', fname: 'Carlos', mname: 'L.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist2', password: 'recep456' },
-  { id: 'USR-007', lname: 'Ramos', fname: 'Lucia', mname: 'A.', role: 'Admin', officeId: 'OFF-006', username: 'admin5', password: 'admin202' },
-  { id: 'USR-008', lname: 'Bautista', fname: 'Marco', mname: 'S.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist3', password: 'recep789' },
-  { id: 'USR-SIMON-001', lname: 'Unc', fname: 'Simon', mname: '', role: 'Office', officeId: 'OFF-001', username: 'simon', password: 'simon123' },
-  { id: 'USR-OFFICE-001', lname: 'Quierra', fname: 'Janero', mname: '', role: 'Office', officeId: 'OFF-006', username: 'janeromarco', password: 'office123' },
+  { id: 'USR-001', lname: 'Santos', fname: 'Maria', mname: 'C.', role: 'Admin', officeId: 'OFF-001', username: 'admin', },
+  { id: 'USR-002', lname: 'Reyes', fname: 'Juan', mname: 'D.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist', },
+  { id: 'USR-003', lname: 'Cruz', fname: 'Ana', mname: 'B.', role: 'Mayor', officeId: 'OFF-001', username: 'mayor', },
+  { id: 'USR-004', lname: 'Garcia', fname: 'Pedro', mname: 'M.', role: 'Admin', officeId: 'OFF-003', username: 'admin3', },
+  { id: 'USR-005', lname: 'Torres', fname: 'Elena', mname: 'R.', role: 'Admin', officeId: 'OFF-004', username: 'admin4', },
+  { id: 'USR-006', lname: 'Mendoza', fname: 'Carlos', mname: 'L.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist2', },
+  { id: 'USR-007', lname: 'Ramos', fname: 'Lucia', mname: 'A.', role: 'Admin', officeId: 'OFF-006', username: 'admin5', },
+  { id: 'USR-008', lname: 'Bautista', fname: 'Marco', mname: 'S.', role: 'Receptionist', officeId: 'OFF-001', username: 'receptionist3', },
+  { id: 'USR-SIMON-001', lname: 'Unc', fname: 'Simon', mname: '', role: 'Office', officeId: 'OFF-001', username: 'simon', },
+  { id: 'USR-OFFICE-001', lname: 'Quierra', fname: 'Janero', mname: '', role: 'Office', officeId: 'OFF-006', username: 'janeromarco', },
 ];
 
 const documents = [
