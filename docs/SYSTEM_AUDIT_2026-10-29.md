@@ -2,6 +2,8 @@
 
 The system is reachable and its existing tests pass, but it still has urgent security and data-preservation defects. Passing tests do not cover all the failures below. This audit made no application fixes, live record changes, configuration changes, service restarts, hardware commands, commits, pushes, or deployments.
 
+**Repair follow-up (2026-10-30):** Source repairs are now committed locally at `d0291ff` on `main`; see [repair results and remaining requirements](SYSTEM_REPAIR_RESULTS_2026-10-29.md). This report preserves the original audit snapshot. Deployment, coordinated credential rollout, historical recovery and physical acceptance remain separate; SMS was explicitly deferred.
+
 ## Scope and evidence
 
 - Audited `main` at `7d0631dc534fbac9a58e9c85ade12ea731055727`. The starting checkout was clean. A read-only remote check confirmed GitHub `main` at the same revision.

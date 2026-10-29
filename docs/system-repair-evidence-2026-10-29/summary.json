@@ -1,0 +1,68 @@
+{
+  "operation": "system-audit-remediation",
+  "completedLocalDate": "2026-10-30",
+  "timezone": "Asia/Manila",
+  "branch": "main",
+  "baselineCommit": "7d0631dc534fbac9a58e9c85ade12ea731055727",
+  "sourceCommit": "d0291ff23133565d28283fcf1a430885fad657d9",
+  "state": "locally committed source; rollout and historical reconciliation pending",
+  "tests": {
+    "regular": { "total": 116, "passed": 89, "failed": 0, "skippedOptInDatabaseCases": 27 },
+    "separatePostgresqlHttp": { "total": 27, "passed": 27, "failed": 0, "disposableSchemas": true },
+    "distinctPassed": 116,
+    "productionDashboardBuild": "passed",
+    "commonJsSyntax": { "files": 95, "errors": 0 },
+    "npmAuditVulnerabilities": { "backend": 0, "dashboard": 0, "includesDevelopmentDependencies": true },
+    "browserSynthetic": {
+      "protectedImage": "passed",
+      "protectedPdf": "passed",
+      "expiredSessionDenial": "passed",
+      "previewRecovery": "passed",
+      "downloadBytes": 68,
+      "downloadChecksumMatchedFixture": true,
+      "savedScreenshot": false,
+      "harnessStopped": true
+    }
+  },
+  "reconciliation": {
+    "documentsChecked": 85,
+    "missingStoredFiles": 15,
+    "missingFilesWithInlineCover": 8,
+    "verifiedOriginalCandidates": 0,
+    "invalidCustodyReferences": 8,
+    "missingReceiptTimestamps": 4,
+    "unambiguousTimestampCandidates": 0,
+    "legacyQueues": 8,
+    "appliedHistoricalRepairs": 0
+  },
+  "privacy": {
+    "exportsRemovedFromNewSnapshot": 11,
+    "localOriginalsPreserved": true,
+    "privatePreservedCopiesChecksumMatched": true,
+    "historyRewritten": false,
+    "privateContentIncluded": false
+  },
+  "scope": {
+    "sourceRepairs": ["A01", "A03", "A04", "A05", "A06", "A07", "A08", "A10", "A11", "A12", "A13", "A14", "A16", "A18"],
+    "configurationGuardsPreparedPhysicalRolloutPending": ["A02"],
+    "historicalRecoveryPending": ["A09", "A15"],
+    "userDeferred": ["A17"]
+  },
+  "publication": {
+    "pushed": false,
+    "deployed": false,
+    "userServicesRestarted": false,
+    "physicalPiUpdatedOrCommanded": false,
+    "liveConfigurationReplaced": false,
+    "liveBusinessDataMutated": false,
+    "smsSent": false
+  },
+  "remainingAcceptance": [
+    "coordinated frontend/backend/Pi credential rollout and live role checks",
+    "verified originals and reviewed historical reconciliation",
+    "fresh native backup, restore exercise and separate-storage verification before live repair",
+    "physical four-device, Pi and native-print acceptance",
+    "service supervision and remaining measured performance/query/index work",
+    "SMS as a later user-directed operation"
+  ]
+}
