@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { createSubmissionGate } from '../utils/submissionGate';
+import React, { useRef, useState } from 'react';
 import ModalOverlay from '../components/ModalOverlay';
 import formatBadgeCount from '../utils/formatBadgeCount';
 import {
@@ -39,6 +40,8 @@ const ReceptionistDashboard = ({
   const [showReceiveForm, setShowReceiveForm] = useState(false);
   const [attachmentFile, setAttachmentFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const receiveSubmitGate = useRef(null);
+  if (!receiveSubmitGate.current) receiveSubmitGate.current = createSubmissionGate(setIsSubmitting);
 
   const mayorsOfficeId = offices.find(o => o.name.toLowerCase().includes('mayor'))?.id || 'OFF-001';
 
@@ -180,59 +183,58 @@ const ReceptionistDashboard = ({
     reader.readAsDataURL(file);
   });
 
-  const handleReceive = async (e) => {
+  const handleReceive = (e) => {
     e.preventDefault();
-    const validation = validateRequiredFields([
-      { key: 'subject', label: 'Document subject', value: receiveForm.subject },
-      { key: 'senderName', label: 'Sender name', value: receiveForm.senderName },
-      {
-        key: 'documentTypeOther',
-        label: 'Document type',
-        value: receiveForm.documentTypeOther,
-        when: isOtherDocumentType(receiveForm.documentTypeId),
-      },
-      {
-        key: 'attachmentFile',
-        label: 'Scanned file attachment',
-        value: attachmentFile?.name || '',
-      },
-    ]);
-    if (!validation.isValid) {
-      setReceiveFormErrors(validation.errors);
-      setReceiveFormErrorSummary(validation.summary);
-      return;
-    }
-    setReceiveFormErrors({});
-    setReceiveFormErrorSummary('');
-    setIsSubmitting(true);
+    return receiveSubmitGate.current(async () => {
+      const validation = validateRequiredFields([
+        { key: 'subject', label: 'Document subject', value: receiveForm.subject },
+        { key: 'senderName', label: 'Sender name', value: receiveForm.senderName },
+        {
+          key: 'documentTypeOther',
+          label: 'Document type',
+          value: receiveForm.documentTypeOther,
+          when: isOtherDocumentType(receiveForm.documentTypeId),
+        },
+        {
+          key: 'attachmentFile',
+          label: 'Scanned file attachment',
+          value: attachmentFile?.name || '',
+        },
+      ]);
+      if (!validation.isValid) {
+        setReceiveFormErrors(validation.errors);
+        setReceiveFormErrorSummary(validation.summary);
+        return;
+      }
+      setReceiveFormErrors({});
+      setReceiveFormErrorSummary('');
 
-    try {
-      const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
-      const newDoc = {
-        ...receiveForm,
-        documentDirection: 'Incoming',
-        documentTypeOther: isOtherDocumentType(receiveForm.documentTypeId) ? receiveForm.documentTypeOther.trim() : '',
-        originOfficeOther: receiveForm.originOfficeOther.trim(),
-        status: 'Received',
-        priorityLevel: 'normal',
-        originOfficeId: currentUser?.officeId || 'OFF-001',
-        currentOfficeId: mayorsOfficeId,
-        destinationOfficeId: mayorsOfficeId,
-        senderEmail: '',
-        senderNotificationChannels: receiveForm.senderContact ? ['sms'] : [],
-        scannedFiles: newFiles,
-        scannedImageUrl: newFiles[0]?.dataUrl || '',
-        intakeStatus: 'Approved',
-      };
-      await onAddDocument(newDoc);
-      setShowReceiveForm(false);
-      setAttachmentFile(null);
-      setReceiveForm(getEmptyReceiveForm());
-    } catch {
-      // Shared save handler already shows the API error; keep the form open.
-    } finally {
-      setIsSubmitting(false);
-    }
+      try {
+        const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
+        const newDoc = {
+          ...receiveForm,
+          documentDirection: 'Incoming',
+          documentTypeOther: isOtherDocumentType(receiveForm.documentTypeId) ? receiveForm.documentTypeOther.trim() : '',
+          originOfficeOther: receiveForm.originOfficeOther.trim(),
+          status: 'Received',
+          priorityLevel: 'normal',
+          originOfficeId: currentUser?.officeId || 'OFF-001',
+          currentOfficeId: mayorsOfficeId,
+          destinationOfficeId: mayorsOfficeId,
+          senderEmail: '',
+          senderNotificationChannels: receiveForm.senderContact ? ['sms'] : [],
+          scannedFiles: newFiles,
+          scannedImageUrl: newFiles[0]?.dataUrl || '',
+          intakeStatus: 'Approved',
+        };
+        await onAddDocument(newDoc);
+        setShowReceiveForm(false);
+        setAttachmentFile(null);
+        setReceiveForm(getEmptyReceiveForm());
+      } catch {
+        // Shared save handler already shows the API error; keep the form open.
+      }
+    });
   };
 
   // FIFO external queue
@@ -509,11 +511,11 @@ const ReceptionistDashboard = ({
 
       {/* Receive Document Modal */}
       {showReceiveForm && (
-        <ModalOverlay onClose={() => setShowReceiveForm(false)}>
+        <ModalOverlay onClose={() => { if (!isSubmitting) setShowReceiveForm(false); }}>
           <div className="modal receptionist-register-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Register External Document</h2>
-              <button className="btn-icon" onClick={() => setShowReceiveForm(false)}><X size={18} /></button>
+              <button className="btn-icon" disabled={isSubmitting} onClick={() => setShowReceiveForm(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleReceive} noValidate>
               <div className="modal-body">

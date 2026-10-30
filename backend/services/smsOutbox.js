@@ -5,9 +5,9 @@ const { getSmsConfig, createHttpSmsClient, SmsProviderError } = require('./httpS
 const error = (message, status = 409) => Object.assign(new Error(message), { status });
 const plain = row => row?.get ? row.get({ plain: true }) : row;
 const createSmsOutboxService = ({ DocumentModel, SmsNotificationModel, config = getSmsConfig,
-  provider = createHttpSmsClient(), now = () => new Date(), notify = () => {}, spacingMs = 20000 }) => {
+  provider = createHttpSmsClient(), now = () => new Date(), notify = () => {}, spacingMs }) => {
   const db = DocumentModel?.sequelize;
-  let timer, busy = false;
+  let dispatchTimer, pollTimer, dispatchBusy = false, pollingBusy = false;
   const currentRecipient = doc => eligibleRecipient(plain(doc));
   const changed = () => notify(['senderNotifications']);
   const requeue = async (id, authorize) => {
@@ -34,7 +34,7 @@ const createSmsOutboxService = ({ DocumentModel, SmsNotificationModel, config = 
     // Serializes dispatch admission across backend processes without holding a lock during HTTP.
     await db.query("SELECT pg_advisory_xact_lock(hashtext('digipath-http-sms-dispatch'))", { transaction });
     const last = await SmsNotificationModel.findOne({ where: { lastAttemptAt: { [Op.ne]: null } }, order: [['lastAttemptAt', 'DESC']], transaction });
-    if (last?.lastAttemptAt && now() - last.lastAttemptAt < spacingMs) return null;
+    if (last?.lastAttemptAt && now() - last.lastAttemptAt < (spacingMs ?? config().minIntervalMs ?? 6000)) return null;
     const snapshot = await SmsNotificationModel.findByPk(id, { transaction });
     if (!snapshot) return null;
     const doc = await DocumentModel.findByPk(snapshot.documentId, { transaction, lock: transaction.LOCK.UPDATE });
@@ -62,7 +62,8 @@ const createSmsOutboxService = ({ DocumentModel, SmsNotificationModel, config = 
     changed();
   };
   const outcome = (result) => ({ ...result, retryable: false,
-    nextPollAt: ['Accepted', 'Sent', 'Unknown'].includes(result.status) ? new Date(now().getTime() + 60000) : null });
+    nextPollAt: ['Accepted', 'Sent', 'Unknown'].includes(result.status)
+      ? new Date(now().getTime() + (result.status === 'Unknown' ? 60000 : 15000)) : null });
   const dispatch = async id => {
     const notification = await claim(id);
     if (!notification) return false;
@@ -97,9 +98,9 @@ const createSmsOutboxService = ({ DocumentModel, SmsNotificationModel, config = 
       });
     }
   };
-  const tick = async () => {
-    if (busy || !config().ready) return;
-    busy = true;
+  const pollTick = async () => {
+    if (pollingBusy || !config().ready) return;
+    pollingBusy = true;
     try {
       await SmsNotificationModel.update({ status: 'Expired', retryable: false }, {
         where: { expiresAt: { [Op.lte]: now() }, status: { [Op.in]: ['Queued', 'Paused'] } },
@@ -117,18 +118,29 @@ const createSmsOutboxService = ({ DocumentModel, SmsNotificationModel, config = 
           await SmsNotificationModel.update({ nextPollAt: null, errorMessage: item.status === 'Sent' ? '' : 'Delivery remains unconfirmed after the tracking window. Resending is blocked.' }, { where: { id: item.id, requestId: item.requestId } });
         } else await reconcile(item);
       }
+    } finally { pollingBusy = false; }
+  };
+  const dispatchTick = async () => {
+    if (dispatchBusy || !config().ready) return;
+    dispatchBusy = true;
+    try {
       const next = await SmsNotificationModel.findOne({ where: { status: 'Queued' }, order: [['sequence', 'ASC']] });
       if (next) await dispatch(next.id);
-    } finally { busy = false; }
+    } finally { dispatchBusy = false; }
   };
+  const tick = async () => { await Promise.all([dispatchTick(), pollTick()]); };
+  const workerError = () => console.error('SMS worker check failed; pending outcomes retained.');
   return {
-    requeue, dispatch, reconcile, tick,
+    requeue, dispatch, reconcile, tick, dispatchTick, pollTick,
     start() {
-      if (timer || !config().ready) return;
-      timer = setInterval(() => tick().catch(() => console.error('SMS worker check failed; pending outcomes retained.')), 5000);
-      timer.unref();
+      if (dispatchTimer || !config().ready) return;
+      // A slow historical status GET must never hold up a new registration's POST.
+      dispatchTimer = setInterval(() => dispatchTick().catch(workerError), 1000);
+      pollTimer = setInterval(() => pollTick().catch(workerError), 5000);
+      dispatchTimer.unref(); pollTimer.unref();
+      dispatchTick().catch(workerError);
     },
-    stop() { clearInterval(timer); timer = null; },
+    stop() { clearInterval(dispatchTimer); clearInterval(pollTimer); dispatchTimer = pollTimer = null; },
   };
 };
 const serializeSms = row => {

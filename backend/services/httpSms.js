@@ -9,8 +9,10 @@ const getSmsConfig = (env = process.env) => {
   try { from = normalizeSmsNumber(env.HTTPSMS_FROM_NUMBER); } catch { /* Missing settings leave the outbox paused. */ }
   const sim = env.HTTPSMS_SIM || 'SIM2';
   const timeout = Number(env.HTTPSMS_TIMEOUT_MS || 10000);
+  const minInterval = Number(env.HTTPSMS_MIN_INTERVAL_MS || 6000);
   const ready = enabled && !!apiKey && !/[\r\n]/.test(apiKey) && !!from && ['SIM1', 'SIM2'].includes(sim);
   return { enabled, ready, apiKey, from, sim,
+    minIntervalMs: Number.isFinite(minInterval) ? Math.max(1000, Math.min(minInterval, 60000)) : 6000,
     timeoutMs: Number.isFinite(timeout) ? Math.max(1000, Math.min(timeout, 30000)) : 10000 };
 };
 class SmsProviderError extends Error {
@@ -76,6 +78,10 @@ const createHttpSmsClient = ({ fetch: fetcher = global.fetch } = {}) => {
         const matches = Array.isArray(phones) ? phones.filter(phone => phone.phone_number === config.from) : [];
         if (matches.length !== 1 || matches[0].sim !== config.sim) throw new SmsProviderError('The httpSMS sender/SIM registration does not match the configured phone.', true);
         if (matches[0].max_send_attempts !== 1) throw new SmsProviderError('Set the httpSMS phone maximum send attempts to 1 before enabling DigiPath.', true);
+        const rate = Number(matches[0].messages_per_minute);
+        if (Number.isFinite(rate) && rate > 0 && (config.minIntervalMs ?? 6000) < Math.ceil(60000 / rate)) {
+          throw new SmsProviderError('Increase HTTPSMS_MIN_INTERVAL_MS to match the registered phone message rate before sending.', true);
+        }
       } catch (error) {
         // No POST was made, so a later manual retry is safe.
         throw new SmsProviderError(error instanceof SmsProviderError ? error.message : 'Cannot verify the httpSMS phone.', true);

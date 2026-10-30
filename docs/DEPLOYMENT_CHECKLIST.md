@@ -2,6 +2,8 @@
 
 The user-selected architecture remains Vercel frontend → public tunnel → laptop backend/PostgreSQL/scans. A source commit does not restart those services or deploy the Pi.
 
+**Current startup preference:** use `npm run dev:backend`, then VS Code Ports → forward **5000** → **Public**. Backend/network and production frontend settings are restored to the user's original VS Code address; automatic CLI hosting is disabled and the replacement CLI binding removed. Production redeployment `dpl_AqUdGmJnaKhQuzgZSrddVBuZrwyN` is Ready/current and its published bundle uses the original address. This supersedes the historical dedicated-CLI-tunnel instructions below. Restart an already-running backend after the environment edit. Runtime/public availability depends on the user's running backend and Public forward; configuration restoration alone is not a live connectivity check.
+
 **30 October public connection follow-up:** Matching `main` revision `40963ca` is running on the laptop and redeployed to production as `dpl_6jNxWXymtBKnUmKRA3RKrWXZwWUr` (Ready/current). A user-approved dedicated public tunnel replaced unavailable addresses; endpoint settings and the published production bundle now match. Public API health/authentication, CORS, authenticated WebSocket and browser sign-in rendering passed. Earlier 404/unpublished notes below describe prior checkpoints. Full signed-in workflow, physical-device/background-delivery and separate-storage recovery checks remain distinct. Keep backend/tunnel processes running; no supervised startup was installed.
 
 ## Before restarting the repaired backend

@@ -10,11 +10,18 @@
   "legacyRowsReusedOrFlushed": false,
   "sendingDefault": "paused",
   "validation": {
-    "finalBackendAndStartup": { "passed": 98, "failed": 0, "skipped": 0 },
+    "finalBackendAndStartup": {
+      "passed": 98,
+      "failed": 0,
+      "skipped": 0
+    },
     "backendRegularSubset": 47,
     "disposablePostgresqlHttpSubset": 45,
     "startupSubset": 6,
-    "frontend": { "passed": 47, "failed": 0 },
+    "frontend": {
+      "passed": 47,
+      "failed": 0
+    },
     "distinctPassingTests": 145,
     "productionDashboardBuild": "passed",
     "commonJsSyntaxFiles": 100,
@@ -165,8 +172,148 @@
     "supervisedAutostartInstalled": false,
     "completionDocumentationStillLocal": true
   },
+  "preferredWorkflowRestoration": {
+    "sourceRevision": "a3902abbaf4bb04db1e15cfa0620a7cbcee6cc9e",
+    "startupCommand": "npm run dev:backend",
+    "forwarding": "User manually forwards port 5000 in VS Code and makes it Public",
+    "originalVsCodeAddressRestoredLocally": true,
+    "productionApiSettingRestored": true,
+    "replacementCliBindingRemoved": true,
+    "automaticCliHostingDisabled": true,
+    "configurationRecoveryCopiesVerified": 3,
+    "smsAndScannerCredentialsUnchanged": true,
+    "databaseOrSmsActionsPerformed": false,
+    "servicesStartedStoppedOrRestartedByAgent": false,
+    "productionDeploymentId": "dpl_AqUdGmJnaKhQuzgZSrddVBuZrwyN",
+    "productionDeploymentStatus": "Ready",
+    "productionBundleUsesOriginalVsCodeApi": true,
+    "productionBundleContainsReplacementCliApi": false,
+    "publicFrontendHttpStatus": 200,
+    "lastRestoredApiProbeStatus": 404,
+    "liveApiReachabilityVerifiedAfterManualForward": false,
+    "userBackendRestartAndPublicForwardRemainRequired": true,
+    "completionDocumentationUncommitted": true
+  },
   "committed": true,
   "pushed": true,
   "deployed": true,
-  "pending": ["provider final status and recipient confirmation for the previously user-reported normal-workflow send", "signed-in business workflow and physical-device acceptance", "phone background-delivery reliability", "verified separate-storage recovery copy beyond the prior activation's explicit waiver"]
+  "pending": [
+    "user backend restart and Public VS Code port-5000 forwarding, followed by live API verification",
+    "provider final status and recipient confirmation for the previously user-reported normal-workflow send",
+    "signed-in business workflow and physical-device acceptance",
+    "phone background-delivery reliability",
+    "verified separate-storage recovery copy beyond the prior activation's explicit waiver",
+    "publish matching frontend and reload backend for local submission/worker fixes; no publication performed by this batch",
+    "post-provider delay before native Messages still requires phone/push/job diagnostics and live acceptance"
+  ],
+  "duplicateAndLatencyFix": {
+    "recordedDate": "2026-10-31",
+    "state": "LOCAL; uncommitted, unpushed and not deployed",
+    "baseRevision": "a3902abbaf4bb04db1e15cfa0620a7cbcee6cc9e",
+    "distinctRegistrationRecords": 2,
+    "registrationSeparationMs": 1202,
+    "attemptsPerObservedMessage": 1,
+    "observedRegistrationQueueWaitMs": [
+      826,
+      19637
+    ],
+    "approximateProviderToPhoneWaitSeconds": [
+      59,
+      41
+    ],
+    "phoneAppForegroundReportedByUser": true,
+    "nativeMessagesAppearedOnlyLaterReportedByUser": true,
+    "allThreeObservedMessagesFinallyDelivered": true,
+    "inFlightSubmissionGuards": [
+      "DocumentList",
+      "ReceptionistDashboard",
+      "Scanner"
+    ],
+    "defaultDispatchIntervalMs": 6000,
+    "dispatchCheckMs": 1000,
+    "independentStatusCheckMs": 5000,
+    "acceptedSentNextReadMs": 15000,
+    "unknownNextReadMs": 60000,
+    "phoneRateCheckedBeforePost": true,
+    "backendAndStartupTests": {
+      "passed": 102,
+      "failed": 0,
+      "skipped": 0
+    },
+    "frontendTests": {
+      "passed": 50,
+      "failed": 0
+    },
+    "productionBuildPassed": true,
+    "syntheticBrowserCheck": {
+      "realDocumentListForm": true,
+      "doubleClickSaveCalls": 1,
+      "pendingSaveAndCancelDisabled": true,
+      "completedOnce": true,
+      "consoleErrors": 0,
+      "backendAccessBlocked": true
+    },
+    "validationLimits": "Initial fixture module resolution and source encoding failures were corrected; final browser check/build passed. Receptionist/scanner use the tested shared gate but were not separately browser-tested. Real post-fix delivery not tested.",
+    "liveSmsPostsPerformed": 0,
+    "businessDataChanged": false,
+    "schemaChanged": false,
+    "privateEnvironmentChanged": false,
+    "userBackendOrTunnelManuallyRestartedByAgent": false,
+    "remainingDelayCause": "Unconfirmed waiting between provider acceptance and appearance in native Messages; no evidence that acknowledgement releases earlier messages.",
+    "recovery": "Ignored database-export/sms-duplicate-investigation-2026-10-30/source-before; no database restore required for source rollback.",
+    "userReportedLocalSendingWithoutDelay": true
+  },
+  "morningDeliveryFollowup": {
+    "recordedDate": "2026-10-31",
+    "checkedAt": "2026-10-30T23:29:00.010Z",
+    "readOnly": true,
+    "events": [
+      "document_received",
+      "document_signed",
+      "document_acknowledged"
+    ],
+    "queueWaitMs": [
+      233,
+      304,
+      814
+    ],
+    "attemptsPerEvent": 1,
+    "providerStatuses": [
+      "scheduled",
+      "scheduled",
+      "scheduled"
+    ],
+    "providerLastAttemptedSentDeliveredTimesMissing": true,
+    "providerFailureReasonsPresent": false,
+    "phoneInternetReported": "Wi-Fi",
+    "networkComparison": "Pending user switch to mobile data and one heartbeat; existing messages only",
+    "causeConfirmed": false,
+    "smsPostsOrResendsPerformed": 0,
+    "configurationOrServiceChangesPerformed": false
+  },
+  "mobileDataFollowup": {
+    "recordedDate": "2026-10-31",
+    "userReportedExistingMessagesStillPending": true,
+    "latestObservedHeartbeatLocal": "2026-10-31 07:30:12 Asia/Manila",
+    "heartbeatAppVersion": "64cc1b71",
+    "phoneLookupHttpStatus": 200,
+    "senderAndSimMatch": true,
+    "nonemptyPushTokenObserved": true,
+    "existingProviderMessageLookups": [
+      404,
+      404,
+      404
+    ],
+    "boundedConversationLookupHttpStatus": 200,
+    "boundedConversationEntries": 4,
+    "exactStoredRequestMatches": 0,
+    "dbRowsRemainAccepted": true,
+    "finalDeliveryOutcomeConfirmed": false,
+    "causeConfirmed": false,
+    "clarification": "User reports localhost now works with no delay; did not confirm message deletion or account/key changes.",
+    "smsPostsOrMutationsPerformed": false,
+    "localNoDelayReportedByUser": true,
+    "independentlyTimedPostFixDelivery": false,
+    "furtherProbesStopped": true
+  }
 }

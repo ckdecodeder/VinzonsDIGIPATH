@@ -10,6 +10,23 @@ const reply = (notification, extra = {}) => ({ id: randomUUID(), owner: cfg.from
 const json = (data, status = 200) => new Response(JSON.stringify({ status: 'success', data }), { status, headers: { 'content-type': 'application/json' } });
 const phones = () => json([{ phone_number: cfg.from, sim: 'SIM2', max_send_attempts: 1 }]);
 
+test('SMS pacing defaults to six seconds and validates bounded custom intervals', () => {
+  assert.equal(getSmsConfig({}).minIntervalMs, 6000);
+  assert.equal(getSmsConfig({ HTTPSMS_MIN_INTERVAL_MS: '20000' }).minIntervalMs, 20000);
+  assert.equal(getSmsConfig({ HTTPSMS_MIN_INTERVAL_MS: '-1' }).minIntervalMs, 1000);
+  assert.equal(getSmsConfig({ HTTPSMS_MIN_INTERVAL_MS: 'invalid' }).minIntervalMs, 6000);
+});
+
+test('a configured dispatch interval faster than the phone policy rejects before any SMS POST', async () => {
+  let posts = 0;
+  const client = createHttpSmsClient({ fetch: async (url, options) => {
+    if (options.method === 'POST') posts++;
+    return json([{ phone_number: cfg.from, sim: cfg.sim, max_send_attempts: 1, messages_per_minute: 5 }]);
+  } });
+  await assert.rejects(client.send(item(), { ...cfg, minIntervalMs: 6000 }), error => error instanceof SmsProviderError && error.retryable);
+  assert.equal(posts, 0);
+});
+
 test('SMS defaults paused and requires private sender/key and an explicit SIM', () => {
   assert.equal(getSmsConfig({}).ready, false);
   assert.equal(getSmsConfig({ SMS_ENABLED: 'true' }).ready, false);

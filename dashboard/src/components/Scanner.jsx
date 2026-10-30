@@ -1,3 +1,4 @@
+import { createSubmissionGate } from '../utils/submissionGate';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { jsPDF } from "jspdf";
 import PageShell from "./PageShell";
@@ -456,6 +457,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const [formErrors, setFormErrors] = useState({});
   const [formErrorSummary, setFormErrorSummary] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const registerSubmitGate = useRef(null);
+  if (!registerSubmitGate.current) registerSubmitGate.current = createSubmissionGate(setIsSubmitting);
 
   useEffect(() => {
     return () => {
@@ -1541,7 +1544,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   };
 
   // STEP 3 → STEP 4: Confirm and submit
-  const handleConfirmSubmit = async () => {
+  const handleConfirmSubmit = () => registerSubmitGate.current(async () => {
     const validation = validateScannerDetails();
     if (!validation.isValid) {
       setFormErrors(validation.errors);
@@ -1551,7 +1554,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
     }
     setFormErrors({});
     setFormErrorSummary('');
-    setIsSubmitting(true);
 
     try {
       const combinedPdf = await createScannedDocumentPdf(capturedImages, selectedPaperGuide);
@@ -1655,10 +1657,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       setStep(4);
     } catch (err) {
       setFormErrorSummary(err?.message || 'Unable to create or save the combined PDF.');
-    } finally {
-      setIsSubmitting(false);
     }
-  };
+  });
 
   const handleRescan = () => {
     if (enrichPollRef.current) {

@@ -179,6 +179,43 @@ integration('SMS: API requires authentication and retry roles, and scopes Office
   assert.equal(visible.body.items[0].provider, 'httpsms');
   assert.equal(visible.text.includes(cfg.apiKey), false); assert.equal(visible.text.includes('requestId'), false);
 });
+
+integration('SMS: a stalled old status lookup cannot delay dispatch of a new registration', async () => {
+  const old = await smsFor(await fixture());
+  await old.update({ status: 'Accepted', attempts: 1, requestId: randomUUID(), providerMessageId: randomUUID(),
+    senderNumber: cfg.from, sim: cfg.sim, nextPollAt: new Date(clock.getTime() - 1) });
+  const fresh = await smsFor(await fixture());
+  let release, entered;
+  const pollEntered = new Promise(resolve => { entered = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const isolated = createSmsOutboxService({ ...raw, config: () => cfg, now: () => clock, spacingMs: 0,
+    provider: {
+      send: async () => { calls++; return { status: 'Accepted', providerMessageId: randomUUID() }; },
+      reconcile: async notification => { entered(); await blocked; return { status: 'Delivered', providerMessageId: notification.providerMessageId }; },
+    },
+  });
+  const polling = isolated.pollTick();
+  try {
+    await pollEntered;
+    await Promise.all([isolated.dispatchTick(), isolated.dispatchTick()]);
+    assert.equal(calls, 1);
+    assert.equal((await fresh.reload()).status, 'Accepted');
+    assert.equal((await old.reload()).status, 'Accepted');
+    assert.equal(new Date(fresh.nextPollAt) - clock, 15000);
+  } finally { release(); await polling; }
+  assert.equal((await old.reload()).status, 'Delivered');
+});
+
+integration('SMS: configured six-second spacing permits the next message without a twenty-second hold', async () => {
+  const paced = createSmsOutboxService({ ...raw, config: () => ({ ...cfg, minIntervalMs: 6000 }), now: () => clock,
+    provider: { send: async () => { calls++; return { status: 'Accepted', providerMessageId: randomUUID() }; } } });
+  const first = await smsFor(await fixture()), next = await smsFor(await fixture());
+  await paced.dispatch(first.id);
+  clock = new Date(clock.getTime() + 5999);
+  assert.equal(await paced.dispatch(next.id), false); assert.equal(calls, 1);
+  clock = new Date(clock.getTime() + 1);
+  assert.equal(await paced.dispatch(next.id), true); assert.equal(calls, 2);
+});
 integration('SMS: HTTP requeue returns Queued with no provider call and rejects a duplicate request', async () => {
   process.env.SMS_ENABLED = 'false'; const doc = await fixture(), sms = await smsFor(doc);
   process.env.SMS_ENABLED = 'true';

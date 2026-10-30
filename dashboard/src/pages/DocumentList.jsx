@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import { createSubmissionGate } from '../utils/submissionGate';
+import React, { useEffect, useRef, useState } from 'react';
 import { documentService, senderNotificationService } from '../api/documentService';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
@@ -110,6 +111,9 @@ const DocumentList = ({
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [showForm, setShowForm] = useState(false);
+  const [isSavingDocument, setIsSavingDocument] = useState(false);
+  const documentSubmitGate = useRef(null);
+  if (!documentSubmitGate.current) documentSubmitGate.current = createSubmissionGate(setIsSavingDocument);
   const [editDoc, setEditDoc] = useState(null);
   const [expandedRow, setExpandedRow] = useState(null);
   const [sortBy, setSortBy] = useState('dateReceived');
@@ -554,128 +558,130 @@ const DocumentList = ({
     handleOpenForm();
   }, [autoOpenCreate]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
+    return documentSubmitGate.current(async () => {
 
-    const hasExistingAttachment = Boolean(formScannedFiles.length || editDoc?.scannedImageUrl);
-    const isOfficeStaff = currentUser?.role === 'Office';
-    const requiredFields = [
-      { key: 'subject', label: 'Document subject', value: formData.subject },
-      {
-        key: 'documentTypeOther',
-        label: 'Document type',
-        value: formData.documentTypeOther,
-        when: isOtherDocumentType(formData.documentTypeId),
-      },
-      { key: 'senderName', label: 'Sender name', value: formData.senderName },
-      {
-        key: 'attachmentFile',
-        label: 'Scanned file attachment',
-        value: attachmentFile?.name || (formScannedFiles.length || hasExistingAttachment ? 'existing' : ''),
-      },
-      {
-        key: 'destinationOfficeId',
-        label: 'Destination office',
-        value: formData.destinationOfficeId,
-        when: (isOfficeStaff || currentUser?.role === 'Receptionist') && !editDoc,
-      },
-    ];
-    const validation = validateRequiredFields(requiredFields);
+      const hasExistingAttachment = Boolean(formScannedFiles.length || editDoc?.scannedImageUrl);
+      const isOfficeStaff = currentUser?.role === 'Office';
+      const requiredFields = [
+        { key: 'subject', label: 'Document subject', value: formData.subject },
+        {
+          key: 'documentTypeOther',
+          label: 'Document type',
+          value: formData.documentTypeOther,
+          when: isOtherDocumentType(formData.documentTypeId),
+        },
+        { key: 'senderName', label: 'Sender name', value: formData.senderName },
+        {
+          key: 'attachmentFile',
+          label: 'Scanned file attachment',
+          value: attachmentFile?.name || (formScannedFiles.length || hasExistingAttachment ? 'existing' : ''),
+        },
+        {
+          key: 'destinationOfficeId',
+          label: 'Destination office',
+          value: formData.destinationOfficeId,
+          when: (isOfficeStaff || currentUser?.role === 'Receptionist') && !editDoc,
+        },
+      ];
+      const validation = validateRequiredFields(requiredFields);
 
-    if (!validation.isValid) {
-      setDocumentFormErrors(validation.errors);
-      setDocumentFormErrorSummary(validation.summary);
-      return;
-    }
+      if (!validation.isValid) {
+        setDocumentFormErrors(validation.errors);
+        setDocumentFormErrorSummary(validation.summary);
+        return;
+      }
 
-    setDocumentFormErrors({});
-    setDocumentFormErrorSummary('');
+      setDocumentFormErrors({});
+      setDocumentFormErrorSummary('');
 
-    const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
-    const nextScannedFiles = [...formScannedFiles, ...newFiles];
-    if (!nextScannedFiles.length) {
-      setDocumentFormErrors({ attachmentFile: 'Attach at least one scanned file.' });
-      setDocumentFormErrorSummary('A scanned file attachment is required.');
-      return;
-    }
-
-    const isReceptionist = currentUser?.role === 'Receptionist';
-    const myOfficeId = currentUser?.officeId || formData.currentOfficeId;
-    const editingDoc = editDoc;
-    // On edit, never rewrite location offices — routing/receive/RFID own those fields.
-    const normalizedFormData = {
-      ...formData,
-      documentDirection: isReceptionist
-        ? 'Incoming'
-        : (isOfficeStaff ? 'Outgoing' : formData.documentDirection),
-      status: editingDoc
-        ? (editingDoc.status || getWorkflowStatus(formData.status))
-        : getWorkflowStatus(formData.status),
-      dateReceived: editingDoc ? editingDoc.dateReceived : formData.dateReceived,
-      documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
-      originOfficeOther: editingDoc
-        ? (editingDoc.originOfficeOther || '')
-        : formData.originOfficeOther.trim(),
-      originOfficeId: editingDoc
-        ? editingDoc.originOfficeId
-        : (isOfficeStaff
-          ? myOfficeId
-          : (formData.originOfficeId || formData.currentOfficeId || currentUser?.officeId)),
-      currentOfficeId: editingDoc
-        ? editingDoc.currentOfficeId
-        : (isOfficeStaff
-          ? myOfficeId
-          : (formData.currentOfficeId || formData.originOfficeId || currentUser?.officeId)),
-      destinationOfficeId: editingDoc
-        ? (editingDoc.destinationOfficeId || '')
-        : (formData.destinationOfficeId || (isOfficeStaff ? '' : formData.currentOfficeId) || ''),
-      destinationOfficeOther: editingDoc
-        ? (editingDoc.destinationOfficeOther || '')
-        : (formData.destinationOfficeOther || ''),
-      // Do not change intake on metadata edits.
-      intakeStatus: editingDoc
-        ? undefined
-        : (isOfficeStaff ? 'Approved' : undefined),
-    };
-
-    if ((isOfficeStaff || isReceptionist) && !editingDoc && !normalizedFormData.destinationOfficeId) {
-      setDocumentFormErrors({ destinationOfficeId: 'Choose where to send this document.' });
-      setDocumentFormErrorSummary('Destination office is required.');
-      return;
-    }
-
-    if ((isOfficeStaff || isReceptionist) && !editingDoc && normalizedFormData.destinationOfficeId === myOfficeId) {
-      setDocumentFormErrors({ destinationOfficeId: 'Choose a different office than your own.' });
-      setDocumentFormErrorSummary('Choose an office other than the current office.');
-      return;
-    }
-
-    const payload = editingDoc
-      ? {
-          ...editingDoc,
-          ...normalizedFormData,
-          scannedFiles: nextScannedFiles,
-          scannedImageUrl: nextScannedFiles[0]?.url || nextScannedFiles[0]?.dataUrl || '',
+      try {
+        const newFiles = attachmentFile ? [await fileToAttachment(attachmentFile)] : [];
+        const nextScannedFiles = [...formScannedFiles, ...newFiles];
+        if (!nextScannedFiles.length) {
+          setDocumentFormErrors({ attachmentFile: 'Attach at least one scanned file.' });
+          setDocumentFormErrorSummary('A scanned file attachment is required.');
+          return;
         }
-      : {
-          ...normalizedFormData,
-          scannedFiles: nextScannedFiles,
-          scannedImageUrl: nextScannedFiles[0]?.dataUrl || nextScannedFiles[0]?.url || '',
+
+        const isReceptionist = currentUser?.role === 'Receptionist';
+        const myOfficeId = currentUser?.officeId || formData.currentOfficeId;
+        const editingDoc = editDoc;
+        // On edit, never rewrite location offices — routing/receive/RFID own those fields.
+        const normalizedFormData = {
+          ...formData,
+          documentDirection: isReceptionist
+            ? 'Incoming'
+            : (isOfficeStaff ? 'Outgoing' : formData.documentDirection),
+          status: editingDoc
+            ? (editingDoc.status || getWorkflowStatus(formData.status))
+            : getWorkflowStatus(formData.status),
+          dateReceived: editingDoc ? editingDoc.dateReceived : formData.dateReceived,
+          documentTypeOther: isOtherDocumentType(formData.documentTypeId) ? formData.documentTypeOther.trim() : '',
+          originOfficeOther: editingDoc
+            ? (editingDoc.originOfficeOther || '')
+            : formData.originOfficeOther.trim(),
+          originOfficeId: editingDoc
+            ? editingDoc.originOfficeId
+            : (isOfficeStaff
+              ? myOfficeId
+              : (formData.originOfficeId || formData.currentOfficeId || currentUser?.officeId)),
+          currentOfficeId: editingDoc
+            ? editingDoc.currentOfficeId
+            : (isOfficeStaff
+              ? myOfficeId
+              : (formData.currentOfficeId || formData.originOfficeId || currentUser?.officeId)),
+          destinationOfficeId: editingDoc
+            ? (editingDoc.destinationOfficeId || '')
+            : (formData.destinationOfficeId || (isOfficeStaff ? '' : formData.currentOfficeId) || ''),
+          destinationOfficeOther: editingDoc
+            ? (editingDoc.destinationOfficeOther || '')
+            : (formData.destinationOfficeOther || ''),
+          // Do not change intake on metadata edits.
+          intakeStatus: editingDoc
+            ? undefined
+            : (isOfficeStaff ? 'Approved' : undefined),
         };
 
-    try {
-      if (editingDoc) {
-        await onEdit(payload);
-      } else {
-        await onAdd(payload);
+        if ((isOfficeStaff || isReceptionist) && !editingDoc && !normalizedFormData.destinationOfficeId) {
+          setDocumentFormErrors({ destinationOfficeId: 'Choose where to send this document.' });
+          setDocumentFormErrorSummary('Destination office is required.');
+          return;
+        }
+
+        if ((isOfficeStaff || isReceptionist) && !editingDoc && normalizedFormData.destinationOfficeId === myOfficeId) {
+          setDocumentFormErrors({ destinationOfficeId: 'Choose a different office than your own.' });
+          setDocumentFormErrorSummary('Choose an office other than the current office.');
+          return;
+        }
+
+        const payload = editingDoc
+          ? {
+              ...editingDoc,
+              ...normalizedFormData,
+              scannedFiles: nextScannedFiles,
+              scannedImageUrl: nextScannedFiles[0]?.url || nextScannedFiles[0]?.dataUrl || '',
+            }
+          : {
+              ...normalizedFormData,
+              scannedFiles: nextScannedFiles,
+              scannedImageUrl: nextScannedFiles[0]?.dataUrl || nextScannedFiles[0]?.url || '',
+            };
+
+        if (editingDoc) {
+          await onEdit(payload);
+        } else {
+          await onAdd(payload);
+        }
+        setShowForm(false);
+        setEditDoc(null);
+        setAttachmentFile(null);
+        setFormScannedFiles([]);
+      } catch (error) {
+        setDocumentFormErrorSummary(error?.message || 'Unable to save the document. Please retry.');
       }
-      setShowForm(false);
-      setEditDoc(null);
-      setAttachmentFile(null);
-      setFormScannedFiles([]);
-    } catch {
-      // Keep form open; shared handler shows the API error.
-    }
+    });
   };
 
   const openRouteModal = (doc) => {
@@ -1598,7 +1604,7 @@ const DocumentList = ({
       })()}
 
       {showForm && (
-        <ModalOverlay onClose={() => setShowForm(false)}>
+        <ModalOverlay onClose={() => { if (!isSavingDocument) setShowForm(false); }}>
           <div className="modal document-form-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2>
@@ -1606,7 +1612,7 @@ const DocumentList = ({
                   ? 'Edit Document'
                   : (isOfficeUser ? 'Send Document' : 'New Document')}
               </h2>
-              <button className="btn-icon" onClick={() => setShowForm(false)}><X size={18} /></button>
+              <button className="btn-icon" disabled={isSavingDocument} onClick={() => setShowForm(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleSubmit} noValidate>
               <div className="modal-body">
@@ -1915,9 +1921,9 @@ const DocumentList = ({
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
-                <button type="submit" className="btn btn-primary">
-                  {editDoc
+                <button type="button" className="btn btn-secondary" disabled={isSavingDocument} onClick={() => setShowForm(false)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={isSavingDocument} aria-busy={isSavingDocument}>
+                  {isSavingDocument ? 'Saving…' : editDoc
                     ? 'Update'
                     : (isOfficeUser ? 'Send Document' : 'Create Document')}
                 </button>
