@@ -2,6 +2,8 @@
 
 The user-selected architecture remains Vercel frontend → public tunnel → laptop backend/PostgreSQL/scans. A source commit does not restart those services or deploy the Pi.
 
+**30 October public connection follow-up:** Matching `main` revision `40963ca` is running on the laptop and redeployed to production as `dpl_6jNxWXymtBKnUmKRA3RKrWXZwWUr` (Ready/current). A user-approved dedicated public tunnel replaced unavailable addresses; endpoint settings and the published production bundle now match. Public API health/authentication, CORS, authenticated WebSocket and browser sign-in rendering passed. Earlier 404/unpublished notes below describe prior checkpoints. Full signed-in workflow, physical-device/background-delivery and separate-storage recovery checks remain distinct. Keep backend/tunnel processes running; no supervised startup was installed.
+
 ## Before restarting the repaired backend
 
 - Use Node.js 22.12 or newer, the committed lockfiles, and `npm ci` in backend/dashboard.
