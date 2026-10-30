@@ -2,6 +2,17 @@ const { normalizeText, generateId } = require('./helpers');
 
 // ─── Sender Notification Channels ─────────────────────────────────────────────
 const senderChannels = ['sms', 'email'];
+const DEFAULT_PROVIDER_TIMEOUT_MS = 10_000;
+
+const normalizeTwilioPhoneNumber = (input) => {
+  let value = String(input || '').trim().replace(/[\s().-]/g, '');
+  if (/^09\d{9}$/.test(value)) value = `+63${value.slice(1)}`;
+  else if (/^639\d{9}$/.test(value)) value = `+${value}`;
+  if (!/^\+[1-9]\d{7,14}$/.test(value)) {
+    throw new Error('SMS recipient must be a valid international number (E.164); Philippine 09 numbers are accepted.');
+  }
+  return value;
+};
 
 const normalizeSenderNotificationChannels = (channels, source = {}) => {
   const hasExplicitChannels = Array.isArray(channels) || typeof channels === 'string';
@@ -88,8 +99,11 @@ const sendTwilioSms = async (notification) => {
     throw new Error('Twilio SMS is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.');
   }
 
+  const recipient = normalizeTwilioPhoneNumber(notification.recipient);
+  const timeout = Number(process.env.SENDER_NOTIFICATION_TIMEOUT_MS);
+  const timeoutMs = Number.isFinite(timeout) ? Math.min(30_000, Math.max(1_000, timeout)) : DEFAULT_PROVIDER_TIMEOUT_MS;
   const body = new URLSearchParams({
-    To: notification.recipient,
+    To: recipient,
     From: fromNumber,
     Body: notification.message,
   });
@@ -100,10 +114,11 @@ const sendTwilioSms = async (notification) => {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body,
+    signal: AbortSignal.timeout(timeoutMs),
   });
-  const resultText = await response.text();
   if (!response.ok) {
-    throw new Error(`Twilio SMS failed (${response.status}): ${resultText}`);
+    // Provider response bodies may include phone numbers or message content.
+    throw new Error(`Twilio SMS failed (HTTP ${response.status}).`);
   }
 };
 
@@ -181,8 +196,7 @@ const sendNotificationWebhook = async (notification) => {
   }
 };
 
-const updateSenderDelivery = async (notification, updates) => {
-  const { SenderNotification } = require('../models');
+const updateSenderDelivery = async (notification, updates, SenderNotification = require('../models').SenderNotification) => {
   return SenderNotification.findOneAndUpdate(
     { id: notification.id },
     { $set: updates },
@@ -190,13 +204,32 @@ const updateSenderDelivery = async (notification, updates) => {
   );
 };
 
-const deliverSenderNotification = async (notification) => {
+const deliverSenderNotification = async (notification, dependencies = {}) => {
   const provider = (process.env.SENDER_NOTIFICATION_PROVIDER || 'outbox').toLowerCase();
   if (provider === 'outbox') return notification;
 
+  const SenderNotification = dependencies.SenderNotification || require('../models').SenderNotification;
+  const now = new Date().toISOString();
+  // Claim under ModelWrapper's row lock so duplicate retries cannot send twice.
+  const claimed = await SenderNotification.findOneAndUpdate(
+    { id: notification.id, status: { $in: ['Queued', 'Failed'] } },
+    { $set: {
+      status: 'Sending',
+      errorMessage: '',
+      metadata: {
+        ...(notification.metadata || {}),
+        deliveryAttempts: (Number(notification.metadata?.deliveryAttempts) || 0) + 1,
+        lastAttemptAt: now,
+      },
+    } },
+    { new: true, runValidators: true },
+  );
+  if (!claimed) return null;
+
+  let deliveryError = '';
   try {
     if (notification.channel === 'sms' && (provider.includes('twilio') || provider === 'auto')) {
-      await sendTwilioSms(notification);
+      await (dependencies.sendTwilioSms || sendTwilioSms)(claimed);
     } else if (notification.channel === 'email' && (provider.includes('sendgrid') || provider === 'auto')) {
       await sendSendGridEmail(notification);
     } else if (notification.channel === 'email' && provider.includes('resend')) {
@@ -206,21 +239,33 @@ const deliverSenderNotification = async (notification) => {
     } else {
       throw new Error(`No sender delivery provider configured for ${notification.channel}.`);
     }
-
-    return updateSenderDelivery(notification, {
-      status: 'Sent',
-      error: '',
-      errorMessage: '',
-      sentAt: new Date().toISOString(),
-    });
   } catch (err) {
-    return updateSenderDelivery(notification, {
-      status: 'Failed',
-      error: err.message,
-      errorMessage: err.message,
-      sentAt: '',
-    });
+    deliveryError = /failed \(HTTP \d{3}\)/.test(err.message)
+      ? err.message
+      : /timeout|timed out|abort/i.test(err.name + ' ' + err.message)
+        ? 'SMS delivery timed out. It can be retried from the outbox.'
+        : /not configured/.test(err.message)
+          ? err.message
+          : 'SMS delivery failed. Check provider connectivity and configuration before retrying.';
   }
+
+  if (deliveryError) {
+    return updateSenderDelivery(claimed, {
+      status: 'Failed',
+      error: deliveryError,
+      errorMessage: deliveryError,
+      sentAt: '',
+    }, SenderNotification);
+  }
+
+  // Keep persistence failures separate from provider failures: if Twilio accepted a
+  // message but marking it Sent fails, never mark it retryable and risk a duplicate.
+  return updateSenderDelivery(claimed, {
+    status: 'Sent',
+    error: '',
+    errorMessage: '',
+    sentAt: new Date().toISOString(),
+  }, SenderNotification);
 };
 
 const queueSenderNotifications = async (req, rawDoc, eventType, context = {}) => {
@@ -278,6 +323,7 @@ const queueSenderNotifications = async (req, rawDoc, eventType, context = {}) =>
 
 module.exports = {
   senderChannels,
+  normalizeTwilioPhoneNumber,
   normalizeSenderNotificationChannels,
   getPublicTrackingUrl,
   buildSenderNotificationContent,

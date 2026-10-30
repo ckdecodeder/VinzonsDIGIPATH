@@ -478,3 +478,13 @@ See `workflow_modification_plan.md` for the full technical breakdown.
 
 *This file is updated manually whenever a change is made to the system.*
 *Add new dated entries after the instructions/template and before older dated entries. Follow the maintenance instructions at the top of this file.*
+## [2026-10-30] — SMS delivery completion
+
+- **Type / state:** FEATURE | FIX / LOCAL; implementation and validation complete, committing source/docs on `main`.
+- **Request / reason:** User returned after the usage reset and resumed the previously deferred SMS function.
+- **Branch / revision:** `main`, starting `02c1f79`; clean checkout; four-hour Codex window reset and currently 0% used.
+- **Intended scope:** Complete the existing Twilio SMS path with safe recipient normalization, bounded provider requests, privacy-safe delivery errors and protected/recoverable retry behavior. Add focused tests using a stubbed provider; no real messages, bulk sends or external service calls. Keep `SENDER_NOTIFICATION_PROVIDER=outbox` unless the user later configures Twilio themselves.
+- **Data / configuration impact:** No environment credentials or existing queued sender messages changed; avoid retrying/backfilling existing outbox. No SMS sent.
+- **Actual changes:** Twilio recipient validation accepts Philippine `09` mobiles and valid international numbers; requests have a 10-second default/30-second maximum and provider bodies are never persisted. Delivery rows are claimed under a lock (`Sending`) so concurrent retries send once; attempts/time are recorded, transient errors are redacted, and retries stop at five per message. Admin/Receptionist can retry visible SMS only; outbox mode remains default and will not flush old notifications. The UI explains number formats. `.env.example` and the deployment guide document configuration. No credentials were added.
+- **Validation:** Backend suite: 42 passed, 0 failed; 27 opt-in PostgreSQL tests skipped because no disposable database was requested for this source change. SMS tests stub the provider and cover number formats, bounded requests, privacy-safe failures, one concurrent send claim, retry counting and outbox-only behavior. Dashboard: 46 passed, 0 failed. Production build passed. No Twilio call or real SMS sent.
+- **Recovery / publication / next action:** Source rollback by focused commit revert; no database changes. Commit locally on `main`; no push or deployment. To activate later, the owner must set Twilio credentials privately, review consent/recipient and approve a single test phone; keep outbox mode until then. Legacy queued notifications require individual intentional requeue and are never automatically flushed.

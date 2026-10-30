@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { Notification, SenderNotification, Document } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
-const { asyncHandler, generateId, createLogEntry } = require('../utils/helpers');
+const { asyncHandler, createLogEntry } = require('../utils/helpers');
 const { deliverSenderNotification } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const {
@@ -12,6 +12,7 @@ const {
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
+const senderResendRoles = allowRoles('Admin', 'Receptionist');
 const updateOptions = { new: true, runValidators: true };
 
 const getSenderNotificationVisibilityQuery = async (req, documentId = null) => {
@@ -116,31 +117,21 @@ router.get('/documents/:id/sender-notifications', allRoles, asyncHandler(async (
   res.json(items);
 }));
 
-router.post('/sender-notifications/:id/resend', allRoles, asyncHandler(async (req, res) => {
+router.post('/sender-notifications/:id/resend', senderResendRoles, asyncHandler(async (req, res) => {
   const original = await SenderNotification.findOne({ id: req.params.id }).lean();
   if (!original) return res.status(404).json({ message: 'Sender notification not found' });
   await assertCanAccessDocument(req, original.documentId);
-
-  const copy = new SenderNotification({
-    ...original,
-    _id: undefined,
-    __v: undefined,
-    id: generateId('SNOTIF'),
-    status: 'Queued',
-    errorMessage: '',
-    createdAt: new Date().toISOString(),
-    sentAt: '',
-    createdBy: req.user.id,
-    metadata: {
-      ...(original.metadata || {}),
-      resendOf: original.id,
-    },
-  });
-  await copy.save();
-  const delivered = await deliverSenderNotification(copy);
-  await createLogEntry(req, 'sender_notification_resent', `Queued sender notification resend for ${original.trackingNumber}`, copy.id);
+  if (original.channel !== 'sms') return res.status(400).json({ message: 'Only SMS notifications can be requeued here.' });
+  if ((process.env.SENDER_NOTIFICATION_PROVIDER || 'outbox').toLowerCase() === 'outbox') {
+    return res.status(409).json({ message: 'SMS delivery is still in outbox mode. Configure Twilio before requeuing this message.' });
+  }
+  if (!['Queued', 'Failed'].includes(original.status)) return res.status(409).json({ message: 'This SMS is already sending or has already been sent.' });
+  if ((Number(original.metadata?.deliveryAttempts) || 0) >= 5) return res.status(429).json({ message: 'This SMS has reached the retry limit. Verify the recipient and provider before creating a new update.' });
+  const delivered = await deliverSenderNotification(original);
+  if (!delivered) return res.status(409).json({ message: 'This SMS is already sending or has already been sent.' });
+  await createLogEntry(req, 'sender_notification_resent', `Requeued sender SMS for ${original.trackingNumber}`, original.id);
   broadcastDataInvalidate(['senderNotifications', 'logs']);
-  res.status(201).json(delivered || copy);
+  res.json(delivered);
 }));
 
 module.exports = router;

@@ -1539,9 +1539,12 @@ const DocumentList = ({
                               <p>{item.message}</p>
                               <small>{item.recipient} - {item.status} - {formatDateTime(item.createdAt)}</small>
                             </div>
-                            <button className="btn btn-sm btn-secondary" onClick={() => onResendSenderNotification?.(item.id)}>
-                              <Send size={13} /> Requeue
-                            </button>
+                            {['Admin', 'Receptionist'].includes(currentUser?.role) && item.channel === 'sms' && ['Queued', 'Failed'].includes(item.status)
+                              && (Number(item.metadata?.deliveryAttempts) || 0) < 5 && (
+                              <button className="btn btn-sm btn-secondary" onClick={() => onResendSenderNotification?.(item.id)}>
+                                <Send size={13} /> Requeue
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>

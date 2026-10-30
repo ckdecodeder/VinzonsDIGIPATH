@@ -10,7 +10,7 @@ const senderNotificationSchema = new mongoose.Schema({
   recipientName: { type: String },
   subject: { type: String },
   message: { type: String, required: true },
-  status: { type: String, enum: ['Queued', 'Sent', 'Failed', 'Skipped'], default: 'Queued' },
+  status: { type: String, enum: ['Queued', 'Sending', 'Sent', 'Failed', 'Skipped'], default: 'Queued' },
   provider: { type: String, default: 'outbox' },
   errorMessage: { type: String },
   createdAt: { type: String, required: true },

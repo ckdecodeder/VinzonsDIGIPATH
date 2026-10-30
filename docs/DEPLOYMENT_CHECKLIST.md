@@ -9,7 +9,7 @@ The user-selected architecture remains Vercel frontend → public tunnel → lap
 - Prepare coordinated strong backend/Pi credentials. `node scripts/prepare-secure-config.cjs` writes a private candidate bundle with previous settings; apply matching keys and canonical endpoint configuration during a maintenance window. The repaired backend fails closed with default or short credentials.
 - Keep the intended `DATABASE_URL` and persistent `UPLOADS_ROOT`. Never run seed, import, password-reset or workflow-wipe utilities on live records.
 - Before a live schema/data repair, take a coordinated native PostgreSQL/scan/configuration backup, verify restoration and hashes, and retain a verified separate-storage copy. No historical data repair is authorized solely by an audit or this checklist.
-- Keep sender delivery outbox-only. SMS was explicitly deferred; do not flush the old queue or send test messages.
+- SMS delivery defaults to the outbox. To enable it, set the provider to `twilio_sendgrid` and supply `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER` through protected runtime configuration. Start with one explicitly approved test phone; do not automatically flush old queued notifications. The backend validates E.164 (or Philippine `09` mobile) recipients, caps retries at five per outbox entry, and times out provider calls.
 
 ## Source and frontend checks
 
