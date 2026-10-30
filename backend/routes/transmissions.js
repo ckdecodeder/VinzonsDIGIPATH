@@ -14,7 +14,6 @@ const {
 } = require('../utils/helpers');
 const { canSendDocument } = require('../utils/documentRouting');
 const { sendHandoffs, receiveHandoff, cancelHandoff } = require('../utils/documentHandoffs');
-const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const {
   getScopedDocumentQueryWithTransmissions,
@@ -164,12 +163,8 @@ router.post('/', allRoles, asyncHandler(async (req, res) => {
       referenceId: trans.id,
       page: 'transmissions',
     }));
-    await runSideEffect(() => queueSenderNotifications(req, result.document, 'document_routed', {
-      message: `Your document ${doc.trackingNumber} was routed from ${fromOffice} to ${toOffice}.`,
-      metadata: { transmissionId: trans.id },
-    }));
   }
-  broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications']);
   // Preserve the single-transmission response contract for existing callers.
   res.json(result.transmission);
 }));
@@ -203,10 +198,6 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
       title: 'Transmission received', message: `${doc.trackingNumber} was acknowledged at ${toOffice}.`,
       type: 'success', referenceType: 'transmission', referenceId: trans.id, page: 'transmissions',
     }));
-    await runSideEffect(() => queueSenderNotifications(req, doc, 'transmission_received', {
-      message: `Your document ${doc.trackingNumber} was received at ${toOffice}.`,
-      metadata: { transmissionId: trans.id },
-    }));
   } else {
     if (!isApprovalRole(req)) return res.status(403).json({ message: 'Only approval users can edit transmission records directly' });
     // Receipt and route identity can only change through the workflow operations.
@@ -218,7 +209,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     if (!trans) return res.status(404).json({ message: 'Transmission not found' });
     await runSideEffect(() => createLogEntry(req, 'transmission_updated', `Updated transmission ${trans.id}`, trans.id));
   }
-  broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications']);
   res.json(trans);
 }));
 

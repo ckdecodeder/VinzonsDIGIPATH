@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Document, Transmission, Archive, DeviceEvent, Command, SenderNotification, Notification, Office, User, DocumentType } = require('../models');
+const { Document, Transmission, Archive, DeviceEvent, Command, Notification, Office, User, DocumentType } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
 const {
   asyncHandler,
@@ -17,7 +17,6 @@ const {
   isApprovalRole,
   getUserOfficeId,
 } = require('../utils/helpers');
-const { normalizeSenderNotificationChannels, queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
 const { persistAttachments } = require('../utils/attachments');
@@ -121,7 +120,6 @@ const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'I
       transmission.fromOfficeId, transmission.id),
   });
   const effects = async () => {
-    const savedDoc = result.document;
     for (const transmission of result.transmissions) {
       const toOffice = officeLabels.get(transmission.toOfficeId) || transmission.toOfficeId;
       await runPostSaveSideEffects('transmission_log', () =>
@@ -135,13 +133,8 @@ const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'I
         referenceId: transmission.id,
         page: 'transmissions',
       }));
-      await runPostSaveSideEffects('transmission_sender', () =>
-        queueSenderNotifications(req, savedDoc, 'document_routed', {
-          message: `Your document ${doc.trackingNumber} was routed from ${fromOffice} to ${toOffice}.`,
-          metadata: { transmissionId: transmission.id },
-        }));
     }
-    broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications', 'senderNotifications']);
+    broadcastDataInvalidate(['transmissions', 'documents', 'logs', 'notifications']);
   };
   if (deferredEffects) deferredEffects.push(effects); else await effects();
   return result;
@@ -370,9 +363,6 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     finalStatus = initialRoute.status;
   }
 
-  const channels = normalizeSenderNotificationChannels(body.senderNotificationChannels, body)
-    .filter((channel) => channel !== 'email');
-
   return {
     ...body,
     id: generateId('DOC'),
@@ -396,7 +386,8 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     lastDetectedOfficeId: '',
     lastDetectedAt: '',
     senderEmail: '',
-    senderNotificationChannels: channels.length ? channels : (body.senderContact ? ['sms'] : []),
+    // Passive preferences retained for the frontend; no sender delivery backend.
+    senderNotificationChannels: Array.isArray(body.senderNotificationChannels) ? body.senderNotificationChannels : [],
     notifySender: body.notifySender !== undefined ? Boolean(body.notifySender) : true,
     senderNotificationConsent: body.senderNotificationConsent !== undefined ? Boolean(body.senderNotificationConsent) : true,
     scannedFiles,
@@ -492,12 +483,7 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
 
   await runPostSaveSideEffects('scanner_log', () =>
     createLogEntry(req, 'document_scanned', `Scanned and registered at Reception: ${doc.subject}`, doc.id));
-  await runPostSaveSideEffects('scanner_sender', () =>
-    queueSenderNotifications(req, doc, 'document_scanned', {
-      message: `Your document was scanned and registered with tracking number ${doc.trackingNumber}.`,
-    }));
-
-  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications', 'device']);
+  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'device']);
   res.status(201).json({ document: savedDoc, transmission, deviceEvent });
 }));
 
@@ -621,12 +607,7 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
       });
     }
   });
-  await runPostSaveSideEffects('create_sender', () =>
-    queueSenderNotifications(req, doc, 'document_received', {
-      message: `Your document was received and registered with tracking number ${doc.trackingNumber}.`,
-    }));
-
-  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['documents', 'logs', 'notifications']);
   res.status(201).json(savedDoc);
 }));
 
@@ -759,13 +740,6 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   });
   if (!doc) return res.status(404).json({ message: 'Document not found' });
   await createLogEntry(req, 'document_updated', `Updated document: ${doc.subject}`, doc.id);
-  const existingSenderOutboxCount = await SenderNotification.countDocuments({ documentId: doc.id });
-  if (!existingSenderOutboxCount && doc.notifySender !== false && doc.senderNotificationConsent !== false && (doc.senderContact || doc.senderEmail)) {
-    await queueSenderNotifications(req, doc, 'document_received', {
-      message: `Your document was registered with tracking number ${doc.trackingNumber}.`,
-      metadata: { queuedAfterSenderDetailsUpdate: true },
-    });
-  }
   if (updates.status && updates.status !== existingDoc.status) {
     await createNotification({
       officeId: doc.currentOfficeId,
@@ -786,11 +760,8 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
         page: 'archives',
       });
     }
-    await queueSenderNotifications(req, doc, `document_${doc.status.toLowerCase().replace(/\s+/g, '_')}`, {
-      message: `${doc.subject} is now ${doc.status}.`,
-    });
   }
-  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['documents', 'logs', 'notifications']);
   res.json(doc);
 }));
 
@@ -862,14 +833,7 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
     referenceId: doc.id,
     page: 'documents',
   }));
-  await runPostSaveSideEffects('verify_sender', () =>
-    queueSenderNotifications(req, savedDoc, intakeStatus === 'Approved' ? 'document_approved' : 'document_rejected', {
-      message: intakeStatus === 'Approved'
-        ? `Your document ${doc.trackingNumber} was approved.`
-        : `Your document ${doc.trackingNumber} was rejected. Reason: ${String(rejectionReason).trim()}`,
-    }));
-
-  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['documents', 'logs', 'notifications']);
   res.json(savedDoc);
 }));
 
@@ -911,10 +875,7 @@ router.post('/:id/resubmit', documentCreateRoles, asyncHandler(async (req, res) 
     referenceId: doc.id,
     page: 'documents',
   });
-  await queueSenderNotifications(req, savedDoc, 'document_resubmitted', {
-    message: `Your corrected document ${doc.trackingNumber} was resubmitted for intake review.`,
-  });
-  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['documents', 'logs', 'notifications']);
   res.json(savedDoc);
 }));
 
@@ -1018,12 +979,7 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
       page: 'documents',
     }));
   }
-  await runPostSaveSideEffects('process_sender', () =>
-    queueSenderNotifications(req, savedDoc, updates.status ? `document_${updates.status.toLowerCase()}` : action, {
-      message: `${labels[action]} for ${doc.trackingNumber}${note ? `: ${note}` : '.'}`,
-    }));
-
-  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['documents', 'logs', 'notifications']);
   res.json(savedDoc);
 }));
 
@@ -1109,12 +1065,7 @@ router.post('/:id/return-to-sender', allowRoles('Admin', 'Receptionist'), asyncH
 
   await runPostSaveSideEffects('return_log', () =>
     createLogEntry(req, 'returned_to_sender', `Returned to sender: ${doc.subject}`, doc.id));
-  await runPostSaveSideEffects('return_sender', () =>
-    queueSenderNotifications(req, savedDoc, 'document_rejected', {
-      message: `Your document ${doc.trackingNumber} has been returned. ${note}`,
-    }));
-
-  broadcastDataInvalidate(['documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['documents', 'logs', 'notifications']);
   res.json(savedDoc);
 }));
 
@@ -1143,12 +1094,11 @@ router.delete('/:id', adminOnly, asyncHandler(async (req, res) => {
       Archive.deleteMany({ documentId: req.params.id }),
       DeviceEvent.deleteMany({ documentId: req.params.id }),
       Command.deleteMany({ resultDocumentId: req.params.id }),
-      SenderNotification.deleteMany({ documentId: req.params.id }),
       Notification.deleteMany({ referenceId: { $in: relatedReferenceIds } }),
     ]);
   });
   await runPostSaveSideEffects('delete_log', () => createLogEntry(req, 'document_deleted', `Deleted document and related workflow records: ${doc.subject}`, req.params.id));
-  broadcastDataInvalidate(['documents', 'transmissions', 'archives', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['documents', 'transmissions', 'archives', 'logs', 'notifications']);
   res.json({ success: true });
 }));
 

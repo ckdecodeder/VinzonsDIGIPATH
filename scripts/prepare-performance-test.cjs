@@ -110,7 +110,6 @@ async function main() {
       UPLOADS_ROOT: path.join(backup, 'test-uploads'),
       // A connected physical device must never authenticate to the test instance.
       DEVICE_API_KEY: crypto.randomBytes(32).toString('hex'),
-      SENDER_NOTIFICATION_PROVIDER: 'outbox',
     };
     await fs.writeFile(path.join(backup, 'test-backend.env'), Object.entries(testEnv).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n') + '\n');
     const evidence = {

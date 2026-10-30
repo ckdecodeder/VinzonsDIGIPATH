@@ -37,6 +37,50 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-10-30] — Remove SMS backend and preserve frontend for rebuilding
+
+- **Type / state:** FIX | CONFIG | DOCS / LOCAL; removal and validation complete, uncommitted.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User requested removing the SMS backend to start again while preserving the SMS frontend.
+- **Branch / revision:** `main`, starting `990a423bb66d2e454e9c88183ee8dfa5551ee0de`; existing Android implementation and audit working changes present. No new branch.
+- **Intended scope:** Remove SMS provider/template/queue/retry implementation, workflow hooks, sender-outbox API routes/model/schema maintenance, obsolete SMS tests and setup settings. Preserve normal in-app notifications and frontend SMS components/forms/styles. Retain document contact/preferences as passive metadata for the preserved frontend; disconnect its SMS service from removed endpoints with explicit unavailable-send behavior. Preserve existing database records/tables and private environment files; no live data/schema reset.
+- **Changes / files:** Deleted the sender notification utility, legacy model and provider tests; removed all workflow SMS hooks, outbox/resend API routes, Sequelize/Prisma sender model and startup schema maintenance, sender import/export/wipe support and provider settings from examples/test helpers. Ordinary in-app notifications remain. Preserved document contact/preferences as passive metadata; only the existing frontend API adapter changed: empty SMS history locally and an explicit unavailable error for sending. Added focused router/model/frontend regressions, updated README/deployment/current checkpoints, and marked the earlier SMS audit/probes as historical. [Aggregate evidence](docs/sms-backend-reset-evidence-2026-10-30.json).
+- **Data / configuration impact:** No live business records, historical SMS rows/tables, private environment files or running services changed. PostgreSQL/HTTP tests created and removed disposable schemas/synthetic files in the restored test database only. No real SMS or gateway call. Existing private provider settings are now unused by this source; no live database migration/drop, import/export or workflow wipe was run.
+- **Backup / recovery evidence:** Preserved 26 affected source files under ignored `database-export/sms-backend-reset-2026-10-30/1793331650893/`, with matching SHA-256 copies and a manifest. Frontend before-hashes cover 81 existing files; only `dashboard/src/api/documentService.js` changed, with components/forms/styles intact. Source restoration was not rehearsed; this is not a database backup.
+- **Validation:** Backend: 39 passed, 0 failed, 27 opt-in checks initially skipped. Dashboard: 47 passed, 0 failed. All 27 opt-in PostgreSQL/HTTP checks then passed separately against disposable restored-test schemas; startup suite: 6 passed. Total 119 distinct passing tests. Production dashboard build passed; 94 backend/startup CommonJS files parsed; whitespace diff check passed. Two sandbox startup-readiness attempts failed because localhost fixture access returned EACCES; the unchanged suite passed outside the sandbox. A nonblocking pg concurrent-client-query deprecation warning appeared during integration. No live browser/phone/Pi acceptance claimed.
+- **Publication / deployment:** Local work only; no commit, push, or deployment requested or performed.
+- **Rollback:** Restore only the affected pre-removal source from the checksum manifest and remove the newly added reset tests/evidence if reverting the batch; preserve later/unrelated changes. No business database/configuration rollback is needed.
+- **Outstanding / next action:** Replacement SMS backend remains future work. No source publication or restart was performed; an already running older backend is not changed by editing this checkout. Publish/restart matching frontend/backend separately when requested.
+
+## [2026-10-30] — SMS feature audit and synthetic reproductions
+
+- **Type / state:** AUDIT | DOCS / LOCAL; audit complete, repairs remain proposed.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User requested an audit of the system SMS feature.
+- **Branch / revision:** `main`, `990a423bb66d2e454e9c88183ee8dfa5551ee0de`; eight existing modified files, including the uncommitted Android gateway implementation, were present at start and preserved. No branch change.
+- **Changes / files:** Added `docs/SMS_AUDIT_2026-10-30.md` and synthetic probe source/output under `docs/sms-audit-evidence-2026-10-30/`. Identified eight findings: premature Sent status, ambiguous-send duplication/stuck claims, retry consent/stale-recipient bypass, non-transactional lost notifications, synchronous multi-office gateway waits, non-atomic retry cap, truncated dashboard history, and intake/provider number-validation mismatch. Four P1 and four P2; no application repair in this batch.
+- **Data / configuration impact:** None. Configuration readiness inspected through a redacted file-only check; no environment contents or private records recorded. No real SMS, phone/gateway request, business database access/write, service restart, or live configuration change.
+- **Backup / recovery evidence:** Not applicable for documentation and in-memory synthetic probes; no backup created or restoration claimed.
+- **Validation:** Existing focused SMS tests: 7 passed. Full backend suite: 44 passed, 0 failed, 27 opt-in PostgreSQL/HTTP cases skipped. Eight added probes passed by reproducing current defects/observations using mocked storage/provider/authorization; passing probes do not mean repairs are complete. Whitespace diff check passed. Official gateway API/status guidance consulted. No real phone, carrier, SQL SMS-claim race, or production browser acceptance performed.
+- **Publication / deployment:** Audit artifacts remain local and uncommitted; pre-existing source changes remain separate. No commit, push, deployment, or running-service readiness claim.
+- **Rollback:** Remove this audit report/evidence and this entry if needed, preserving the prior local Android implementation/docs. No database/configuration rollback needed.
+- **Outstanding / next action:** Keep delivery in outbox. Implement the proposed transactional outbox/delivery lifecycle/consent/retry repairs, then validate with disposable PostgreSQL/HTTP scenarios and separately authorized controlled phone acceptance. See the audit report for concrete repair order and limits.
+
+## [2026-10-30] — Local Android SIM SMS gateway
+
+- **Type / state:** FEATURE | FIX | DOCS / LOCAL; implementation and local tests complete, uncommitted.
+- **Author / time:** Codex; Asia/Manila date.
+- **Request / reason:** User selected sending through an always-on Android phone and its Philippine SIM/text promo instead of Twilio.
+- **Branch / revision:** `main`, starting `990a423`; checkout clean and aligned with `origin/main` before this entry.
+- **Intended scope:** Replace the Twilio SMS path with a local Android SMS Gateway API adapter. Configure a private LAN endpoint and credentials; retain default outbox, protected manual retries and the retry limit. Update SMS setup docs and tests with mocked provider requests only.
+- **Changes / files:** Replaced Twilio SMS sending with an authenticated request to the SMS Gateway for Android Local Server API. The endpoint must be a private IPv4 LAN URL, redirects are rejected, and response bodies are not read or persisted. Recipients are limited to Philippine mobile numbers. Preserved the URL-free message, outbox default, atomic send claim and five-attempt manual retry limit. Updated environment example, retry response, deployment checklist, performance checkpoint and repair handoff. Tests mock the local gateway.
+- **Data / configuration impact:** No live phone, SIM, backend environment, database, historical outbox row, or recipient data will be changed. No real SMS.
+- **Backup / recovery evidence:** Source can be reverted as a focused batch; no data backup required.
+- **Validation:** Focused SMS tests: 7 passed. First focused run found a private-IP validator bug (2 failed); corrected it and reran successfully. Full backend suite: 44 passed, 0 failed, 27 opt-in PostgreSQL/HTTP cases skipped. `git diff --check` passed. All gateway requests in tests used a stubbed `fetch`; no phone, network gateway, credentials or SMS were used. Android/network acceptance is pending.
+- **Publication / deployment:** Source/docs/tests are local and uncommitted on `main`; user authorized implementation/tests only. No push, deployment, SMS provider call, device setup, service restart or live config change.
+- **Rollback:** Revert the focused source/docs batch; keep SMS in outbox mode.
+- **Outstanding / next action:** Confirm whether phone and backend laptop share a trusted Wi-Fi/LAN. Install and configure the Android gateway only after that; verify carrier terms and promo coverage. Keep outbox mode until a separately approved live test. No old queued notifications are automatically sent.
+
 ## [2026-10-30] — Multiple-office document detail layout
 
 - **Type / state:** FIX / LOCAL; implementation and validation complete, included in the local UI commit containing this entry.

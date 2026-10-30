@@ -19,7 +19,6 @@ const {
   isGlobalRole,
   getUserOfficeId,
 } = require('../utils/helpers');
-const { queueSenderNotifications } = require('../utils/senderNotifications');
 const {
   maxAttachmentsPerDocument,
   persistAttachments,
@@ -28,7 +27,6 @@ const {
   isScannerPdf,
   removeOrphanedAttachments,
 } = require('../utils/attachments');
-const { normalizeSenderNotificationChannels } = require('../utils/senderNotifications');
 const {
   getDeviceSnapshot,
   recordHardwareDeviceEvent,
@@ -258,7 +256,7 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       senderEmail: req.body.senderEmail?.trim(),
       notifySender: req.body.notifySender !== undefined ? Boolean(req.body.notifySender) : true,
       senderNotificationConsent: req.body.senderNotificationConsent !== undefined ? Boolean(req.body.senderNotificationConsent) : true,
-      senderNotificationChannels: normalizeSenderNotificationChannels(req.body.senderNotificationChannels, req.body),
+      senderNotificationChannels: Array.isArray(req.body.senderNotificationChannels) ? req.body.senderNotificationChannels : [],
       remarks: req.body.remarks?.trim() || `Captured by physical scanner ${deviceId}`,
       scannedText: req.body.scannedText || req.body.extractedText || '',
       scannedFiles,
@@ -335,10 +333,6 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       referenceId: doc.id,
       page: 'documents',
     });
-    await queueSenderNotifications(req, doc, 'document_scanned', {
-      message: `Your document was captured by the physical scanner and registered with tracking number ${doc.trackingNumber}.`,
-      metadata: { deviceId },
-    });
   } else {
     await createLogEntry(req, 'document_scan_page_added', `Added a scanned page to document ${doc.subject}`, doc.id, 'hardware');
   }
@@ -351,7 +345,7 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
     }
   }
   broadcastDeviceUpdated(deviceSnapshot);
-  broadcastDataInvalidate(['documents', 'notifications', 'senderNotifications', 'logs', 'device']);
+  broadcastDataInvalidate(['documents', 'notifications', 'logs', 'device']);
 
   res.status(201).json({ documentId: doc.id, document: doc, device: deviceSnapshot });
 }));

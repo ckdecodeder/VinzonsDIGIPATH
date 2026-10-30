@@ -9,7 +9,6 @@ const {
   createNotification,
   createTimelineEvent,
 } = require('../utils/helpers');
-const { queueSenderNotifications } = require('../utils/senderNotifications');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions, isGlobalDocumentViewer } = require('../utils/documentScope');
 
@@ -45,8 +44,7 @@ router.post('/', approvalRoles, asyncHandler(async (req, res) => {
   const { archive, document: doc } = result;
   await sideEffect(() => createLogEntry(req, 'document_archived', `Archived document: ${doc.subject}`, archive.id));
   await sideEffect(() => createNotification({ officeId: doc.originOfficeId || doc.currentOfficeId, title: 'Document archived', message: `${doc.trackingNumber} was archived as a completed record.`, type: 'success', referenceType: 'archive', referenceId: archive.id, page: 'archives' }));
-  await sideEffect(() => queueSenderNotifications(req, doc, 'document_archived', { message: `Your document ${doc.trackingNumber} was archived as a completed record.`, metadata: { archiveId: archive.id } }));
-  broadcastDataInvalidate(['archives', 'documents', 'logs', 'notifications', 'senderNotifications']);
+  broadcastDataInvalidate(['archives', 'documents', 'logs', 'notifications']);
   res.json(archive);
 }));
 

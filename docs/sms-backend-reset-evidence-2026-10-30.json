@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-30",
+  "timezone": "Asia/Manila",
+  "branch": "main",
+  "startingRevision": "990a423bb66d2e454e9c88183ee8dfa5551ee0de",
+  "state": "LOCAL_UNCOMMITTED",
+  "scope": "Remove SMS backend; preserve SMS frontend components/styles and passive document contact/preferences",
+  "removed": ["sender delivery providers and templates", "SMS workflow hooks", "sender outbox and retry API routes", "sender notification model and startup schema maintenance", "legacy sender import/export/wipe support", "SMS provider example settings", "obsolete provider tests and integration mocks"],
+  "frontend": {
+    "existingFilesHashed": 81,
+    "changedExistingFiles": ["dashboard/src/api/documentService.js"],
+    "componentsAndStylesUnchanged": true,
+    "historyUsesNetwork": false,
+    "sendingBehavior": "Explicit unavailable error; no request or fake success",
+    "newRegressionTest": "dashboard/src/api/smsReset.test.mjs"
+  },
+  "validation": {
+    "backend": { "passed": 39, "failed": 0, "optInSkippedInRegularRun": 27 },
+    "dashboard": { "passed": 47, "failed": 0 },
+    "startup": { "passed": 6, "failed": 0, "note": "Two sandbox readiness runs could not access their localhost fixture; independent probe confirmed EACCES. The unchanged suite passed outside the sandbox." },
+    "disposablePostgresqlHttp": { "passed": 27, "failed": 0, "skipped": 0, "boundary": "Restored test database only; temporary schemas, synthetic records/files and loopback HTTP fixtures; teardown completed." },
+    "distinctPassingTests": 119,
+    "productionDashboardBuild": "passed",
+    "commonJsSyntaxFiles": 94,
+    "diffWhitespace": "passed",
+    "nonblockingObservation": "PostgreSQL integration emitted a pg deprecation warning for concurrent queries on one client; no failing assertions."
+  },
+  "recovery": {
+    "sourceOnlyPath": "database-export/sms-backend-reset-2026-10-30/1793331650893/",
+    "sourceCopies": 26,
+    "copyChecksumsMatch": true,
+    "restoreRehearsed": false
+  },
+  "liveBusinessDataChanged": false,
+  "historicalSmsRecordsDeleted": false,
+  "privateEnvironmentFilesChanged": false,
+  "realSmsOrGatewayCalls": false,
+  "runningUserServicesRestarted": false,
+  "committed": false,
+  "pushed": false,
+  "deployed": false,
+  "outstanding": "Replacement SMS backend is future work. Restart/publish matching backend/frontend separately when requested; this source change does not stop a previously running older backend."
+}

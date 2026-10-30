@@ -5,7 +5,7 @@ const run = files => {
   require('../utils/maintenanceGuard').requireTestWrite(process.env.WORKFLOW_TEST_DATABASE_URL, process.argv);
   console.log('Running isolated synthetic HTTP/PostgreSQL checks; no live API or hardware commands.');
   const result = spawnSync(process.execPath, ['--test', ...files.map(file => path.join(__dirname, '../test', file))], {
-    env: { ...process.env, DATABASE_URL: '', SENDER_NOTIFICATION_PROVIDER: 'outbox' }, stdio: 'inherit', windowsHide: true,
+    env: { ...process.env, DATABASE_URL: '' }, stdio: 'inherit', windowsHide: true,
   });
   process.exitCode = result.status ?? 1;
 };

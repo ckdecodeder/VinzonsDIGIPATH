@@ -152,20 +152,6 @@ model offices {
   updatedAt String? @db.VarChar(255)
 }
 
-model sender_notifications {
-  id         String  @id @db.VarChar(255)
-  documentId String?
-  channel    String?
-  recipient  String?
-  subject    String?
-  message    String?
-  status     String? @default("pending")
-  error      String?
-  metadata   Json?   @default("{}")
-  createdAt  String?
-  sentAt     String?
-}
-
 model transmissions {
   id                     String  @id @db.VarChar(255)
   documentId             String?

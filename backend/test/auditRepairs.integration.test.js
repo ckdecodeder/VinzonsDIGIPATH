@@ -45,7 +45,6 @@ before(async () => {
       appendDocumentTimeline: (id, event, updates, opts = {}) => models.Document.findOneAndUpdate({ id }, { $set: updates, $push: { timeline: event } }, { new: true, ...opts }) },
     '../utils/documentHandoffs': { sendHandoffs: handoffs.send, receiveHandoff: handoffs.receive, cancelHandoff: handoffs.cancel },
     '../utils/archiveWorkflow': { archiveDocument: archive.create, restoreArchive: archive.remove },
-    '../utils/senderNotifications': { normalizeSenderNotificationChannels: () => [], queueSenderNotifications: async () => {} },
     '../utils/realtime': { broadcastDataInvalidate: () => {}, broadcastCommandUpdated: () => {}, pushCommandToDevice: () => false },
     '../services/devicePresence': { getDeviceSnapshot: async () => ({ connected: true }), hardwarePresenceEvents: [] },
     '../utils/bridge': { ...require('../utils/bridge'), requireDeviceApiKey: (req, res, next) => next() },

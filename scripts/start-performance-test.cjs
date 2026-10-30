@@ -9,6 +9,6 @@ if (new URL(env.DATABASE_URL).pathname !== '/vinzons_digipath_perf_test_20261028
   || env.HOST !== '127.0.0.1' || env.PORT !== '5501') {
   throw new Error('Refusing to start: expected isolated performance test configuration');
 }
-Object.assign(process.env, env, { SENDER_NOTIFICATION_PROVIDER: 'outbox' });
+Object.assign(process.env, env);
 process.chdir(path.join(root, 'backend'));
 require('../backend/server');

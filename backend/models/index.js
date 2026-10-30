@@ -203,28 +203,6 @@ const NotificationModel = sequelize
     }, { tableName: 'notifications', timestamps: false })
   : null;
 
-const SenderNotificationModel = sequelize
-  ? sequelize.define('SenderNotification', {
-      id:             { type: DataTypes.STRING, primaryKey: true },
-      documentId:     { type: DataTypes.STRING },
-      trackingNumber: { type: DataTypes.TEXT },
-      eventType:      { type: DataTypes.TEXT },
-      channel:        { type: DataTypes.TEXT },
-      recipient:      { type: DataTypes.STRING },
-      recipientName:  { type: DataTypes.TEXT },
-      subject:        { type: DataTypes.TEXT },
-      message:        { type: DataTypes.TEXT },
-      status:         { type: DataTypes.STRING, defaultValue: 'pending' },
-      provider:       { type: DataTypes.TEXT },
-      error:          { type: DataTypes.TEXT },
-      errorMessage:   { type: DataTypes.TEXT },
-      metadata:       { type: DataTypes.JSONB, defaultValue: {} },
-      createdAt:      { type: DataTypes.STRING },
-      createdBy:      { type: DataTypes.TEXT },
-      sentAt:         { type: DataTypes.TEXT },
-    }, { tableName: 'sender_notifications', timestamps: false })
-  : null;
-
 const LogModel = sequelize
   ? sequelize.define('Log', {
       id:          { type: DataTypes.STRING, primaryKey: true },
@@ -274,33 +252,6 @@ const migrateDocumentSendFields = async () => {
   `);
 };
 
-const migrateSenderNotificationFields = async () => {
-  await sequelize.query(`
-    ALTER TABLE sender_notifications
-    ADD COLUMN IF NOT EXISTS "trackingNumber" TEXT;
-  `);
-  await sequelize.query(`
-    ALTER TABLE sender_notifications
-    ADD COLUMN IF NOT EXISTS "eventType" TEXT;
-  `);
-  await sequelize.query(`
-    ALTER TABLE sender_notifications
-    ADD COLUMN IF NOT EXISTS "recipientName" TEXT;
-  `);
-  await sequelize.query(`
-    ALTER TABLE sender_notifications
-    ADD COLUMN IF NOT EXISTS "provider" TEXT;
-  `);
-  await sequelize.query(`
-    ALTER TABLE sender_notifications
-    ADD COLUMN IF NOT EXISTS "errorMessage" TEXT;
-  `);
-  await sequelize.query(`
-    ALTER TABLE sender_notifications
-    ADD COLUMN IF NOT EXISTS "createdBy" TEXT;
-  `);
-};
-
 // Phase 1 — Add routing fields to document_types table
 const migrateDocumentTypeRoutingFields = async () => {
   await sequelize.query(`
@@ -340,7 +291,6 @@ const syncModels = async () => {
   await migrateDocumentTypeCategory();
   await migrateDeviceBridgeUrl();
   await migrateDocumentSendFields();
-  await migrateSenderNotificationFields();
   await migrateDocumentTypeRoutingFields();
   await migrateDocumentRoutingFields();
   // Use sync() without alter — tables were already created correctly by migrate-pg.js
@@ -372,7 +322,6 @@ const Device             = makeModel(DeviceModel);
 const DeviceEvent        = makeModel(DeviceEventModel);
 const Command            = makeModel(CommandModel);
 const Notification       = makeModel(NotificationModel);
-const SenderNotification = makeModel(SenderNotificationModel);
 const Log                = makeModel(LogModel);
 
 module.exports = {
@@ -388,7 +337,6 @@ module.exports = {
     DeviceEventModel,
     CommandModel,
     NotificationModel,
-    SenderNotificationModel,
     LogModel,
   },
   syncModels,
@@ -403,6 +351,5 @@ module.exports = {
   DeviceEvent,
   Command,
   Notification,
-  SenderNotification,
   Log,
 };

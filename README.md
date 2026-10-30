@@ -50,8 +50,6 @@ JWT_SECRET=<generate-a-private-random-value-of-at-least-32-characters>
 JWT_EXPIRES_IN=8h
 CORS_ORIGIN=http://localhost:5173
 API_BASE_URL=http://localhost:5000/api
-PUBLIC_TRACKING_BASE_URL=http://localhost:5173
-SENDER_NOTIFICATION_PROVIDER=outbox
 DEVICE_API_KEY=<same-private-strong-key-on-backend-and-Pi>
 DEVICE_HEARTBEAT_TIMEOUT_MS=30000
 MAX_ATTACHMENTS_PER_DOCUMENT=8
@@ -146,7 +144,7 @@ The smoke test creates a test document, checks public tracking, routes it, recei
 - The backend creates IDs, tracking numbers, audit logs, and document timeline entries.
 - Claim slips can be printed from document details, and the tracking number can be checked on the login page without signing in.
 - Sidebar notifications are stored in PostgreSQL and stay dismissed after refresh once marked read.
-- Sender SMS updates are queued in PostgreSQL as an outbox; delivery remains deferred by the user for tracking numbers and document status changes.
+- The SMS backend has been removed for a fresh rebuild. SMS form fields and layout remain; sending and outbox APIs are unavailable. The frontend returns empty SMS history locally. Existing document contact/preferences and historical database records are retained.
 - Office users register outgoing documents, send from current custody, confirm receipts, and track visible records. Signing/acknowledgement requires an approval role holding current custody.
 - Scanner intake creates documents as `Pending Review`; Admin or Mayor users approve them before workflow routing.
 - Device Management shows the scanner as connected only while API-key protected hardware heartbeats are being received through `/api/devices/*`.

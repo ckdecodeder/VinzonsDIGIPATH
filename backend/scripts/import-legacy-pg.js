@@ -259,20 +259,6 @@ async function main() {
     createdAt:     { type: S },
   }, { tableName: 'notifications', timestamps: false });
 
-  const SenderNotification = sequelize.define('SenderNotification', {
-    id:         { type: PK, primaryKey: true },
-    documentId: { type: S },
-    channel:    { type: S },
-    recipient:  { type: S },
-    subject:    { type: S },
-    message:    { type: S },
-    status:     { type: S, defaultValue: 'pending' },
-    error:      { type: S },
-    metadata:   { type: DataTypes.JSONB, defaultValue: {} },
-    createdAt:  { type: S },
-    sentAt:     { type: S },
-  }, { tableName: 'sender_notifications', timestamps: false });
-
   const Log = sequelize.define('Log', {
     id:          { type: PK, primaryKey: true },
     action:      { type: S },
@@ -352,14 +338,6 @@ async function main() {
     readBy: Array.isArray(n.readBy) ? n.readBy : [],
   }));
   await importCollection(Notification, cleanedNotifs, `notifications (${cleanedNotifs.length} records)`);
-
-  // Sender Notifications
-  const senderNotifs = readCollection('vinzons_digipath.sendernotifications.json');
-  const cleanedSenderNotifs = senderNotifs.map(s => ({
-    ...s,
-    metadata: s.metadata && typeof s.metadata === 'object' ? s.metadata : {},
-  }));
-  await importCollection(SenderNotification, cleanedSenderNotifs, `sender_notifications (${cleanedSenderNotifs.length} records)`);
 
   // Logs (large collection)
   const logs = readCollection('vinzons_digipath.logs.json');

@@ -38,8 +38,6 @@ async function main() {
     const names = new Set(tables.rows.map((row) => row.table_name));
 
     const optionalDeletes = [
-      'sender_notifications',
-      'sendernotifications',
       'notifications',
       'device_events',
       'deviceevents',

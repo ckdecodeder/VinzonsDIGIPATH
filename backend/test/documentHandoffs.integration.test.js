@@ -197,7 +197,6 @@ integration('HTTP and PostgreSQL: both send endpoints deliver to every office an
       '../middleware/auth': { ...require('../middleware/auth'), protect: (req, res, next) => next() },
       '../utils/helpers': { ...helpers, createLogEntry: async () => {}, createNotification: async (notification) => notifications.push(notification), notifyApprovalUsers: async () => {} },
       '../utils/documentHandoffs': { sendHandoffs: service.send, receiveHandoff: service.receive, cancelHandoff: service.cancel },
-      '../utils/senderNotifications': { queueSenderNotifications: async () => {} },
       '../utils/realtime': { broadcastDataInvalidate: () => {} },
     };
     const context = { module: { exports: {} }, console, process, require: (id) => overrides[id] || realRequire(id) };

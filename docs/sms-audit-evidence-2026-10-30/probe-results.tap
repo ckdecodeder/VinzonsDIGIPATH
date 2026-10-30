@@ -1,0 +1,58 @@
+TAP version 13
+# Subtest: SMS-01: accepted Pending response is stored as Sent without reading its ID/state
+ok 1 - SMS-01: accepted Pending response is stored as Sent without reading its ID/state
+  ---
+  duration_ms: 4.5708
+  type: 'test'
+  ...
+# Subtest: SMS-02: ambiguous accepted-then-timeout request becomes retryable and is submitted twice
+ok 2 - SMS-02: ambiguous accepted-then-timeout request becomes retryable and is submitted twice
+  ---
+  duration_ms: 15.2049
+  type: 'test'
+  ...
+# Subtest: SMS-02: provider acceptance followed by status-save failure strands Sending
+ok 3 - SMS-02: provider acceptance followed by status-save failure strands Sending
+  ---
+  duration_ms: 4.3073
+  type: 'test'
+  ...
+# Subtest: SMS-03: resend handler sends saved recipient despite current opt-out and changed contact
+ok 4 - SMS-03: resend handler sends saved recipient despite current opt-out and changed contact
+  ---
+  duration_ms: 12.9386
+  type: 'test'
+  ...
+# Subtest: SMS-04: outbox storage failure is swallowed and leaves no notification row
+ok 5 - SMS-04: outbox storage failure is swallowed and leaves no notification row
+  ---
+  duration_ms: 3.4126
+  type: 'test'
+  ...
+# Subtest: SMS-06: two stale fourth-attempt snapshots both send and both persist attempt five
+ok 6 - SMS-06: two stale fourth-attempt snapshots both send and both persist attempt five
+  ---
+  duration_ms: 11.4162
+  type: 'test'
+  ...
+# Subtest: SMS-08: outbox accepts unsupported international recipient before provider validation
+ok 7 - SMS-08: outbox accepts unsupported international recipient before provider validation
+  ---
+  duration_ms: 7.0929
+  type: 'test'
+  ...
+# Subtest: Additional observation: SMS message length is unbounded by the content builder
+ok 8 - Additional observation: SMS message length is unbounded by the content builder
+  ---
+  duration_ms: 8.0205
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 430.4308

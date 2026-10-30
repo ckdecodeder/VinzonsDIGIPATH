@@ -168,7 +168,6 @@ const users = createCollectionService('/users');
 const documentTypes = createCollectionService('/document-types');
 const deviceEvents = createCollectionService('/device-events');
 const notifications = createCollectionService('/notifications');
-const senderNotifications = createCollectionService('/sender-notifications');
 
 export const documentService = {
   ...documents,
@@ -283,12 +282,14 @@ export const notificationService = {
 };
 
 export const senderNotificationService = {
-  ...senderNotifications,
+  // Keep the SMS interface available while its backend is rebuilt.
+  // Return an empty history locally so loading never calls removed endpoints.
+  async getAll() {
+    return [];
+  },
 
-  resend(id) {
-    return apiRequest(`/sender-notifications/${id}/resend`, {
-      method: 'POST',
-    });
+  async resend() {
+    throw new Error('SMS sending is unavailable until the SMS backend is rebuilt.');
   },
 };
 
