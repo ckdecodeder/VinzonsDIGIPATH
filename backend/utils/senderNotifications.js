@@ -84,9 +84,12 @@ const buildSenderNotificationContent = (req, doc, eventType, context = {}, chann
     };
   }
 
+  // Philippines routes may block SMS containing a URL unless the sender ID and
+  // URL have been registered. Keep the notification useful without a link.
+  const smsDetail = String(detail).replace(/\b(?:https?:\/\/|www\.)\S+/gi, '').replace(/\s+/g, ' ').trim();
   return {
     subject: title,
-    message: `DigiPath ${doc.trackingNumber}: ${detail} Track: ${trackingUrl}`,
+    message: [`DigiPath ${doc.trackingNumber}:`, smsDetail].filter(Boolean).join(' '),
   };
 };
 

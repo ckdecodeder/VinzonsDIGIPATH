@@ -4,6 +4,7 @@ const {
   normalizeTwilioPhoneNumber,
   sendTwilioSms,
   deliverSenderNotification,
+  buildSenderNotificationContent,
 } = require('../utils/senderNotifications');
 
 test('Twilio phone numbers normalize Philippine mobile input and require international format otherwise', () => {
@@ -14,6 +15,19 @@ test('Twilio phone numbers normalize Philippine mobile input and require interna
   assert.throws(() => normalizeTwilioPhoneNumber('+0123456789'), /E\.164/);
 });
 
+test('Philippines SMS template identifies DigiPath and omits tracking URLs', () => {
+  const content = buildSenderNotificationContent(
+    { get: () => 'https://example.invalid' },
+    { trackingNumber: 'TRK-123', subject: 'Permit request' },
+    'document_received',
+    { message: 'Received. Track here: https://example.invalid/?id=TRK-123' },
+    'sms',
+  );
+  assert.match(content.message, /DigiPath TRK-123/);
+  assert.match(content.message, /Received\. Track here:/);
+  assert.doesNotMatch(content.message, /https?:\/\/|www\./i);
+});
+
 test('Twilio request is encoded, bounded, and does not read provider bodies', async (t) => {
   const names = ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_FROM_NUMBER', 'SENDER_NOTIFICATION_TIMEOUT_MS'];
   const savedEnv = Object.fromEntries(names.map((name) => [name, process.env[name]]));
@@ -22,7 +36,7 @@ test('Twilio request is encoded, bounded, and does not read provider bodies', as
   Object.assign(process.env, {
     TWILIO_ACCOUNT_SID: 'AC' + 'a'.repeat(32),
     TWILIO_AUTH_TOKEN: 'test-only-auth-token',
-    TWILIO_FROM_NUMBER: '+15555550123',
+    TWILIO_FROM_NUMBER: 'Vinzons',
     SENDER_NOTIFICATION_TIMEOUT_MS: '1000',
   });
   let request;
@@ -35,6 +49,7 @@ test('Twilio request is encoded, bounded, and does not read provider bodies', as
   assert.ok(request.signal instanceof AbortSignal);
   assert.equal(request.signal.aborted, false);
   assert.equal(new URLSearchParams(request.body).get('To'), '+639171234567');
+  assert.equal(new URLSearchParams(request.body).get('From'), 'Vinzons');
   assert.equal(new URLSearchParams(request.body).get('Body'), 'Document status update');
 });
 
@@ -45,7 +60,7 @@ test('provider error bodies cannot leak recipient or SMS data into the outbox er
   t.after(() => { for (const name of names) savedEnv[name] === undefined ? delete process.env[name] : process.env[name] = savedEnv[name]; global.fetch = originalFetch; });
   process.env.TWILIO_ACCOUNT_SID = 'AC' + 'b'.repeat(32);
   process.env.TWILIO_AUTH_TOKEN = 'test-only-auth-token';
-  process.env.TWILIO_FROM_NUMBER = '+15555550123';
+  process.env.TWILIO_FROM_NUMBER = 'Vinzons';
   global.fetch = async () => ({ ok: false, status: 429, text: async () => 'phone +639171234567 private SMS body' });
   await assert.rejects(sendTwilioSms({ recipient: '+639171234567', message: 'private SMS body' }), error => (
     error.message.includes('HTTP 429') && !error.message.includes('639171234567') && !error.message.includes('private SMS body')

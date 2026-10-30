@@ -478,6 +478,17 @@ See `workflow_modification_plan.md` for the full technical breakdown.
 
 *This file is updated manually whenever a change is made to the system.*
 *Add new dated entries after the instructions/template and before older dated entries. Follow the maintenance instructions at the top of this file.*
+## [2026-10-30] — Philippines SMS sender and content requirements
+
+- **Type / state:** FIX / LOCAL; implementation and validation complete, documenting for local commit.
+- **Request / reason:** User plans to test the SMS feature with their Philippine SIM. Review of Twilio's current Philippines guideline found the prior SMS template included a tracking URL and deployment documentation did not specify registered alphanumeric Sender ID requirements.
+- **Branch / revision:** `main`, starting `dfa2e09`.
+- **Intended scope:** Keep the SMS template URL-free, support the configured registered alphanumeric sender ID, document registration before live delivery, add synthetic tests. No Twilio configuration/API request or real message.
+- **Data / configuration impact:** None; outbox default and existing environment settings unchanged. No queue flushed.
+- **Actual changes:** SMS templates now omit tracking URLs (retained for email only); `TWILIO_FROM_NUMBER` is documented as a registered Philippines alphanumeric Sender ID. Twilio's approximate registration lead time and requirement are documented. Test now checks that the message body has no URL and the configured sender value is used.
+- **Validation:** Backend: 43 passed, 0 failed, 27 opt-in PostgreSQL cases skipped; dashboard: 46 passed, 0 failed; production Vite build passed. Synthetic Twilio tests verify registered sender value forwarding, URL omission, recipient formatting, bounded requests, redacted failures, one-at-a-time sends and outbox behavior. No credentials or real messages were used.
+- **Publication / outstanding:** Commit source/docs locally on `main`; no push/deployment. Actual sender registration and one approved-recipient delivery remain operational steps. SMS stays disabled/outbox by default and the old queue will not be flushed.
+
 ## [2026-10-30] — SMS delivery completion
 
 - **Type / state:** FEATURE | FIX / LOCAL; implementation and validation complete, committing source/docs on `main`.
