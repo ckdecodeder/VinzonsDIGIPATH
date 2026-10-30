@@ -214,6 +214,32 @@ const LogModel = sequelize
     }, { tableName: 'logs', timestamps: false })
   : null;
 
+// A fresh outbox; legacy sender_notifications rows are never imported or dispatched.
+const SmsNotificationModel = sequelize ? sequelize.define('SmsNotification', {
+  id: { type: DataTypes.STRING, primaryKey: true },
+  sequence: { type: DataTypes.BIGINT, autoIncrement: true, allowNull: false, unique: true },
+  eventKey: { type: DataTypes.STRING(64), allowNull: false, unique: true },
+  documentId: { type: DataTypes.STRING, allowNull: false, references: { model: DocumentModel, key: 'id' }, onDelete: 'CASCADE' },
+  trackingNumber: { type: DataTypes.TEXT }, eventType: { type: DataTypes.STRING },
+  recipient: { type: DataTypes.STRING(20), allowNull: false },
+  subject: { type: DataTypes.TEXT }, message: { type: DataTypes.STRING(160), allowNull: false },
+  status: { type: DataTypes.STRING, allowNull: false, defaultValue: 'Paused' },
+  retryable: { type: DataTypes.BOOLEAN, defaultValue: false },
+  attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+  requestId: { type: DataTypes.UUID }, providerMessageId: { type: DataTypes.UUID },
+  senderNumber: { type: DataTypes.STRING(20) }, sim: { type: DataTypes.STRING },
+  errorMessage: { type: DataTypes.TEXT, defaultValue: '' }, createdBy: { type: DataTypes.STRING },
+  createdAt: { type: DataTypes.DATE, allowNull: false }, expiresAt: { type: DataTypes.DATE, allowNull: false },
+  lastAttemptAt: { type: DataTypes.DATE }, nextPollAt: { type: DataTypes.DATE },
+  sentAt: { type: DataTypes.DATE }, deliveredAt: { type: DataTypes.DATE },
+}, { tableName: 'sender_sms_outbox', timestamps: false,
+  indexes: [{ fields: ['documentId', 'createdAt'] }, { fields: ['status', 'createdAt'] }, { fields: ['lastAttemptAt'] }, { fields: ['nextPollAt'] }] }) : null;
+
+if (DocumentModel) require('../utils/sms').installSmsDocumentHooks({ DocumentModel, SmsNotificationModel,
+  ready: () => require('../services/httpSms').getSmsConfig().ready });
+const smsService = require('../services/smsOutbox').createSmsOutboxService({ DocumentModel, SmsNotificationModel,
+  notify: keys => require('../utils/realtime').broadcastDataInvalidate(keys) });
+
 // ─── Sync all tables to database ──────────────────────────────────────────────
 const migrateDocumentTypeCategory = async () => {
   await sequelize.query(`
@@ -337,9 +363,11 @@ module.exports = {
     DeviceEventModel,
     CommandModel,
     NotificationModel,
+    SmsNotificationModel,
     LogModel,
   },
   syncModels,
+  smsService,
   // Wrapped models (used by all route handlers)
   Office,
   User,

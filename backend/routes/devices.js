@@ -1,4 +1,5 @@
 const express = require('express');
+const { validateSmsPreferences } = require('../utils/sms');
 const router = express.Router();
 const { Device, DeviceEvent, Command, Document } = require('../models');
 const { protect, allowRoles } = require('../middleware/auth');
@@ -156,6 +157,7 @@ router.put('/devices/commands/:id', deviceLimiter, requireDeviceApiKey, asyncHan
 }));
 
 router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
+  validateSmsPreferences(req.body);
   const now = new Date().toISOString();
   const deviceId = req.body.deviceId?.trim() || 'DEV-001';
   const command = req.body.commandId ? await Command.findOne({ id: req.body.commandId }).lean() : null;

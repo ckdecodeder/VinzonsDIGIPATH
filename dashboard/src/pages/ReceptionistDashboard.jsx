@@ -612,7 +612,7 @@ const ReceptionistDashboard = ({
                     <input className="form-input" type="tel" value={receiveForm.senderContact}
                       onChange={e => setReceiveForm({ ...receiveForm, senderContact: e.target.value })}
                       placeholder="09XX-XXX-XXXX" />
-                    <p className="field-hint">Used for SMS tracking updates. Philippine 09 mobile numbers or international + numbers are accepted.</p>
+                    <p className="field-hint">Used for SMS tracking updates. Enter a Philippine mobile number starting with 09 or +639.</p>
                   </div>
                   <div className="form-group">
                     <label className="form-label">Sender's Organization / Office (Optional)</label>

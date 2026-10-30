@@ -610,7 +610,7 @@ function App() {
 
   const handleResendSenderNotification = async (notificationId) => {
     const saved = await runMutation(() => senderNotificationService.resend(notificationId));
-    showActionToast('saved', 'Notification sent successfully');
+    showActionToast('saved', 'SMS queued for delivery');
     refreshAfterMutation();
     return saved;
   };

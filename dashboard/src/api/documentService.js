@@ -282,14 +282,20 @@ export const notificationService = {
 };
 
 export const senderNotificationService = {
-  // Keep the SMS interface available while its backend is rebuilt.
-  // Return an empty history locally so loading never calls removed endpoints.
-  async getAll() {
-    return [];
+  getPage(params = {}, options = {}) {
+    return apiRequest(`/sender-notifications${buildQuery(params)}`, options);
   },
-
-  async resend() {
-    throw new Error('SMS sending is unavailable until the SMS backend is rebuilt.');
+  getAll(options = {}) {
+    return collectPages((params) => this.getPage(params, options));
+  },
+  forDocument(id, options = {}) {
+    return collectPages(params => apiRequest(`/documents/${encodeURIComponent(id)}/sender-notifications${buildQuery(params)}`, options));
+  },
+  status(options = {}) {
+    return apiRequest('/sms/status', options);
+  },
+  resend(id) {
+    return apiRequest(`/sender-notifications/${encodeURIComponent(id)}/resend`, { method: 'POST' });
   },
 };
 

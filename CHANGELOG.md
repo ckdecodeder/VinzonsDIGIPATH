@@ -37,6 +37,152 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-10-30] — Review public deployment readiness
+
+- **Type / state:** AUDIT | DOCS / LOCAL; public go-live not ready.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User asked whether the SMS feature is ready for deployment; this request authorizes assessment, not publication.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; SMS implementation still modified/untracked locally and uncommitted.
+- **Changes / files:** Read-only release assessment; this record, operation checkpoint and aggregate evidence only. Private redacted runtime evidence retained under ignored `database-export/httpsms-deployment-readiness-2026-10-30/`.
+- **Validation:** Current local health HTTP 200, database connected, SMS configuration ready; configured public API HTTP 404. Aggregate live outbox has two Delivered and one Accepted row; latest message independently reports Delivered with sent/delivered timestamps. No recipient, document body, reference or credential copied into the log. Earlier development evidence records 145 passing tests and a passing dashboard build; those were not rerun for this read-only assessment. Confirmed test receipt and native recovery rehearsal remain valid historical evidence, not public acceptance.
+- **Data / configuration impact:** Read-only local database/health and existing-message provider GET only; no new SMS, retry, configuration change, database write, service restart or deployment.
+- **Backup / recovery evidence:** Verified local activation recovery bundle retained. Separate physical storage remains outstanding; the user's waiver covered the prior activation only.
+- **Publication / deployment:** No commit, push or publication performed. Local runtime is active; matching Vercel release and external signed-in workflow acceptance are unverified.
+- **Rollback:** Documentation correction only; no runtime/data rollback needed.
+- **Outstanding / next action:** Restore public backend reachability, prepare/publish a matching tested source revision, verify external signed-in workflow and phone-background delivery/status confirmation, and resolve the applicable recovery requirement before broader go-live.
+
+## [2026-10-30] — Investigate delayed normal-workflow SMS
+
+- **Type / state:** AUDIT | DOCS / LOCAL; delay isolated after DigiPath submission, user subsequently reported the message sent.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User reported slow delivery of the first normal-workflow SMS after activation.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local changes retained.
+- **Changes / files:** This record, [setup troubleshooting](docs/HTTPSMS_SETUP.md) and [aggregate evidence](docs/httpsms-evidence-2026-10-30.json). No application/configuration change. Private diagnostic references and redacted timing/status evidence retained under ignored `database-export/httpsms-delay-2026-10-30/`; no phone numbers, document contents, keys or raw provider bodies copied into documentation.
+- **Validation:** Read-only database inspection showed exactly one attempt and 2,187 ms from outbox creation to dispatch. The correlated provider message was scheduled with no sent/delivered timestamp; sender, SIM and one-attempt registration matched. This locates the observed multi-minute wait after backend submission. After being asked to open the phone app and send a heartbeat, the user reported the message sent; this does not independently establish which action resolved the wait or confirm recipient receipt. A final read-only lookup still mapped to Accepted with no sent/delivered timestamp, so provider reporting had not confirmed completion at that check. Honor's official background-launch guidance was verified; a phone background restriction is a possible cause, not established by this investigation. Evidence JSON and whitespace checks passed; no code test rerun for read-only diagnosis/documentation.
+- **Data / configuration impact:** Read-only database/provider requests only. No retry, requeue, new SMS, deletion, provider setting change, local configuration change or service restart. Normal background worker remains responsible for status reconciliation.
+- **Backup / recovery evidence:** No new backup needed for read-only checks; activation recovery bundle retained unchanged.
+- **Publication / deployment:** Local documentation only; no commit, push or deployment.
+- **Rollback:** Documentation correction only; do not resubmit a message whose provider outcome is pending.
+- **Outstanding / next action:** Provider final status/recipient receipt remain unconfirmed at the last lookup. Review Honor app-launch/background settings and observe future delivery while the app is in the background; retain the original message/reference and allow read-only reconciliation.
+
+## [2026-10-30] — Activate the verified httpSMS feature
+
+- **Type / state:** CONFIG | SERVICE | DOCS / LOCAL; SMS enabled and running on the laptop, authenticated API verified. Public tunnel unavailable.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User explicitly requested activation after confirming receipt of the controlled test SMS.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local application changes retained.
+- **Intended scope:** Inspect the stopped/running system and current schema; take fresh native database, scan, configuration and source recovery copies and verify restoration in a separate test database. Prepare activation of the existing private httpSMS configuration, start the matching local backend/dashboard as needed, and verify authenticated readiness/history and worker operation without sending another test or requeueing old rows. Respect the operation plan's backup/cutover gates. No branch change, commit or push planned.
+- **Changes / files:** Changed only the private SMS enable flag in ignored `backend/.env`; started the current backend and matching local dashboard in hidden background processes. The dashboard launch uses process-only local API/WebSocket settings; frontend/private network/Pi files are unchanged. Normal server startup starts the configured SMS worker after the listener binds. Updated SMS setup/evidence and operation/deployment checkpoints; no application source edit in this activation batch.
+- **Data / configuration impact:** Created the separate live `sender_sms_outbox` table and its indexes/FK. Normal existing startup filled five missing incoming-document intake-office values from their origin offices, exactly as rehearsed; all other document fields and existing tables matched the before-state. The new outbox remained empty with zero delivery attempts. No historical SMS import, manual requeue, extra test SMS, device command, seed or data reset. No business records were created by verification.
+- **Backup / recovery evidence:** Fresh private bundle retained under ignored `database-export/httpsms-activation-2026-10-30/20261030T070143Z/`: native dump, all 70 scans, five configuration files, 364 source files, manifests, prior settings, activation candidate and runtime evidence. Native restore into a new separately named test database passed; all 12 original table counts/full-row fingerprints matched, and copied scans/configuration/source hashes matched. The restored startup rehearsal created only the new table and five expected backfills; all other fields/tables stayed unchanged. Main source data/files were checked unchanged immediately before live startup. Restored test copy retained with SMS disabled and no real provider key. Separate physical storage is not available or claimed.
+- **Explicit rollout exception:** After the fresh native restore, full-table fingerprint comparison, 70 scan checksums and successful startup rehearsal, the user explicitly authorized proceeding with the verified local backup for this activation, waiving the plan's separate-storage-copy gate for this batch only. No separate physical/off-machine backup is claimed.
+- **Validation:** Local backend HTTP 200, database ready, revision `16b489671e3a8204a38cba25cefa976082a965fe`, started `2026-10-30T07:08:31.653Z` (15:08:31 Asia/Manila); source includes retained uncommitted changes. Authenticated SMS status HTTP 200 with enabled/ready true, unauthenticated status HTTP 401, history HTTP 200 with zero rows. A two-minute existing-Admin verification token stayed in memory and was used only for read-only local requests. Dashboard HTTP 200; its proxy returned the same backend start time and authenticated SMS readiness. Browser sign-in page rendered with zero console warnings/errors; signed-in document workflow acceptance was not performed. Existing-table fingerprints and zero outbox attempts confirmed no activation/verification SMS. Prior 145 automated tests and user-confirmed real delivery remain separate; application source unchanged, so no full suite rerun. JSON and Git whitespace checks passed.
+- **Publication / deployment:** Backend and matching dashboard started locally on ports 5000/5173; private activation persisted. No commit, push, Vercel publication, Pi deployment or autostart/service installation. Existing configured public API returned HTTP 404; read-only CLI inspection could not locate that configured tunnel under the saved login. No new tunnel, endpoint change, access-policy change or token/configuration synchronization performed.
+- **Rollback:** Restore only the prior SMS enable flag and restart the identified backend; preserve the new outbox and all newer business writes. Do not restore an older business database merely to disable SMS.
+- **Outstanding / next action:** Local SMS activation complete; use the running local dashboard for new consented workflow events. Restore the existing public tunnel under its owning account and publish/verify the matching Vercel frontend as a separate external rollout. Signed-in browser/physical Pi acceptance and a separate-storage backup remain open; the storage waiver applies only to this activation.
+
+## [2026-10-30] — Confirm test SMS handset receipt
+
+- **Type / state:** DOCS / LOCAL; recipient receipt confirmed by the user.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User answered “Yes, received it” for the single controlled integration test message.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local changes retained.
+- **Changes / files:** Updated aggregate SMS evidence, setup guidance and operation/deployment checkpoints to record user-confirmed handset receipt. This follow-up resolves the pending recipient confirmation in the earlier test entry; its historical result is retained.
+- **Data / configuration impact:** Documentation only; no SMS, provider request, database operation, configuration change or service restart. Normal sending remains disabled.
+- **Backup / recovery evidence:** Not applicable to this documentation-only follow-up; prior private test recovery evidence retained.
+- **Validation:** Aggregate evidence JSON parses and records confirmed handset receipt; pending items retain matching rollout/activation and running-browser acceptance. Git whitespace check passed. No application tests needed for recording user confirmation.
+- **Publication / deployment:** Local and uncommitted; no push or deployment.
+- **Rollback:** Revert only this receipt-confirmation documentation if a correction is needed.
+- **Outstanding / next action:** The controlled backend-to-phone test is confirmed. A current backup, matching rollout, normal activation and running-browser acceptance remain pending.
+
+## [2026-10-30] — Controlled DigiPath SMS integration test
+
+- **Type / state:** AUDIT | SERVICE | DOCS / LOCAL; single-message integration test completed, provider reports delivery.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User authorized a controlled integration test and supplied the agreed recipient for exactly one message containing `DigiPath integration test`.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local changes retained.
+- **Intended scope:** Exercise the current document/outbox model, scoped SMS API, real provider adapter and delivery reconciliation using one synthetic document in a uniquely named schema in the existing disposable test database. Queue and dispatch only its single notification; guard the provider POST against any repeat. Keep the main backend disabled, existing business queues untouched and private settings unchanged. Record only aggregate results.
+- **Changes / files:** Ignored one-shot harness plus this record, [setup](docs/HTTPSMS_SETUP.md), deployment/operation checkpoints and [aggregate evidence](docs/httpsms-evidence-2026-10-30.json). No application source change in this test batch. The harness used the current wrapped document model, transactional event hook, actual SMS API router, outbox dispatch and provider adapter. Loopback API authentication was an isolated synthetic Admin fixture; this does not establish live login/browser acceptance.
+- **Data / configuration impact:** Exactly one synthetic document and notification created in a new isolated test schema, one real authorized provider send request, then read-only reconciliation of that message. The main database and historical queues were not accessed; private settings remained byte-for-byte unchanged and normal sending remained disabled. No business migration, normal server restart, activation or bulk dispatch.
+- **Backup / recovery evidence:** No live backup required because this test did not modify live data/configuration. Private control/recovery references, a final outbox copy and redacted evidence are retained under ignored `database-export/httpsms-controlled-test-2026-10-30/20261030T065050Z/`. After the terminal delivery result, the harness validated and removed only its exact isolated schema. No restoration was needed or rehearsed.
+- **Validation:** Wrapped creation atomically produced one Paused outbox row; intentional API queueing returned HTTP 202 Queued; the normal adapter verified sender/SIM and one-attempt policy and made exactly one POST containing only the agreed test message. Result advanced from Accepted to Delivered through a read-only provider lookup; sent/delivered timestamps were recorded and document-specific history matched the database. One delivery attempt, one provider POST, no retry or broad worker start. Persistent exclusive-create POST guard prevents rerun. Private harness syntax and Git whitespace checks passed. Prior 145 automated tests remain separate; no application code changed to justify a full rerun. Recipient handset confirmation remains separate from the provider's Delivered report.
+- **Publication / deployment:** Local isolated integration test only; no commit, push, frontend publication or normal backend deployment/restart.
+- **Rollback:** Test process stopped and synthetic schema removed after recording the final outcome. Private recovery evidence retained; do not rerun a send. The delivered SMS/provider record cannot be recalled by a local rollback.
+- **Outstanding / next action:** Recipient handset confirmation is pending. Normal activation, a current backup before matching backend/frontend rollout, and running-system browser acceptance remain separate next steps; existing queues have not been dispatched.
+
+## [2026-10-30] — Verify httpSMS authentication and registered sender read-only
+
+- **Type / state:** AUDIT | DOCS / LOCAL; provider configuration verified, sending remains disabled.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User explicitly approved using the saved private key for one read-only request to the official httpSMS phones endpoint after the earlier automatic-approval rejection.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local implementation changes retained.
+- **Changes / files:** This completion record and current operation checkpoint only. Private environment file unchanged; no key, phone number, provider response body or FCM value copied into output or documentation.
+- **Validation:** One authenticated HTTPS GET to the exact approved official phones endpoint succeeded. Provider accepted the key; exactly one registration matched the configured sender; registered SIM matched the selected SIM; maximum send attempts matched the required one-attempt policy. The private file's before/after bytes matched. Sending remains disabled. This resolves authentication/registration uncertainty from the preceding local-format check; it does not establish phone availability or DigiPath SMS delivery.
+- **Data / configuration impact:** Read-only provider metadata request only; no provider-setting change, SMS, database action, local environment edit or service restart.
+- **Backup / recovery evidence:** No new backup required for this read-only check; prior private recovery copies retained. No restoration claimed.
+- **Publication / deployment:** Local documentation only; no commit, push or deployment.
+- **Rollback:** Documentation correction only; no data/configuration rollback needed.
+- **Outstanding / next action:** Reviewed matching rollout with the required current backup and a controlled DigiPath-to-phone test remain pending. The explicit permission covered the read-only verification, not activation, sends or provider changes.
+
+## [2026-10-30] — Verify saved private httpSMS field format
+
+- **Type / state:** AUDIT | DOCS / LOCAL; local validation complete, provider authentication unverified.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User asked whether their private API-key and sender configuration had been entered correctly.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local implementation retained.
+- **Changes / files:** Read-only parsing and validation of ignored `backend/.env`; this record only. No private values copied into output or documentation.
+- **Validation:** All required fields are present and unique; key is populated, not an obvious placeholder, and header/whitespace-safe; sender format is canonical Philippine international form; selected SIM and timeout meet the current adapter configuration requirements. Sending remains disabled. A proposed read-only authentication/phone-registration request was rejected before execution by automatic approval review because external use of the private credential requires explicit permission. No provider response or credential validity claimed; the configured number's ownership/registration is not established by syntax validation.
+- **Data / configuration impact:** None; no environment edit, provider/network call, SMS, database operation or service restart.
+- **Backup / recovery evidence:** No new backup required for this read-only check; prior private recovery copies retained.
+- **Publication / deployment:** Documentation local and uncommitted; no push/deployment.
+- **Rollback:** Documentation correction only; no configuration/data rollback needed.
+- **Outstanding / next action:** Obtain explicit permission before using the saved key for one read-only official httpSMS phones request. Sender/SIM registration, provider retry policy and controlled DigiPath delivery acceptance remain unverified in this check.
+
+## [2026-10-30] — Add missing private httpSMS configuration fields
+
+- **Type / state:** CONFIG | DOCS / LOCAL; fields added and verified.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User could not find the API-key field in the actual backend environment file; the new fields had been added to the example and guide only.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local implementation retained.
+- **Intended scope:** Add a clearly labelled httpSMS section with only missing fields to ignored `backend/.env`, using empty credential/sender placeholders and a disabled default. Preserve all existing bytes/parsed settings and do not display private values.
+- **Changes / files:** Appended a labelled httpSMS section with five previously missing fields to ignored `backend/.env`; API-key entry is on line 41. Credential and sender fields are empty, and sending remains disabled. No application source change.
+- **Data / configuration impact:** Private local field scaffolding only; no API key supplied, activation, database operation, service restart, provider request or SMS. Existing configuration bytes/values preserved; none copied into this log.
+- **Backup / recovery evidence:** Prior private bytes and SHA-256 manifest retained under ignored `database-export/httpsms-env-fields-2026-10-30/1793342247950/`. Recovery copy checksum matched; restoration not rehearsed.
+- **Validation:** Confirmed all five fields parse, each new assignment occurs once, all prior bytes remain an unchanged prefix and prior parsed settings match, saved bytes match the prepared result, and private/recovery paths are ignored. No application suite rerun for adding inactive fields; previous source test results remain separate.
+- **Publication / deployment:** Private/local only; no commit, push or deployment.
+- **Rollback:** Remove only the new section/fields using the private manifest if needed; preserve later private edits.
+- **Outstanding / next action:** User to enter the API key and registered sender number privately, retaining the disabled setting until controlled integration setup; no key should be pasted into chat.
+
+## [2026-10-30] — Remove obsolete sender-provider environment settings
+
+- **Type / state:** CONFIG | DOCS / LOCAL; cleanup and validation complete.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User identified the former sender-provider block in the private backend environment file and requested its removal.
+- **Branch / revision:** `main`, `16b489671e3a8204a38cba25cefa976082a965fe`; existing local httpSMS implementation changes retained.
+- **Intended scope:** Remove only obsolete sender-provider/Twilio/SendGrid/Resend/email-from/webhook settings and their former heading from ignored `backend/.env`. Preserve the new httpSMS fields and every unrelated setting byte-for-byte. Do not copy environment values into this log or tool output.
+- **Changes / files:** Removed the ten obsolete sender-provider/Twilio/SendGrid/Resend/email-from/webhook assignments and the former sender-notifications heading from ignored `backend/.env`. New httpSMS fields and every unrelated line/parsed setting were preserved; no application source change in this cleanup.
+- **Data / configuration impact:** Private local configuration cleanup only; no activation, database operation, service restart, provider request or SMS. No environment values recorded here.
+- **Backup / recovery evidence:** Previous private bytes and checksum manifest retained under ignored `database-export/sender-env-cleanup-2026-10-30/1793342114975/`. Copy SHA-256 matched the original before editing; restoration not rehearsed. Keep the private copy out of Git.
+- **Validation:** Backend/scripts have no references to the obsolete names. Confirmed all obsolete assignments are gone, new httpSMS/unrelated parsed values and untouched lines are preserved, saved bytes match the prepared result, and both private file/recovery paths are ignored. No application suite rerun for removal of unused settings; the preceding 145-test source validation remains separate.
+- **Publication / deployment:** Local/private change only; no commit, push or deployment.
+- **Rollback:** Restore only the deleted settings from the private recovery copy if required; preserve any later private configuration edits.
+- **Outstanding / next action:** Private httpSMS setup and controlled integration acceptance remain separate; no additional legacy-provider settings are needed.
+
+## [2026-10-30] — Rebuild sender SMS with httpSMS
+
+- **Type / state:** FEATURE | FIX | CONFIG | DOCS / LOCAL; implementation and automated validation complete, uncommitted.
+- **Author / time:** Codex; 2026-10-30, Asia/Manila.
+- **Request / reason:** User authorized rebuilding after confirming a successful httpSMS Android/GOMO test and correcting the SIM registration.
+- **Branch / revision:** `main`, starting `16b489671e3a8204a38cba25cefa976082a965fe`; clean and aligned with local `origin/main` at start. Earlier reset is now committed; its original lifecycle entry remains historical.
+- **Intended scope:** A new, separate PostgreSQL SMS outbox written atomically with document workflow changes; disabled-by-default httpSMS adapter and paced background worker; truthful provider states, bounded requests, current-consent/recipient checks, atomic attempt limits, unknown-outcome reconciliation without blind retransmission; scoped/paginated APIs and document-specific history integrated with preserved frontend. Add synthetic and disposable database/HTTP regressions and setup guidance. Existing historical sender tables are not reused or flushed.
+- **Changes / files:** Added `backend/utils/sms.js`, `services/httpSms.js`, `services/smsOutbox.js` and `routes/sms.js`; a separate indexed `sender_sms_outbox` Sequelize/Prisma model; transactional document hooks and transactional new wrapped inserts. Provider validation verifies the sender/SIM and one-attempt phone policy; response/body deadlines, privacy-safe errors, one in-flight claim per row, five-attempt manual cap, paced dispatch, unknown-outcome reconciliation and distinct Accepted/Sent/Delivered states are covered. Preserved SMS UI/forms, reconnected its API adapter, added document-specific history and errors/paused/safe-retry controls, and corrected the queue toast and phone-format hint. Updated private configuration examples, JSON export table list, README/deployment/performance guidance and [setup](docs/HTTPSMS_SETUP.md); added unit and disposable PostgreSQL/HTTP regressions. [Aggregate verification](docs/httpsms-evidence-2026-10-30.json).
+- **Data / configuration impact:** Source/schema definitions/examples only; tests created/dropped disposable restored-test schemas and synthetic files. No live backend restart, real SMS/provider call, business-record rewrite, private environment edit/key collection, automatic historical send, push or deployment. A redacted file-only readiness check found private activation still pending; no values recorded. The first authorized live startup will create the new table and run existing startup checks; a current native backup remains required first. Historical sender tables/rows are not reused or flushed.
+- **Backup / recovery evidence:** Clean source revision is the rollback baseline. Do not run a live schema/data migration; preserve historical SMS tables and records. No new live database backup/restore claimed.
+- **Validation:** All 145 distinct automated tests passed: final complete backend/startup run 98 passed, 0 failed, 0 skipped (47 regular backend, 45 PostgreSQL/HTTP, 6 startup); frontend 47 passed. Dashboard production build passed; 100 backend/startup CommonJS files parsed; diff whitespace check passed. Provider tests use mocked fetch; database/HTTP tests use disposable schemas in the guarded restored test database and temporary synthetic fixtures with teardown. Two initial integration fixtures omitted required subjects; fixed fixtures and reran successfully. Existing pg concurrent-client-query deprecation warning remains nonblocking. React review covered primitive effect dependencies, cancellation, parallel reads and loading/error/retry accessibility. No rendered-browser or DigiPath-to-real-phone acceptance performed. Prisma CLI unavailable; mirror updated, no Prisma migration/db push run.
+- **Publication / deployment:** Local implementation only; no commit, push, or deployment requested.
+- **Rollback:** Revert the focused source batch while keeping sending disabled; retain data and historical tables. Never restore an old business database solely to undo this feature.
+- **Outstanding / next action:** Add private httpSMS key/sender/SIM settings, configure the provider phone's maximum attempts to one, then review matching rollout and perform one controlled DigiPath-to-phone acceptance. Sending stays paused until configured/enabled. User's standalone phone test is not evidence of DigiPath delivery. Do not send old queued messages automatically.
+
 ## [2026-10-30] — Remove SMS backend and preserve frontend for rebuilding
 
 - **Type / state:** FIX | CONFIG | DOCS / LOCAL; removal and validation complete, uncommitted.

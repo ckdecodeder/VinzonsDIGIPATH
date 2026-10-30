@@ -5,7 +5,7 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { Client } = require('pg');
 const root = path.resolve(__dirname, '../..');
-const tables = ['offices','document_types','users','documents','transmissions','archives','devices','device_events','notifications','commands','logs'];
+const tables = ['offices','document_types','users','documents','transmissions','archives','devices','device_events','notifications','sender_sms_outbox','commands','logs'];
 const main = async () => {
   const directory = path.join(root, 'database-export', 'private-json-' + new Date().toISOString().replace(/[:.]/g, '-'));
   execFileSync('git', ['check-ignore', path.join(directory, 'users.json')], { cwd: root, stdio: 'ignore' });

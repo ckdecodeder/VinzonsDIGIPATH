@@ -88,6 +88,31 @@ integration('Audit repair: registration rolls back its document if initial deliv
     assert.equal(await raw.DocumentModel.count({ where: { trackingNumber: 'SYNTHETIC-ROLLBACK' } }), 0);
   } finally { failSend = false; }
 });
+
+integration('SMS HTTP registration records paused workflow SMS and opt-out cancels them atomically', async () => {
+  const response = await request('/documents', 'POST', { subject: 'Synthetic SMS registration', senderName: 'Synthetic',
+    trackingNumber: 'SYNTHETIC-SMS-HTTP', senderContact: '09180000000', notifySender: true,
+    senderNotificationConsent: true, senderNotificationChannels: ['sms'], destinationOfficeId: 'OTHER',
+    scannedFiles: [{ name: 'test.png', dataUrl: png }] }, 'Office');
+  assert.equal(response.status, 201, response.text);
+  const messages = await raw.SmsNotificationModel.findAll({ where: { documentId: response.body.id } });
+  assert.ok(messages.length > 0); assert.ok(messages.every(message => message.status === 'Paused'));
+  const update = await request('/documents/' + response.body.id, 'PUT', { senderNotificationConsent: false });
+  assert.equal(update.status, 200, update.text);
+  assert.ok((await raw.SmsNotificationModel.findAll({ where: { documentId: response.body.id } })).every(message => message.status === 'Cancelled'));
+});
+
+integration('SMS HTTP registration rolls back document and initial handoff when outbox storage fails', async () => {
+  raw.SmsNotificationModel.addHook('beforeBulkCreate', 'smsHttpFault', () => { throw new Error('Synthetic outbox write failure'); });
+  try {
+    const response = await request('/documents', 'POST', { subject: 'Synthetic SMS failure', senderName: 'Synthetic',
+      trackingNumber: 'SYNTHETIC-SMS-FAILURE', senderContact: '09180000000', notifySender: true,
+      senderNotificationConsent: true, senderNotificationChannels: ['sms'], destinationOfficeId: 'OTHER',
+      scannedFiles: [{ name: 'test.png', dataUrl: png }] }, 'Office');
+    assert.equal(response.status, 500, response.text);
+    assert.equal(await raw.DocumentModel.count({ where: { trackingNumber: 'SYNTHETIC-SMS-FAILURE' } }), 0);
+  } finally { raw.SmsNotificationModel.removeHook('beforeBulkCreate', 'smsHttpFault'); }
+});
 integration('Audit repair: scan serving enforces role and ownership, including PDF pages and byte ranges', async () => {
   await fs.writeFile(path.join(tempRoot, 'scans', 'private.png'), Buffer.from('synthetic-image-data'));
   await fixture('PRIVATE', { currentOfficeId: 'OTHER', originOfficeId: 'OTHER', scannedFiles: [{ url: '/uploads/scans/private.pdf', pages: [{ url: '/uploads/scans/private.png' }] }] });

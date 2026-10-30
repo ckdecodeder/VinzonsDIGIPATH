@@ -20,6 +20,7 @@ const {
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
 const { persistAttachments } = require('../utils/attachments');
+const { validateSmsPreferences } = require('../utils/sms');
 const { parsePagination, contains, andFilters, documentSummaryAttributes } = require('../utils/listing');
 const {
   buildInitialOfficeRoute,
@@ -260,6 +261,7 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
 };
 
 const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => {
+  validateSmsPreferences(body);
   const userOfficeId = getUserOfficeId(req);
   const isOfficeUser = req.user?.role === 'Office';
   const isReceptionist = req.user?.role === 'Receptionist';
@@ -613,6 +615,7 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
 
 router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   const existingDoc = await assertCanAccessDocument(req, req.params.id);
+  validateSmsPreferences({ ...existingDoc.toJSON(), ...req.body });
   if (
     req.body.documentTypeId !== undefined
     && req.body.documentTypeId !== existingDoc.documentTypeId

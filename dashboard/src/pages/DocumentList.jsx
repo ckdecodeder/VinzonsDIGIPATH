@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { documentService } from '../api/documentService';
+import { documentService, senderNotificationService } from '../api/documentService';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import ScannedPreviewModal from '../components/ScannedPreviewModal';
@@ -123,6 +123,12 @@ const DocumentList = ({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [detailRetry, setDetailRetry] = useState(0);
+  const [smsHistory, setSmsHistory] = useState([]);
+  const [smsError, setSmsError] = useState('');
+  const [smsLoading, setSmsLoading] = useState(false);
+  const [smsReady, setSmsReady] = useState(false);
+  const [smsRetry, setSmsRetry] = useState(0);
+  const [smsSending, setSmsSending] = useState('');
   const [previewFile, setPreviewFile] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [rejectDoc, setRejectDoc] = useState(null);
@@ -137,6 +143,8 @@ const DocumentList = ({
   const [receivingDocumentId, setReceivingDocumentId] = useState('');
 
   const detailVersion = documents.find((item) => item.id === detailDoc?.id)?.updatedAt;
+  const smsVersion = senderNotifications.filter(item => item.documentId === detailDoc?.id)
+    .map(item => `${item.id}:${item.status}:${item.metadata?.deliveryAttempts}:${item.errorMessage}`).join('|');
   useEffect(() => {
     if (!detailDoc) return undefined;
     const controller = new AbortController();
@@ -146,6 +154,32 @@ const DocumentList = ({
     }).finally(() => { if (!controller.signal.aborted) setDetailLoading(false); });
     return () => controller.abort();
   }, [detailDoc?.id, detailVersion, detailRetry]);
+
+  useEffect(() => {
+    if (!detailDoc?.id) return undefined;
+    const controller = new AbortController();
+    const id = detailDoc.id;
+    setSmsHistory([]); setSmsLoading(true); setSmsError(''); setSmsReady(false);
+    Promise.all([
+      senderNotificationService.forDocument(id, { signal: controller.signal }),
+      senderNotificationService.status({ signal: controller.signal }),
+    ]).then(([items, status]) => {
+      if (!controller.signal.aborted) { setSmsHistory(items); setSmsReady(status.ready); }
+    }).catch(error => {
+      if (!controller.signal.aborted) setSmsError(error.message);
+    }).finally(() => { if (!controller.signal.aborted) setSmsLoading(false); });
+    return () => controller.abort();
+  }, [detailDoc?.id, detailVersion, smsVersion, smsRetry]);
+
+  const requeueSms = async id => {
+    if (smsSending) return;
+    setSmsSending(id); setSmsError('');
+    try {
+      await (onResendSenderNotification ? onResendSenderNotification(id) : senderNotificationService.resend(id));
+      setSmsRetry(value => value + 1);
+    } catch (error) { setSmsError(error.message); }
+    finally { setSmsSending(''); }
+  };
 
   useEffect(() => {
     if (!initialStatusFilter) return;
@@ -270,7 +304,7 @@ const DocumentList = ({
   };
 
   const getSenderNotifications = (documentId) => {
-    return senderNotifications
+    return (detailDoc?.id === documentId ? smsHistory : senderNotifications)
       .filter(item => item.documentId === documentId)
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
   };
@@ -1529,6 +1563,9 @@ const DocumentList = ({
 
                   <div className="document-detail-section document-timeline-section">
                     <h4><MessageSquare size={14} /> Sender Notification Outbox</h4>
+                    {!smsReady && !smsLoading && !smsError && <p className="detail-empty">SMS delivery is paused until configured and enabled.</p>}
+                    {smsLoading && <p className="detail-empty" role="status">Loading sender updates…</p>}
+                    {smsError && <p className="form-field-error" role="alert">{smsError} <button className="btn btn-sm btn-secondary" onClick={() => setSmsRetry(value => value + 1)}>Retry history</button></p>}
                     {senderOutbox.length ? (
                       <div className="sender-notification-list">
                         {senderOutbox.map(item => (
@@ -1538,17 +1575,18 @@ const DocumentList = ({
                               <strong>{item.subject || item.eventType}</strong>
                               <p>{item.message}</p>
                               <small>{item.recipient} - {item.status} - {formatDateTime(item.createdAt)}</small>
+                              {item.errorMessage && <p>{item.errorMessage}</p>}
+                              {item.deliveredAt && <small>Delivered: {formatDateTime(item.deliveredAt)}</small>}
                             </div>
-                            {['Admin', 'Receptionist'].includes(currentUser?.role) && item.channel === 'sms' && ['Queued', 'Failed'].includes(item.status)
-                              && (Number(item.metadata?.deliveryAttempts) || 0) < 5 && (
-                              <button className="btn btn-sm btn-secondary" onClick={() => onResendSenderNotification?.(item.id)}>
+                            {smsReady && ['Admin', 'Receptionist'].includes(currentUser?.role) && item.canRetry && (
+                              <button className="btn btn-sm btn-secondary" disabled={!!smsSending} onClick={() => requeueSms(item.id)}>
                                 <Send size={13} /> Requeue
                               </button>
                             )}
                           </div>
                         ))}
                       </div>
-                    ) : (
+                    ) : !smsLoading && !smsError && (
                       <p className="detail-empty">No sender updates queued yet. Updates are created when the document moves through the workflow.</p>
                     )}
                   </div>

@@ -43,6 +43,7 @@ router.use('/documents', documentsRouter);
 router.use('/', trackingRouter);
 router.use('/', devicesRouter);
 router.use('/', notificationsRouter);
+router.use('/', require('./sms').createSmsRouter());
 
 // Universal error handling middleware
 router.use((err, req, res, next) => {

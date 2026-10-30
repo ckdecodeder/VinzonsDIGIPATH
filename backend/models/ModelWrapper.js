@@ -191,7 +191,10 @@ class ModelInstance {
     if (this._persisted && data.id !== this._identity) throw new Error('Record identity is immutable');
     let instance;
     if (!this._persisted) {
-      instance = await this._wrapper._Model.create(data, options);
+      // Hooks (including document/outbox writes) share the insert's transaction.
+      instance = options.transaction
+        ? await this._wrapper._Model.create(data, options)
+        : await withModelTransaction(this._wrapper._Model, transaction => this._wrapper._Model.create(data, { ...options, transaction }));
     } else {
       instance = await withModelTransaction(this._wrapper._Model, async transaction => {
         const row = await this._wrapper._Model.findOne({ where: { id: this._identity }, transaction, lock: transaction.LOCK.UPDATE });

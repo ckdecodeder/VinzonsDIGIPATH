@@ -39,13 +39,13 @@ test('notification router exposes only normal in-app notification routes', async
   assert.equal(result[0].isRead, true);
 });
 
-test('model initialization retains document preferences without SMS tables or SMS schema writes', async () => {
+test('model initialization preserves document preferences and never revives the legacy sender table', async () => {
   const defined = [], queries = [];
   let syncCalls = 0;
   const sequelize = {
     define(name, attributes, options) {
       defined.push({ name, attributes, tableName: options.tableName });
-      return { tableName: options.tableName };
+      return { tableName: options.tableName, addHook() {} };
     },
     async query(sql) { queries.push(sql); },
     async sync() { syncCalls++; },
@@ -54,6 +54,7 @@ test('model initialization retains document preferences without SMS tables or SM
   assert.equal(models.SenderNotification, undefined);
   assert.equal(models._sequelizeModels.SenderNotificationModel, undefined);
   assert.equal(defined.some(model => /sender_notification/i.test(model.tableName)), false);
+  assert.ok(defined.find(model => model.tableName === 'sender_sms_outbox'));
   assert.ok(defined.find(model => model.name === 'Notification'));
   const document = defined.find(model => model.name === 'Document');
   for (const field of ['senderContact', 'notifySender', 'senderNotificationConsent', 'senderNotificationChannels']) {

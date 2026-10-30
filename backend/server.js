@@ -3,7 +3,7 @@ const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const { connectDB, getDatabaseStatus, checkDatabaseReadiness } = require('./config/db');
-const { syncModels } = require('./models');
+const { syncModels, smsService } = require('./models');
 const { corsOriginCallback } = require('./utils/cors');
 const { formatServerUrls } = require('./utils/lanIp');
 const { getPublicApiUrl } = require('./utils/publicApiUrl');
@@ -87,6 +87,7 @@ const startServer = async () => {
   initRealtimeHub(server);
 
   server.listen(PORT, HOST, () => {
+    smsService.start();
     console.log(formatServerUrls(PORT, 'DigiPath API running:'));
     console.log(`  WebSocket: ws://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}/ws`);
     console.log(`  Database: ${getDatabaseStatus()}`);
