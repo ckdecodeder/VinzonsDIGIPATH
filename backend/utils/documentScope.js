@@ -1,3 +1,4 @@
+const { literal } = require('sequelize');
 const { getUserOfficeId } = require('./helpers');
 
 /**
@@ -40,17 +41,35 @@ const getScopedDocumentQuery = (req) => {
   return visibilityQuery;
 };
 
-const getScopedTransmissionQuery = (req) => {
+const getScopedDocumentReadQuery = (req, documentModel) => {
+  const scope = getScopedDocumentQuery(req);
+  const officeId = getUserOfficeId(req);
+  if (req.user?.role !== 'Office' || !officeId) return scope;
+
+  // Older handoffs may only record their sender in the transmission table.
+  const { sequelize } = documentModel;
+  const { schema } = documentModel.getTableName();
+  const table = sequelize.getQueryInterface().queryGenerator.quoteTable({ tableName: 'transmissions', schema });
+  const outboundDocumentIds = literal(
+    `(SELECT "documentId" FROM ${table} WHERE "fromOfficeId" = ${sequelize.escape(officeId)})`,
+  );
+  return { $or: [...scope.$or, { id: { $in: outboundDocumentIds } }] };
+};
+
+const getScopedTransmissionQuery = (req, { forUpdate = false } = {}) => {
   if (isGlobalDocumentViewer(req)) return {};
 
   const officeId = getUserOfficeId(req);
   if (!officeId) return { id: '__no_office__' };
 
-  // Incoming to this office, or still-pending outbound from this office (tracking only).
+  // Office monitoring includes completed sends. Update lookups keep the pending-only outbound scope.
+  const canReadCompletedOutbound = req.user?.role === 'Office' && !forUpdate;
   return {
     $or: [
       { toOfficeId: officeId },
-      { fromOfficeId: officeId, receivedBy: { $in: [null, ''] } },
+      canReadCompletedOutbound
+        ? { fromOfficeId: officeId }
+        : { fromOfficeId: officeId, receivedBy: { $in: [null, ''] } },
     ],
   };
 };
@@ -61,6 +80,7 @@ const getScopedDocumentQueryWithTransmissions = async (req) => getScopedDocument
 module.exports = {
   isGlobalDocumentViewer,
   getScopedDocumentQuery,
+  getScopedDocumentReadQuery,
   getScopedTransmissionQuery,
   getScopedDocumentQueryWithTransmissions,
 };

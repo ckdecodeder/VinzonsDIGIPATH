@@ -2,8 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ModelWrapper } = require('../models/ModelWrapper');
 const { parsePagination } = require('../utils/listing');
-const { Op } = require('sequelize');
-const { getScopedDocumentQuery } = require('../utils/documentScope');
+const { Op, Sequelize, DataTypes } = require('sequelize');
+const { getScopedDocumentQuery, getScopedDocumentReadQuery } = require('../utils/documentScope');
 
 test('office history filters produce constrained JSON SQL instead of an empty visibility clause', async () => {
   let where;
@@ -14,6 +14,27 @@ test('office history filters produce constrained JSON SQL instead of an empty vi
   assert.match(sql, /sendHistory/);
   assert.match(sql, /recipientOfficeId/);
   assert.match(sql, /OFF-''SECOND/);
+});
+
+test('legacy document tracking uses only the Office sender in the same schema', async () => {
+  const db = new Sequelize({ dialect: 'postgres', logging: false });
+  try {
+    const model = db.define('FixtureDocument', { id: { type: DataTypes.TEXT, primaryKey: true } }, {
+      tableName: 'documents', schema: 'workflow-test',
+    });
+    const wrapper = new ModelWrapper(model);
+    const office = { user: { role: 'Office', officeId: "OFF-'SENDER" } };
+    const sql = (query) => db.getQueryInterface().queryGenerator.selectQuery(
+      model.getTableName(), { where: wrapper._buildWhere(query) }, model,
+    );
+    assert.match(sql(getScopedDocumentReadQuery(office, model)),
+      /"id" IN \(SELECT "documentId" FROM "workflow-test"\."transmissions" WHERE "fromOfficeId" = 'OFF-''SENDER'\)/);
+    assert.doesNotMatch(sql(getScopedDocumentQuery(office)), /FROM .*"transmissions"/);
+    const receptionist = { user: { ...office.user, role: 'Receptionist' } };
+    assert.doesNotMatch(sql(getScopedDocumentReadQuery(receptionist, model)), /FROM .*"transmissions"/);
+  } finally {
+    await db.close();
+  }
 });
 
 test('positive and negative projections reach SQL and retain password exclusion', async () => {

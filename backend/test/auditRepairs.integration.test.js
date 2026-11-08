@@ -54,7 +54,7 @@ before(async () => {
   const express = require('express');
   const app = express(); app.use(express.json());
   app.use((req, res, next) => { if (req.headers['x-test-role']) req.user = { id: req.headers['x-test-user'] || 'TEST-USER', role: req.headers['x-test-role'], officeId: req.headers['x-test-office'] || 'SOURCE' }; next(); });
-  for (const name of ['documents', 'archives', 'logs', 'users']) app.use('/' + name, await loadModule(path.resolve(__dirname, '../routes', name + '.js'), overrides));
+  for (const name of ['documents', 'transmissions', 'archives', 'logs', 'users']) app.use('/' + name, await loadModule(path.resolve(__dirname, '../routes', name + '.js'), overrides));
   app.use('/', await loadModule(path.resolve(__dirname, '../routes/devices.js'), overrides));
   app.use('/uploads', require('../routes/files').createFileRouter({ Document: models.Document, DocumentModel: raw.DocumentModel, root: path.join(tempRoot, 'scans'), authenticate: overrides['../middleware/auth'].protect }));
   app.use((error, req, res, next) => { if (!res.headersSent) res.status(error.status || (error.name === 'SequelizeUniqueConstraintError' ? 409 : 500)).json({ message: error.message }); });
@@ -71,6 +71,45 @@ const request = async (url, method = 'GET', body, role = 'Admin', office = 'SOUR
   return { status: res.status, body: json, text, headers: res.headers };
 };
 const fixture = (id, extra = {}) => raw.DocumentModel.create({ id, subject: 'Synthetic ' + id, trackingNumber: 'SYNTHETIC-' + id, status: 'Received', intakeStatus: 'Approved', documentDirection: 'Outgoing', currentOfficeId: 'SOURCE', originOfficeId: 'SOURCE', documentTypeId: 'TYPE', scannedFiles: [], timeline: [], createdAt: new Date().toISOString(), ...extra });
+
+integration('Office handoff monitoring keeps completed sends visible and the sender cannot edit or receive in transit', async () => {
+  const documentId = 'OFFICE-HANDOFF';
+  await fixture(documentId);
+  const sent = await request(`/documents/${documentId}/send`, 'POST', { toOfficeIds: ['OTHER'] }, 'Office', 'SOURCE');
+  assert.equal(sent.status, 200, sent.text);
+  const pending = (await request('/transmissions', 'GET', null, 'Office', 'SOURCE')).body.find(row => row.documentId === documentId);
+  assert.ok(pending);
+  assert.equal((await request(`/documents/${documentId}`, 'PUT', { subject: 'Changed' }, 'Office', 'SOURCE')).status, 403);
+
+  const endpoint = `/transmissions/${pending.id}`;
+  assert.equal((await request(endpoint, 'PUT', { confirmReceipt: true }, 'Office', 'SOURCE')).status, 403);
+  const receipt = await request(endpoint, 'PUT', { confirmReceipt: true }, 'Office', 'OTHER', 'OTHER-USER');
+  assert.equal(receipt.status, 200, receipt.text);
+  const completed = (await request('/transmissions', 'GET', null, 'Office', 'SOURCE')).body.find(row => row.id === pending.id);
+  assert.equal(completed.receivedBy, 'OTHER-USER');
+  assert.ok(completed.receivedAt);
+  assert.equal((await request(endpoint, 'PUT', { confirmReceipt: true }, 'Office', 'SOURCE')).status, 404);
+  assert.equal((await request('/transmissions', 'GET', null, 'Office', 'OUTSIDE')).body.some(row => row.id === pending.id), false);
+  assert.equal((await request('/transmissions', 'GET', null, 'Receptionist', 'SOURCE')).body.some(row => row.id === pending.id), false);
+});
+
+integration('Office tracking reads legacy outbound documents and attachments without expanding mutation scope', async () => {
+  const documentId = 'OFFICE-LEGACY-TRACKING';
+  const filename = 'legacy-tracking.png';
+  const attachment = `/uploads/scans/${filename}`;
+  await fs.writeFile(path.join(tempRoot, 'scans', filename), Buffer.from(png.split(',')[1], 'base64'));
+  await fixture(documentId, { currentOfficeId: 'MAYOR', destinationOfficeId: 'MAYOR', scannedFiles: [{ url: attachment }] });
+  await raw.TransmissionModel.create({ id: 'LEGACY-OUTBOUND', documentId, fromOfficeId: 'OTHER', toOfficeId: 'MAYOR', receivedBy: 'MAYOR-USER' });
+
+  const list = await request(`/documents?search=${documentId}`, 'GET', null, 'Office', 'OTHER');
+  assert.equal(list.status, 200, list.text);
+  assert.equal(list.body.items.some(doc => doc.id === documentId), true);
+  assert.equal((await request(`/documents/${documentId}`, 'GET', null, 'Office', 'OTHER')).status, 200);
+  assert.equal((await request(attachment, 'GET', null, 'Office', 'OTHER')).status, 200);
+  assert.equal((await request(`/documents/${documentId}`, 'PUT', { subject: 'Changed' }, 'Office', 'OTHER')).status, 404);
+  assert.equal((await request(`/documents/${documentId}`, 'GET', null, 'Office', 'OUTSIDE')).status, 404);
+  assert.equal((await request(attachment, 'GET', null, 'Office', 'OUTSIDE')).status, 404);
+});
 
 integration('Audit repair: new saves reject duplicate identities and never overwrite an existing record', async () => {
   await fixture('EXISTING', { subject: 'Original', currentOfficeId: 'OTHER', originOfficeId: 'OTHER' });

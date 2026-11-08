@@ -37,6 +37,16 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-08] — Restore Office handoff monitoring and identity
+
+- **Type / state:** FIX / COMMITTED in the local commit containing this entry.
+- **Branch / revision:** `main`, starting at `0ee41d7`.
+- **Intended scope:** Keep the originating and sending Office able to monitor documents and completed outbound handoffs, including onward forwarding. Show the assigned office name under the signed-in user's name.
+- **Changes:** The dashboard keeps originated and previously sent documents in My Documents. Office Deliveries keeps the office's earlier sends and their receipt status visible. The transmission API retains completed outbound rows for Office reads and preserves the update scope. Document and attachment reads can find legacy sends by their recorded sending office. Office users can track documents in transit, with edits blocked during transit and receipt restricted to the destination. The shared sidebar uses the existing office directory and identifies loading or missing assignments.
+- **Validation:** 158 tests passed, including HTTP and PostgreSQL cases for sender read access, denied mutations, and legacy document/attachment access. Tests used a disposable loopback database that was stopped and removed afterward. An initial restricted run timed out on the local readiness test and skipped database cases. The complete isolated run passed both. The dashboard production build passed. An isolated Chrome run with synthetic users verified A-to-B-to-C forwarding and refresh, independent copy receipt, sender tracking, former-copy and unrelated-office exclusions, and the office label at desktop and mobile sizes. Legacy reads were verified by HTTP and unit tests. Production records and production browser sessions were outside the test scope.
+- **Data / configuration and recovery:** Uses existing routing history and transmission rows. No schema migration or live record/configuration change. Reverting the fix commit restores prior application behavior without a data restore.
+- **Publication / next action:** Local `main` commit only. Review the change locally before deciding on push or deployment. Existing unrelated work remains outside this commit.
+
 ## [2026-10-31] — Verify phone connectivity after mobile-data comparison
 
 - **Type / state:** AUDIT | DOCS / LOCAL; user subsequently reports localhost sending without delay; provider-message disappearance not explained.

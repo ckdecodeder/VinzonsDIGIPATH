@@ -635,6 +635,8 @@ body {
 .user-role {
   font-size: 0.7rem;
   color: var(--text-muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .notification-panel {

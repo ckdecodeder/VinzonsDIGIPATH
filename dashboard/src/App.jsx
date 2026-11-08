@@ -781,12 +781,13 @@ function App() {
     refreshAfterMutation(['documentTypes', 'logs']);
   };
 
-  const canSeeDocument = (doc) => isDocumentVisibleToUser(doc, currentUser, { role: currentRole });
-
   const canSeeTransmission = (transmission) => isTransmissionVisibleToUser(transmission, currentUser, { role: currentRole });
-
-  const visibleDocuments = sortNewest(documents.filter(canSeeDocument), ['createdAt', 'updatedAt', 'dateReceived']);
   const visibleTransmissions = sortNewest(transmissions.filter(canSeeTransmission), ['createdAt', 'updatedAt', 'receivedAt', 'transmissionDate']);
+  const sentDocumentIds = currentRole === 'office' ? new Set(visibleTransmissions
+    .filter((item) => item.fromOfficeId === currentUser.officeId)
+    .map((item) => item.documentId)) : undefined;
+  const canSeeDocument = (doc) => isDocumentVisibleToUser(doc, currentUser, { role: currentRole, sentDocumentIds });
+  const visibleDocuments = sortNewest(documents.filter(canSeeDocument), ['createdAt', 'updatedAt', 'dateReceived']);
   const visibleArchives = archives.filter((archive) => visibleDocuments.some((doc) => doc.id === archive.documentId));
   const visibleLogs = currentRole === 'admin' || currentRole === 'mayor'
     ? logs
@@ -1404,6 +1405,8 @@ function App() {
         currentPage={currentPage}
         currentRole={currentRole}
         currentUser={currentUser}
+        officeName={offices.find((office) => office.id === currentUser?.officeId)?.name}
+        officeDirectoryStatus={sectionStates.offices?.status}
         onNavigate={handleNavigate}
         onLogout={handleLogout}
         onOpenProfile={handleOpenProfile}

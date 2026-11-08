@@ -12,12 +12,19 @@ const getWorkflowStatus = (doc) => {
   return doc?.status || 'Received';
 };
 
-/**
- * Non-global users only see documents assigned to their office:
- * Current custody and all recipients of the latest delivery retain access.
- * Older copy recipients lose access when the document is sent onward.
- */
-export const isDocumentVisibleToUser = (doc, currentUser, { role } = {}) => {
+export const isOfficeDocumentSender = (doc, currentUser, hasOutboundTransmission = false) => (
+  currentUser?.role === 'Office'
+  && Boolean(currentUser.officeId)
+  && Boolean(doc && (
+    doc.originOfficeId === currentUser.officeId
+    || (doc.sendHistory || []).some((event) => event.fromOfficeId === currentUser.officeId)
+    || hasOutboundTransmission
+  ))
+);
+
+// Current recipients keep copy access for the latest delivery. Offices that sent
+// the document retain tracking access as it moves through later deliveries.
+export const isDocumentVisibleToUser = (doc, currentUser, { role, sentDocumentIds } = {}) => {
   if (!currentUser || !doc) return false;
   if (isGlobalViewer(currentUser, role)) return true;
 
@@ -28,6 +35,7 @@ export const isDocumentVisibleToUser = (doc, currentUser, { role } = {}) => {
     return true;
   }
 
+  if (isOfficeDocumentSender(doc, currentUser, sentDocumentIds?.has(doc.id))) return true;
   if ((doc.sendHistory || []).some((event) => event.recipientOfficeId === officeId)) return true;
   if (getWorkflowStatus(doc) === 'In Transit') {
     return doc.destinationOfficeId === officeId;
@@ -43,8 +51,7 @@ export const isTransmissionVisibleToUser = (transmission, currentUser, { role } 
   const officeId = currentUser.officeId;
   if (!officeId) return false;
 
-  // Destined to this office, or pending outbound from this office (status tracking only).
   if (transmission.toOfficeId === officeId) return true;
-  if (!transmission.receivedBy && transmission.fromOfficeId === officeId) return true;
-  return false;
+  return transmission.fromOfficeId === officeId
+    && (currentUser.role === 'Office' || !transmission.receivedBy);
 };

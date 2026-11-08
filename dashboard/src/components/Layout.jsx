@@ -71,6 +71,8 @@ const Layout = ({
   currentPage,
   currentRole,
   currentUser,
+  officeName,
+  officeDirectoryStatus,
   onNavigate,
   onLogout,
   onOpenProfile,
@@ -266,6 +268,15 @@ const Layout = ({
   const userName = currentUser ? `${currentUser.fname} ${currentUser.lname}` : 'User';
   const userInitials = currentUser ? `${currentUser.fname[0]}${currentUser.lname[0]}` : 'U';
   const userRole = currentUser ? currentUser.role : currentRole;
+  const isOfficeUser = userRole === 'Office';
+  let userSubtitle = userRole;
+  if (isOfficeUser) {
+    if (officeName) userSubtitle = officeName;
+    else if (!currentUser?.officeId) userSubtitle = 'No office assigned';
+    else if (!officeDirectoryStatus || officeDirectoryStatus === 'loading') userSubtitle = 'Loading office…';
+    else userSubtitle = 'Office unavailable';
+  }
+  const profileLabel = `Open profile settings for ${userName}${isOfficeUser ? `, ${userSubtitle}` : ''}`;
 
   const getNotificationIcon = (item) => {
     const text = `${item.status || ''} ${item.text || ''}`.toLowerCase();
@@ -356,12 +367,12 @@ const Layout = ({
                 setIsSidebarOpen(false);
               }}
               title="Profile settings"
-              aria-label={`Open profile settings for ${userName}`}
+              aria-label={profileLabel}
             >
               <div className="user-avatar" aria-hidden="true">{userInitials}</div>
               <div className="user-details">
                 <div className="user-name">{userName}</div>
-                <div className="user-role">{userRole}</div>
+                <div className="user-role">{userSubtitle}</div>
               </div>
             </button>
             <button

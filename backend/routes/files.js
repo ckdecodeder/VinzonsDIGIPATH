@@ -4,7 +4,7 @@ const path = require('node:path');
 const { Op, literal } = require('sequelize');
 const { protect, allowRoles } = require('../middleware/auth');
 const { asyncHandler } = require('../utils/helpers');
-const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
+const { getScopedDocumentReadQuery } = require('../utils/documentScope');
 const { scansRoot } = require('../config/storage');
 
 // Filename equality inside JSON, never substring matching or trusting a caller's document ID.
@@ -23,7 +23,7 @@ const createFileRouter = ({ Document, DocumentModel, root = scansRoot, authentic
     const filename = req.params.filename;
     if (!filename || path.basename(filename) !== filename || /[\\/\x00]/.test(filename) || !/\.(pdf|jpe?g|png|webp)$/i.test(filename)) return res.sendStatus(404);
     const models = DocumentModel ? { Document, DocumentModel } : (() => { const m = require('../models'); return { Document: m.Document, DocumentModel: m._sequelizeModels.DocumentModel }; })();
-    const scope = await getScopedDocumentQueryWithTransmissions(req);
+    const scope = getScopedDocumentReadQuery(req, models.DocumentModel);
     const owner = await models.DocumentModel.findOne({
       attributes: ['id'], where: { [Op.and]: [models.Document._buildWhere(scope), literal(fileOwnerPredicate(filename, value => models.DocumentModel.sequelize.escape(value)))] },
     });

@@ -4,6 +4,7 @@ const { Document, Transmission, Archive, DeviceEvent, Command, Notification, Off
 const { protect, allowRoles } = require('../middleware/auth');
 const {
   asyncHandler,
+  createHttpError,
   requireFields,
   createLogEntry,
   generateId,
@@ -18,7 +19,7 @@ const {
   getUserOfficeId,
 } = require('../utils/helpers');
 const { broadcastDataInvalidate } = require('../utils/realtime');
-const { getScopedDocumentQueryWithTransmissions } = require('../utils/documentScope');
+const { getScopedDocumentQueryWithTransmissions, getScopedDocumentReadQuery } = require('../utils/documentScope');
 const { persistAttachments } = require('../utils/attachments');
 const { validateSmsPreferences } = require('../utils/sms');
 const { parsePagination, contains, andFilters, documentSummaryAttributes } = require('../utils/listing');
@@ -169,6 +170,10 @@ const assertValidDocumentUpdate = (req, existingDoc, updates) => {
     const err = new Error('Archived documents are final. Restore or create a correction record instead of editing the archived document.');
     err.status = 403;
     throw err;
+  }
+
+  if (req.user?.role === 'Office' && existingDoc.status === 'In Transit') {
+    throw createHttpError('Office users can track documents in transit but cannot edit them until receipt', 403);
   }
 
   const comparable = (value) => value === undefined || value === null ? '' : value;
@@ -497,7 +502,7 @@ router.get('/', allRoles, asyncHandler(async (req, res) => {
     if (req.query[field] && req.query[field] !== 'All') filters[field] = String(req.query[field]);
   }
   if (req.query.search) filters.$or = ['subject', 'trackingNumber', 'senderName', 'originOfficeOther', 'destinationOfficeOther'].map((field) => ({ [field]: contains(req.query.search) }));
-  const query = andFilters(await getScopedDocumentQueryWithTransmissions(req), filters);
+  const query = andFilters(getScopedDocumentReadQuery(req, Document._Model), filters);
   const [items, total] = await Promise.all([
     Document.find(query).withAttributes(documentSummaryAttributes).sort({ createdAt: 1, dateReceived: 1, id: 1 }).skip(offset).limit(limit).lean(),
     Document.countDocuments(query),
@@ -506,7 +511,7 @@ router.get('/', allRoles, asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id', allRoles, asyncHandler(async (req, res) => {
-  const doc = await Document.findOne({ id: req.params.id, ...(await getScopedDocumentQueryWithTransmissions(req)) }).lean();
+  const doc = await Document.findOne({ id: req.params.id, ...getScopedDocumentReadQuery(req, Document._Model) }).lean();
   if (!doc) return res.status(404).json({ message: 'Document not found' });
   res.json(doc);
 }));

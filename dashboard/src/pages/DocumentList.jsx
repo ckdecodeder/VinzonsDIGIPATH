@@ -271,11 +271,20 @@ const DocumentList = ({
     || doc.destinationOfficeOther || (doc.destinationOfficeId ? getOfficeName(doc.destinationOfficeId) : '-');
   const renderDeliveryStatus = (doc) => {
     const recipients = getDeliveryRecipients(doc);
-    if (!recipients.length) return null;
+    const currentDeliveryIds = new Set(recipients.map((event) => event.transmissionId || event.id));
+    const earlierSends = currentUser?.role === 'Office' && currentUser.officeId
+      ? transmissions.filter((item) => item.documentId === doc.id
+        && item.fromOfficeId === currentUser.officeId && !currentDeliveryIds.has(item.id))
+      : [];
+    const deliveries = [
+      ...recipients.map((event) => ({ ...event, note: event.primary ? 'Custody destination' : '' })),
+      ...earlierSends.map((item) => ({ ...item, note: 'Sent by your office' })),
+    ];
+    if (!deliveries.length) return null;
     return <div className="document-detail-section document-deliveries-section">
       <h4><Send size={14} /> Office Deliveries</h4>
-      {recipients.map((event) => <div key={event.id} className="detail-pair">
-        <span>{getOfficeName(event.toOfficeId)}{event.primary && <small className="document-delivery-custody">Custody destination</small>}</span>
+      {deliveries.map((event) => <div key={event.id} className="detail-pair">
+        <span>{getOfficeName(event.toOfficeId)}{event.note && <small className="document-delivery-custody">{event.note}</small>}</span>
         <strong>{event.receivedBy ? <>
           Received
           {event.receivedAt && <time dateTime={event.receivedAt}>{formatDateTime(event.receivedAt)}</time>}
@@ -953,7 +962,8 @@ const DocumentList = ({
   const canCreate = currentRole === 'admin' || currentRole === 'receptionist' || isOfficeUser;
   const canEdit = currentRole === 'admin' || currentRole === 'receptionist';
   const canManageAttachments = (doc) => canEdit || (
-    isOfficeUser && doc?.currentOfficeId === currentUser?.officeId
+    isOfficeUser && currentUser?.officeId && doc?.currentOfficeId === currentUser.officeId
+    && getWorkflowStatus(doc) !== 'In Transit'
   );
   const canRoute = isApprovalUser || isOfficeUser;
   const canVerify = isApprovalUser;
@@ -1468,10 +1478,12 @@ const DocumentList = ({
                     <div className="detail-pair"><span>Intake Review</span><strong>{doc.intakeStatus || 'Approved'}</strong></div>
                     {workflowExplanation && <div className="detail-pair"><span>Workflow Note</span><strong>{workflowExplanation}</strong></div>}
                     {doc.rejectionReason && <div className="detail-pair"><span>Rejection Reason</span><strong>{doc.rejectionReason}</strong></div>}
-                    {isOfficeReadOnlyTracking(doc, currentUser) && (
+                    {isOfficeReadOnlyTracking(doc, currentUser, transmissions.some((item) => (
+                      item.documentId === doc.id && item.fromOfficeId === currentUser?.officeId
+                    ))) && (
                       <div className="detail-pair">
                         <span>Custody</span>
-                        <strong className="documents-custody-badge">Outgoing / In Transit</strong>
+                        <strong className="documents-custody-badge">Read-only tracking</strong>
                       </div>
                     )}
                     <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc, true)}</strong></div>

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { getScopedDocumentQuery } = require('../utils/documentScope');
+const { getScopedDocumentQuery, getScopedTransmissionQuery } = require('../utils/documentScope');
 
 test('office visibility includes originated and previously sent documents', () => {
   const query = getScopedDocumentQuery({ user: { role: 'Office', officeId: 'OFF-008' } });
@@ -27,4 +27,20 @@ test('historical receptionist tracking is scoped to the original intake office',
 
   const otherOfficeQuery = getScopedDocumentQuery({ user: { role: 'Receptionist', officeId: 'OFF-009' } });
   assert(otherOfficeQuery.$and[1].$or.some((clause) => clause.intakeOfficeId === 'OFF-009'));
+});
+
+test('completed outbound transmissions are visible for Office tracking only', () => {
+  const officeId = 'OFF-008';
+  const office = { user: { role: 'Office', officeId } };
+  const receptionist = { user: { role: 'Receptionist', officeId } };
+  const pendingScope = {
+    $or: [{ toOfficeId: officeId }, { fromOfficeId: officeId, receivedBy: { $in: [null, ''] } }],
+  };
+
+  assert.deepEqual(getScopedTransmissionQuery(office), {
+    $or: [{ toOfficeId: officeId }, { fromOfficeId: officeId }],
+  });
+  assert.deepEqual(getScopedTransmissionQuery(office, { forUpdate: true }), pendingScope);
+  assert.deepEqual(getScopedTransmissionQuery(receptionist), pendingScope);
+  assert.deepEqual(getScopedTransmissionQuery({ user: { role: 'Office' } }), { id: '__no_office__' });
 });

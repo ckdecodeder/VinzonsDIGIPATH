@@ -47,7 +47,7 @@ export function createCollectionLoader(loaders, { ttlMs = 30000, stableKeys = []
 }
 
 export function sectionsForPage(page, role) {
-  const shared = ['notifications'];
+  const shared = role === 'Office' ? ['notifications', 'offices'] : ['notifications'];
   const documents = ['documents', 'transmissions', 'offices', 'documentTypes', 'users'];
   const pages = {
     dashboard: [...documents, 'archives', ...(role === 'Receptionist' ? ['device'] : [])],

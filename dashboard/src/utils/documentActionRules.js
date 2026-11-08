@@ -1,3 +1,5 @@
+import { isOfficeDocumentSender } from './documentScope.js';
+
 const completedStatuses = ['Signed', 'Acknowledged', 'Archived'];
 const approvalRoles = ['Admin', 'Mayor'];
 
@@ -14,10 +16,9 @@ const hasApprovalCustody = (doc, user) => (
   && (doc?.intakeStatus || 'Approved') === 'Approved'
 );
 
-export const isOfficeReadOnlyTracking = (doc, user) => (
-  user?.role === 'Office'
-  && doc?.originOfficeId === user.officeId
-  && doc?.currentOfficeId !== user.officeId
+export const isOfficeReadOnlyTracking = (doc, user, hasOutboundTransmission) => (
+  isOfficeDocumentSender(doc, user, hasOutboundTransmission)
+  && (doc.currentOfficeId !== user.officeId || statusOf(doc) === 'In Transit')
 );
 
 export const canTakeDocumentAction = (doc, user) => (

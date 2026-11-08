@@ -170,7 +170,7 @@ router.post('/', allRoles, asyncHandler(async (req, res) => {
 }));
 
 router.put('/:id', allRoles, asyncHandler(async (req, res) => {
-  const existingTrans = await Transmission.findOne({ id: req.params.id, ...getScopedTransmissionQuery(req) });
+  const existingTrans = await Transmission.findOne({ id: req.params.id, ...getScopedTransmissionQuery(req, { forUpdate: true }) });
   if (!existingTrans) return res.status(404).json({ message: 'Transmission not found' });
 
   const isReceiveAction = Boolean(req.body.receivedBy) || req.body.confirmReceipt === true;
