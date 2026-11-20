@@ -1,3 +1,4 @@
+import { matchesQueue } from '../utils/documentQueue';
 import React from "react";
 import {
   FileText,
@@ -19,17 +20,10 @@ import {
 import { compareNewest } from "../utils/sorting";
 import PageShell from "../components/PageShell";
 
-const ACTION_STATUSES = new Set([
-  "Received",
-  "In Transit",
-  "For Signing",
-  "For Filing",
-]);
-
 const STATUS_ACTION_HINT = {
   Received: "Process or route",
-  "In Transit": "Acknowledge receipt",
-  "For Signing": "Ready for signature",
+  "In Transit": "Receive document",
+  "For Signing": "Mark as signed",
   "For Filing": "Ready for filing",
 };
 
@@ -72,7 +66,7 @@ const AdminDashboard = ({
   ).length;
   const archived = archives.length;
   const urgentCount = documents.filter(
-    (d) => d.priorityLevel === "urgent" && getWorkflowStatus(d) !== "Archived",
+    (d) => matchesQueue(d, 'Urgent active'),
   ).length;
 
   const statCards = [
@@ -81,7 +75,6 @@ const AdminDashboard = ({
       value: dataStates.documents?.status === 'ready' ? totalDocs : '—',
       icon: <FileText size={22} />,
       color: "blue",
-      trend: "+12%",
       status: "All",
     },
     {
@@ -89,7 +82,6 @@ const AdminDashboard = ({
       value: dataStates.documents?.status === 'ready' ? urgentCount : '—',
       icon: <Flag size={22} />,
       color: "red",
-      trend: "Active",
       page: "documents",
     },
     {
@@ -105,7 +97,6 @@ const AdminDashboard = ({
       value: dataStates.archives?.status === 'ready' ? archived : '—',
       icon: <Archive size={22} />,
       color: "green",
-      trend: "All time",
       page: "archives",
     },
   ];
@@ -137,16 +128,8 @@ const AdminDashboard = ({
     "For Filing": 3,
   };
 
-  const needsImmediateAction = (doc) => {
-    const status = getWorkflowStatus(doc);
-    if (status === "Archived") return false;
-    if (doc.intakeStatus === "Pending Review" || doc.intakeStatus === "Rejected") return true;
-    if (ACTION_STATUSES.has(status)) return true;
-    return doc.priorityLevel === "urgent";
-  };
-
-  const attentionDocuments = [...documents]
-    .filter(needsImmediateAction)
+  const attentionDocuments = documents
+    .filter(doc => matchesQueue(doc, 'Needs your action', currentUser, transmissions))
     .sort((a, b) => {
       const pendingDiff =
         Number(b.intakeStatus === "Pending Review") -
@@ -164,11 +147,10 @@ const AdminDashboard = ({
         (actionStatusRank[getWorkflowStatus(b)] ?? 9);
       if (statusDiff !== 0) return statusDiff;
       return compareNewest(a, b, ["createdAt", "updatedAt", "dateReceived"]);
-    })
-    .slice(0, 12);
+    });
 
   const newlyReceivedCount = documents.filter(
-    (d) => getWorkflowStatus(d) === "Received" && d.intakeStatus !== "Rejected",
+    (d) => matchesQueue(d, 'Newly received'),
   ).length;
   const pendingReviewCount = documents.filter(
     (d) => d.intakeStatus === "Pending Review",
@@ -280,45 +262,13 @@ const AdminDashboard = ({
         </div>
       }
     >
-      {/* Stats */}
-      <div className="stats-grid">
-        {statCards.map((stat, i) => {
-          const openStat = () =>
-            stat.status
-              ? openStatusInterface(stat.status)
-              : onNavigate(stat.page);
-          return (
-            <div
-              key={i}
-              className={`stat-card ${stat.color} clickable-row`}
-              role="button"
-              tabIndex={0}
-              onClick={openStat}
-              onKeyDown={(event) => handleKeyboardOpen(event, openStat)}
-              title={`Open ${stat.label}`}
-            >
-              <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
-              <div className="stat-info">
-                <p className="stat-label">{stat.label}</p>
-                <p className="stat-value">{stat.value}</p>
-                {stat.trend && (
-                  <p className="stat-trend up">
-                    <TrendingUp size={12} /> {stat.trend}
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
       {/* Action queue (primary) + compact status / activity */}
       <div className="dashboard-priority-grid">
         <div className="card dashboard-attention-card">
           <div className="card-header dashboard-attention-header">
             <div>
               <div className="attention-title-row">
-                <h3 className="card-title">Needs Immediate Attention</h3>
+                <h3 className="card-title">Needs your action</h3>
                 {actionQueueCount > 0 && (
                   <span className="attention-count-pill">{actionQueueCount}</span>
                 )}
@@ -330,7 +280,7 @@ const AdminDashboard = ({
                 <button
                   type="button"
                   className="attention-chip attention-chip--received"
-                  onClick={() => openStatusInterface("Received")}
+                  onClick={() => openStatusInterface("Newly received")}
                 >
                   <Inbox size={13} />
                   {newlyReceivedCount} newly received
@@ -338,7 +288,7 @@ const AdminDashboard = ({
                 <button
                   type="button"
                   className="attention-chip attention-chip--review"
-                  onClick={() => openStatusInterface("All")}
+                  onClick={() => openStatusInterface("Pending review")}
                 >
                   <AlertTriangle size={13} />
                   {pendingReviewCount} pending review
@@ -346,7 +296,7 @@ const AdminDashboard = ({
                 <button
                   type="button"
                   className="attention-chip attention-chip--urgent"
-                  onClick={() => onNavigate("documents")}
+                  onClick={() => openStatusInterface("Urgent active")}
                 >
                   <Flag size={13} />
                   {urgentCount} urgent
@@ -355,7 +305,7 @@ const AdminDashboard = ({
             </div>
             <button
               className="btn btn-ghost btn-sm"
-              onClick={() => openStatusInterface("All")}
+              onClick={() => openStatusInterface("Needs your action")}
             >
               View all <ArrowRight size={14} />
             </button>
@@ -369,7 +319,7 @@ const AdminDashboard = ({
                 <span>Newly received documents that need action will appear here.</span>
               </div>
             ) : (
-              attentionDocuments.map((doc) => {
+              attentionDocuments.slice(0, 12).map((doc) => {
                 const status = getWorkflowStatus(doc);
                 const pInfo = getPriorityInfo(doc.priorityLevel);
                 const isNewReceived =
@@ -527,6 +477,38 @@ const AdminDashboard = ({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Stats */}
+      <div className="stats-grid">
+        {statCards.map((stat, i) => {
+          const openStat = () =>
+            stat.status
+              ? openStatusInterface(stat.status)
+              : onNavigate(stat.page);
+          return (
+            <div
+              key={i}
+              className={`stat-card ${stat.color} clickable-row`}
+              role="button"
+              tabIndex={0}
+              onClick={openStat}
+              onKeyDown={(event) => handleKeyboardOpen(event, openStat)}
+              title={`Open ${stat.label}`}
+            >
+              <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
+              <div className="stat-info">
+                <p className="stat-label">{stat.label}</p>
+                <p className="stat-value">{stat.value}</p>
+                {stat.trend && (
+                  <p className="stat-trend up">
+                    <TrendingUp size={12} /> {stat.trend}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Recent Documents Table */}

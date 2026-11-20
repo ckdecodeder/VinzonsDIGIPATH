@@ -26,6 +26,7 @@ import {
 } from "../utils/attachmentDownload";
 
 const ArchiveList = ({
+  initialDocumentId = "",
   archives,
   documents,
   offices = defaultOffices,
@@ -39,7 +40,7 @@ const ArchiveList = ({
 }) => {
   const [search, setSearch] = useState("");
   const [filterDate, setFilterDate] = useState("");
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(Boolean(initialDocumentId));
   const [detailArchive, setDetailArchive] = useState(null);
   const [detailDocument, setDetailDocument] = useState(null);
   const [detailError, setDetailError] = useState('');
@@ -58,9 +59,24 @@ const ArchiveList = ({
   const [previewFile, setPreviewFile] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [formData, setFormData] = useState({
-    documentId: "",
+    documentId: initialDocumentId,
     date: new Date().toISOString().split("T")[0],
   });
+
+  const [reviewDoc, setReviewDoc] = useState(null);
+  const [archiveError, setArchiveError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    setReviewDoc(null); setArchiveError(''); setConfirmed(false);
+    if (!showForm || !formData.documentId) return;
+    const controller = new AbortController();
+    documentService.getById(formData.documentId, { signal: controller.signal })
+      .then(doc => { if (!controller.signal.aborted) setReviewDoc(doc); })
+      .catch(error => { if (!controller.signal.aborted) setArchiveError(error.message); });
+    return () => controller.abort();
+  }, [showForm, formData.documentId, retry]);
 
   const getUserFullName = (userId) => {
     const user = users.find((u) => u.id === userId);
@@ -258,14 +274,20 @@ const ArchiveList = ({
     setPage(Math.max(1, Math.min(totalPages, newPage)));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async e => {
     e.preventDefault();
-    onAdd({
-      ...formData,
-    });
-    setShowForm(false);
+    if (saving || !confirmed || reviewDoc?.id !== formData.documentId) return;
+    setSaving(true); setArchiveError('');
+    try {
+      await onAdd(formData);
+      setShowForm(false);
+      setFormData(previous => ({ ...previous, documentId: '' }));
+    } catch (error) {
+      setArchiveError(error.message || 'Could not archive this document. Review the attachment and try again.');
+    } finally {
+      setSaving(false);
+    }
   };
-
   const archivableDocs = documents.filter(
     (d) =>
       d.status === 'Completed' && Boolean(d.completedAt) && Boolean(d.attachmentCount || d.scannedImageUrl || d.scannedFiles?.some(file => file?.url || file?.dataUrl)) &&
@@ -631,22 +653,22 @@ const ArchiveList = ({
           );
         })()}
 
-      {showForm && (
-        <ModalOverlay onClose={() => setShowForm(false)}>
+      {showForm && !previewFile && (
+        <ModalOverlay onClose={() => !saving && setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Archive a Document</h2>
-              <button className="btn-icon" onClick={() => setShowForm(false)}>
+              <button className="btn-icon" onClick={() => !saving && setShowForm(false)}>
                 <X size={18} />
               </button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label">Document to Archive</label>
+                  <label htmlFor="archive-document" className="form-label">Document to Archive</label>
                   <select
                     className="form-select"
-                    value={formData.documentId}
+                    id="archive-document" disabled={saving} value={formData.documentId}
                     onChange={(e) =>
                       setFormData({ ...formData, documentId: e.target.value })
                     }
@@ -664,6 +686,14 @@ const ArchiveList = ({
                     listed.
                   </p>
                 </div>
+                {formData.documentId && <section className="archive-review">
+                  <h3>Final copy</h3>
+                  {reviewDoc?.id === formData.documentId ? <>
+                    {getDocumentFiles(reviewDoc).map(file => <button key={file.id || file.name} type="button" className="attachment-link" disabled={saving} onClick={() => openPreview(file, reviewDoc)}><Eye size={16} />{file.name}</button>)}
+                    {getDocumentFiles(reviewDoc).length ? <label><input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirm the final copy is attached.</label> : <p>Attach the final copy in Documents before archiving.</p>}
+                  </> : !archiveError && <p role="status">Loading attachments…</p>}
+                  {archiveError && <div role="alert">{archiveError} <button type="button" className="btn btn-secondary" onClick={() => setRetry(n => n + 1)}>Reload attachments</button></div>}
+                </section>}
                 <div className="form-grid">
                   <div className="form-group">
                     <label className="form-label">Archived By</label>
@@ -702,12 +732,12 @@ const ArchiveList = ({
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setShowForm(false)}
+                  onClick={() => !saving && setShowForm(false)}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  Archive Document
+                <button type="submit" disabled={saving || !confirmed || !reviewDoc || reviewDoc.id !== formData.documentId} className="btn btn-primary">
+                  {saving ? "Archiving…" : "Archive document"}
                 </button>
               </div>
             </form>
@@ -718,7 +748,7 @@ const ArchiveList = ({
       {previewFile && (
         <ScannedPreviewModal
           file={previewFile}
-          canEdit={canEditRotation}
+          canEdit={!showForm && canEditRotation}
           onClose={closePreview}
           onSaveRotated={handleSaveRotatedAttachment}
           onNotify={onNotify}

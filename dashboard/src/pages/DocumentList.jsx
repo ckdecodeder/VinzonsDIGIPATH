@@ -1,3 +1,4 @@
+import { matchesQueue, queueFilters } from '../utils/documentQueue';
 import { createSubmissionGate } from '../utils/submissionGate';
 import React, { useEffect, useRef, useState } from 'react';
 import { documentService, senderNotificationService } from '../api/documentService';
@@ -16,7 +17,6 @@ import {
   offices as defaultOffices,
   users as defaultUsers,
   priorityLevels as defaultPriorityLevels,
-  getPriorityInfo,
 } from '../data/mockData';
 import { compareOldest } from '../utils/sorting';
 import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
@@ -211,7 +211,7 @@ const DocumentList = ({
   const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
   const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
   const transmittableStatuses = [...registrationStatuses, ...finalWorkflowStatuses];
-  const statuses = ['All', 'Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Completed', 'Archived', 'Returned to Sender'];
+  const statuses = ['All', ...queueFilters, 'In Transit', 'Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Completed', 'Archived', 'Returned to Sender'];
   const directions = currentRole === 'receptionist'
     ? ['All', 'Incoming']
     : currentRole === 'office'
@@ -234,7 +234,7 @@ const DocumentList = ({
       return { label: 'Returned to Sender', className: 'handoff-revision-badge' };
     }
     if (intake === 'Rejected') {
-      return { label: 'Rejected', className: 'handoff-revision-badge' };
+      return { label: 'Correction required', className: 'handoff-revision-badge' };
     }
     if (doc.status === 'Completed' || doc.status === 'Archived') {
       return { label: doc.status, className: `status-${getStatusClass(doc)}` };
@@ -436,7 +436,7 @@ const DocumentList = ({
         getDocumentTypeLabel(d).toLowerCase().includes(term) ||
         getOfficeName(d.originOfficeId).toLowerCase().includes(term) ||
         getCurrentLocation(d).toLowerCase().includes(term);
-      const matchStatus = filterStatus === 'All' || getWorkflowStatus(d) === filterStatus;
+      const matchStatus = matchesQueue(d, filterStatus, currentUser, transmissions);
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
       const priority = (d.priorityLevel || 'normal').toLowerCase();
       const matchPriority = filterPriority === 'All' || priority === filterPriority.toLowerCase();
@@ -445,6 +445,10 @@ const DocumentList = ({
       return matchSearch && matchStatus && matchDir && matchPriority && matchDate;
     })
     .sort((a, b) => {
+      if (sortBy === 'updatedAt') {
+        const diff = compareOldest(a, b, ['updatedAt', 'createdAt', 'dateReceived']);
+        return sortAsc ? diff : -diff;
+      }
       // FIFO by default: oldest registration first
       if (sortBy === 'dateReceived' || sortBy === 'createdAt') {
         const fifo = compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']);
@@ -1126,20 +1130,12 @@ const DocumentList = ({
       >
       <section className="document-panel">
         <div className="table-container documents-table-container" role="region" aria-label="Documents table" tabIndex={0}>
-          <table className="documents-table">
+          <table className="documents-table compact-documents">
           <thead>
             <tr>
-              <th className="documents-col-tracking">Tracking #</th>
-              <th className="documents-col-subject">Subject</th>
-              <th className="documents-col-sender">Sender</th>
-              <th className="documents-col-priority">Priority</th>
-              <th className="documents-col-type">Type</th>
-              <th className="documents-col-location">Location</th>
-              <th className="documents-col-direction">Direction</th>
-              <th className="documents-col-status-header">Status</th>
-              <th className="documents-col-files">Files</th>
-              <th className="documents-col-date" style={{ cursor: 'pointer' }} onClick={() => handleSort('dateReceived')}>
-                Date <SortIcon field="dateReceived" />
+              <th>Document</th><th>Holding office</th><th>Status</th>
+              <th aria-sort={sortBy === 'updatedAt' ? (sortAsc ? 'ascending' : 'descending') : 'none'}>
+                <button type="button" className="list-sort" onClick={() => handleSort('updatedAt')}>Last updated <SortIcon field="updatedAt" /></button>
               </th>
               <th className="documents-col-actions">Actions</th>
             </tr>
@@ -1158,43 +1154,11 @@ const DocumentList = ({
                     aria-label="Open document details"
                     onClick={() => setDetailDoc(doc)}
                   >
-                    <td className="documents-col-tracking" title={doc.trackingNumber}>
-                      <span className="td-mono documents-tracking-code">{doc.trackingNumber}</span>
-                    </td>
-                    <td className="td-primary documents-col-subject" title={doc.subject}>{doc.subject}</td>
-                    <td className="documents-col-sender" title={doc.senderName || '-'}>
-                      {doc.senderName || '-'}
-                    </td>
-                    <td className="documents-col-priority">
-                      {(() => {
-                        const info = getPriorityInfo((doc.priorityLevel || 'normal').toLowerCase());
-                        return <span className="documents-priority-badge" style={{ color: info.color, background: info.bg }}>{info.label}</span>;
-                      })()}
-                    </td>
-                    <td className="documents-col-type" title={getDocumentTypeLabel(doc)}>{getDocumentTypeLabel(doc)}</td>
-                    <td className="documents-col-location" title={getCurrentLocation(doc)}>
-                      <span className="documents-location-label">
-                        <MapPin size={11} />
-                        <span className="documents-location-text">{getCurrentLocation(doc)}</span>
-                      </span>
-                    </td>
-                    <td className="documents-col-direction">
-                      <span className={`direction-badge direction-${doc.documentDirection.toLowerCase()}`}>
-                        {doc.documentDirection === 'Incoming' ? <Inbox size={11} /> : <Send size={11} />}
-                        {doc.documentDirection}
-                      </span>
-                    </td>
-                    <td className="documents-col-status-cell">
-                      <span className={`status-badge ${tableStatus.className}`}>
-                        {tableStatus.label}
-                      </span>
-                    </td>
-                    <td className="documents-col-files">
-                      <span className={`documents-files-count ${(doc.attachmentCount ?? files.length) ? 'has-files' : ''}`}>
-                        <Paperclip size={12} /> {doc.attachmentCount ?? files.length}
-                      </span>
-                    </td>
-                    <td className="documents-col-date">{doc.dateReceived}</td>
+                    <td data-label="Document"><strong>{doc.subject}</strong><small className="doc-reference">{doc.trackingNumber}</small>
+                      {doc.priorityLevel === 'urgent' && <span className="status-badge handoff-revision-badge">Urgent</span>}</td>
+                    <td data-label="Holding office">{doc.currentOfficeId ? getOfficeName(doc.currentOfficeId) : 'Unrecorded'}</td>
+                    <td data-label="Status"><span className={`status-badge ${tableStatus.className}`}>{tableStatus.label}</span></td>
+                    <td data-label="Last updated">{formatDateTime(doc.updatedAt || doc.createdAt || doc.dateReceived)}</td>
                     <td className="documents-col-actions">
                       <div className="documents-actions-wrap">
                         <button className="btn-icon" title="Open details" onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
@@ -1222,7 +1186,7 @@ const DocumentList = ({
 
                   {isExpanded && (
                     <tr>
-                      <td colSpan="11" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)' }}>
+                      <td colSpan="5" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)' }}>
                         {renderHandoffSummary(doc)}
 
                         {/* Phase 4 — Route Progress Stepper */}
@@ -1371,7 +1335,7 @@ const DocumentList = ({
               );
             }) : (
               <tr>
-              <td colSpan="11">
+              <td colSpan="5">
                   <div className="empty-state">
                     <div className="empty-state-icon"><FileText size={24} /></div>
                     <h3>No documents found</h3>

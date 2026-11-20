@@ -88,7 +88,7 @@ const ReceptionistDashboard = ({
   const pendingDocuments = [...incomingDocuments]
     .filter(doc => !finishedStatuses.includes(getWorkflowStatus(doc)) && doc.intakeStatus !== 'Returned to Sender')
     .sort((a, b) => compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']));
-  const rejectedDocs = incomingDocuments.filter(d => d.intakeStatus === 'Rejected');
+  const rejectedDocs = incomingDocuments.filter(d => ['Rejected', 'Returned to Sender'].includes(d.intakeStatus) && d.currentOfficeId === currentUser?.officeId);
 
   const statCards = [
     {
@@ -257,6 +257,10 @@ const ReceptionistDashboard = ({
         </div>
       </div>
 
+      {rejectedDocs.length > 0 && <section className="card archive-review">
+        <h3>Corrections awaiting Reception ({rejectedDocs.length})</h3>
+        {rejectedDocs.map(doc => <button className="attachment-link" key={doc.id} onClick={() => openDocumentInterface(doc)}>{doc.trackingNumber} · {doc.subject}</button>)}
+      </section>}
       <div className="receptionist-hero">
         <button
           type="button"

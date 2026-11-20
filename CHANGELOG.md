@@ -37,6 +37,13 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-20] - Dashboard queues, responsive documents and archive feedback
+
+- FEATURE / LOCAL on main at 833031c. Planned role queues, compact document list, light/dark palette and recoverable archive review.
+- Implemented dashboard shortcuts with matching document filters, a Reception correction queue, a five-column document list with narrow-screen stacking and keyboard date sorting, and shared status/button colors. Both archiving entry points now open the final-copy review form, which retains the selection after a save failure.
+- Validation: 52 dashboard tests passed, production build passed, four affected page components rendered with synthetic records and focused queue predicate checks passed. Browser interaction, visual fit and live archive writes remain unverified.
+- No backend, schema, or live data changes. Uncommitted and undeployed. Reverse this batch's dashboard and changelog changes to roll back. Next: owner review on the 14-inch laptop in both themes.
+
 ## [2026-11-20] - Clarify the sender and receiving office document views
 
 - **Scope and state:** FEATURE / LOCAL on main at b534142. Planned and implemented the first UI pass for sender and recipient document details.

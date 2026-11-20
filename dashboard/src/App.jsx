@@ -144,6 +144,7 @@ function App() {
   const [actionToast, setActionToast] = useState(null);
   const [documentFocusId, setDocumentFocusId] = useState('');
   const [documentFocusKey, setDocumentFocusKey] = useState(0);
+  const [archiveFocus, setArchiveFocus] = useState('');
   const [documentStatusFocus, setDocumentStatusFocus] = useState('All');
   const [previewDocument, setPreviewDocument] = useState(null);
   const [dismissedNotifications, setDismissedNotifications] = useState(() => {
@@ -393,6 +394,7 @@ function App() {
   };
 
   const handleNavigate = (page) => {
+    setArchiveFocus('');
     const nextPage = resolvePageForRole(page, currentRole);
     setPreviewDocument(null);
     if (nextPage !== 'documents') {
@@ -552,7 +554,6 @@ function App() {
   };
 
   const handleAddArchive = async (archive) => {
-    if (!window.confirm('Confirm that the attached files include the final document copy and archive this record?')) return;
     const savedArchive = await runMutation(() => archiveService.create(archive));
     upsertArchive(savedArchive);
     showActionToast('created', 'Archived successfully');
@@ -599,14 +600,9 @@ function App() {
     return savedDoc;
   };
 
-  const handleArchiveDocument = async (documentId) => {
-    const doc = documents.find((item) => item.id === documentId);
-    if (!doc) return;
-
-    await handleAddArchive({
-      documentId,
-      date: new Date().toISOString().split('T')[0],
-    });
+  const handleArchiveDocument = documentId => {
+    setArchiveFocus(documentId);
+    setCurrentPage('archives');
   };
 
   const handleResendSenderNotification = async (notificationId) => {
@@ -1066,6 +1062,7 @@ function App() {
           case 'archives':
             return (
               <ArchiveList
+                initialDocumentId={archiveFocus}
                 archives={visibleArchives}
                 documents={visibleDocuments}
                 offices={offices}
@@ -1206,6 +1203,7 @@ function App() {
           case 'archives':
             return (
               <ArchiveList
+                initialDocumentId={archiveFocus}
                 archives={visibleArchives}
                 documents={visibleDocuments}
                 offices={offices}
