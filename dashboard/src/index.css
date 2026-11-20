@@ -53,6 +53,7 @@
   --sidebar-width: 280px;
   --topbar-height: 0px;
   --app-topbar-height: 7.5rem;
+  --header-content-gap: clamp(1rem, 2vw, 1.25rem);
   --notification-dock-offset: calc(1.7rem + 46px + 0.75rem);
 
   --content-bg: linear-gradient(135deg, #f8fbfd 0%, #eef6f8 100%);
@@ -990,7 +991,7 @@ body {
 
 .page-body,
 .page-scroll-area {
-  padding: 1.25rem 2rem 2rem;
+  padding: var(--header-content-gap) 2rem 2rem;
   min-width: 0;
 }
 
@@ -1029,7 +1030,7 @@ body {
 }
 
 .page-toolbar-zone {
-  padding: 0 2rem 1.5rem;
+  padding: var(--header-content-gap) 2rem 1.5rem;
   background-color: var(--page-top-bg);
 }
 
@@ -8048,12 +8049,12 @@ body.modal-open .notification-dock {
   }
 
   .page-toolbar-zone {
-    padding: 0 1rem 1.15rem;
+    padding: var(--header-content-gap) 1rem 1.15rem;
   }
 
   .page-body,
   .page-scroll-area {
-    padding: 0.85rem 1rem 1rem;
+    padding: var(--header-content-gap) 1rem 1rem;
   }
 
   .page-toolbar-row .filter-dropdown-search {
@@ -8100,7 +8101,7 @@ body.modal-open .notification-dock {
   min-height: 0;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
-  gap: 0.7rem;
+  row-gap: var(--header-content-gap);
   overflow: hidden;
   padding: 0 2rem 1rem;
 }
@@ -8153,7 +8154,6 @@ body.modal-open .notification-dock {
   grid-template-rows: auto auto;
   gap: 0.7rem;
   margin-bottom: 0;
-  margin-top: 0.75rem;
 }
 
 .receptionist-scan-cta {

@@ -37,6 +37,11 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-21] - Give dashboard content clearance below the header divider
+
+- FIX / LOCAL on main at 5f2f655. Corrected the zero top padding on shared filter toolbars at desktop and mobile widths. Applied the same responsive clearance to page content and Reception's separate grid in both themes. Removed Reception's redundant hero margin.
+- Verified the shared layout selectors, all 52 dashboard tests and the production build. Headless Chrome did not launch for pixel measurement, so visual verification remains open. Uncommitted and undeployed. Revert the spacing edits in dashboard/src/index.css to roll back.
+
 ## [2026-11-20] - Dashboard queues, responsive documents and archive feedback
 
 - FEATURE / LOCAL on main at 833031c. Planned role queues, compact document list, light/dark palette and recoverable archive review.
