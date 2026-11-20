@@ -552,6 +552,7 @@ function App() {
   };
 
   const handleAddArchive = async (archive) => {
+    if (!window.confirm('Confirm that the attached files include the final document copy and archive this record?')) return;
     const savedArchive = await runMutation(() => archiveService.create(archive));
     upsertArchive(savedArchive);
     showActionToast('created', 'Archived successfully');

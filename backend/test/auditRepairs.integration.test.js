@@ -176,14 +176,14 @@ integration('Audit repair: failed attachment saves retain the old file and its r
   assert.equal((await raw.DocumentModel.findByPk('FILES')).scannedFiles[0].id, 'OLD');
 });
 integration('Audit repair: archive creation is atomic and simultaneous attempts produce one archive', async () => {
-  await fixture('ARCHIVE', { status: 'Signed' });
+  await fixture('ARCHIVE', { status: 'Completed', completedAt: new Date().toISOString(), scannedImageUrl: png });
   const results = await Promise.all([request('/archives', 'POST', { documentId: 'ARCHIVE' }), request('/archives', 'POST', { documentId: 'ARCHIVE' })]);
   assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
   assert.equal(await raw.ArchiveModel.count({ where: { documentId: 'ARCHIVE' } }), 1);
   const arc = await raw.ArchiveModel.findOne({ where: { documentId: 'ARCHIVE' } });
   assert.equal((await request('/archives/' + arc.id, 'PUT', { documentId: 'OWN', statusBeforeArchive: 'Signed' })).status, 400);
   assert.equal((await request('/archives/' + arc.id, 'DELETE')).status, 200);
-  assert.equal((await raw.DocumentModel.findByPk('ARCHIVE')).status, 'Signed');
+  assert.equal((await raw.DocumentModel.findByPk('ARCHIVE')).status, 'Completed');
   assert.equal((await raw.DocumentModel.findByPk('OWN')).status, 'Received');
 });
 integration('Audit repair: signing requires current custody in both action and generic update routes', async () => {
@@ -204,12 +204,12 @@ integration('Audit repair: Office log pages and totals exclude unrelated activit
   assert.equal(response.status, 200, response.text); assert.equal(response.body.total, 1); assert.equal(response.body.items[0].id, 'LOG-OWN');
 });
 integration('Audit repair: failed archive or restore saves roll back both linked records', async () => {
-  await fixture('ARC-FAIL', { status: 'Signed' });
+  await fixture('ARC-FAIL', { status: 'Completed', completedAt: new Date().toISOString(), scannedImageUrl: png });
   failSaveTarget = 'ARC-FAIL'; failSave = true;
   try {
     assert.equal((await request('/archives', 'POST', { documentId: 'ARC-FAIL' })).status, 500);
     assert.equal(await raw.ArchiveModel.count({ where: { documentId: 'ARC-FAIL' } }), 0);
-    assert.equal((await raw.DocumentModel.findByPk('ARC-FAIL')).status, 'Signed');
+    assert.equal((await raw.DocumentModel.findByPk('ARC-FAIL')).status, 'Completed');
     failSave = false;
     const created = await request('/archives', 'POST', { documentId: 'ARC-FAIL' });
     assert.equal(created.status, 200, created.text);
@@ -231,7 +231,7 @@ integration('Audit repair: concurrent metadata edits reject stale state under th
   } finally { raw.DocumentModel.removeHook('afterFind', 'editBarrier'); }
 });
 integration('Audit repair: routing and archiving cannot leave an archived document with a pending delivery', async () => {
-  await fixture('FLOW-RACE', { status: 'Signed' });
+  await fixture('FLOW-RACE', { status: 'Completed', completedAt: new Date().toISOString(), scannedImageUrl: png });
   const result = await Promise.all([request('/archives', 'POST', { documentId: 'FLOW-RACE' }), request('/documents/FLOW-RACE/send', 'POST', { toOfficeIds: ['OTHER'] })]);
   assert.equal(result.filter(r => r.status === 200).length, 1, JSON.stringify(result));
   assert(result.some(r => [400, 409].includes(r.status)));
@@ -264,7 +264,7 @@ integration('Audit repair: late hardware acknowledgements cannot reactivate term
   const command = await raw.CommandModel.findByPk('TERMINAL'); assert.equal(command.status, 'Cancelled'); assert.equal(command.executedAt, executedAt);
 });
 integration('Audit repair: deletion and archiving preserve cross-record integrity under concurrency', async () => {
-  await fixture('DELETE-RACE', { status: 'Signed' });
+  await fixture('DELETE-RACE', { status: 'Completed', completedAt: new Date().toISOString(), scannedImageUrl: png });
   const results = await Promise.all([request('/documents/DELETE-RACE', 'DELETE'), request('/archives', 'POST', { documentId: 'DELETE-RACE' })]);
   assert.equal(results[0].status, 200, JSON.stringify(results));
   assert([200, 404, 409].includes(results[1].status));

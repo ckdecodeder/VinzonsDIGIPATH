@@ -2471,7 +2471,6 @@ tbody tr:hover {
 }
 
 .document-panel .documents-table-container {
-  overflow-x: hidden;
   margin: 0 0.35rem;
 }
 
@@ -2483,6 +2482,10 @@ tbody tr:hover {
   table-layout: fixed;
   width: 100%;
   min-width: 0;
+}
+
+.document-panel .documents-table {
+  min-width: 66rem;
 }
 
 .documents-table th,
@@ -2600,60 +2603,58 @@ tbody tr:hover {
 
 .documents-actions-wrap {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   justify-content: center;
-  gap: 0.2rem;
+  gap: 0.35rem;
+}
+
+.documents-actions-wrap > button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .documents-col-tracking {
-  width: 9%;
-}
-
-.documents-col-subject {
-  width: 17%;
+  width: 6.75rem;
 }
 
 .documents-col-sender {
-  width: 10%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .documents-col-priority {
-  width: 7%;
+  width: 4.25rem;
   text-align: center;
 }
 
 .documents-col-type {
-  width: 8%;
+  width: 5.75rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.documents-col-location {
-  width: 12%;
-}
-
 .documents-col-direction {
-  width: 10%;
+  width: 5.5rem;
 }
 
 .documents-col-status-header,
 .documents-col-status-cell {
-  width: 15%;
+  width: 8.5rem;
   text-align: left;
 }
 
 .documents-col-files {
-  width: 5%;
+  width: 3.5rem;
 }
 
 .documents-col-date {
-  width: 8%;
+  width: 6rem;
 }
 
 .documents-col-actions {
-  width: 7%;
+  width: 10.75rem;
 }
 
 .documents-col-direction .direction-badge {

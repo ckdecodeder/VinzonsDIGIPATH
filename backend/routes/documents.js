@@ -45,7 +45,7 @@ const intakeStatuses = ['Pending Review', 'Approved', 'Rejected', 'Returned to S
 const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
 const transmittableStatuses = ['Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged'];
 
-const storedWorkflowStatuses = ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived', 'Returned to Sender'];
+const storedWorkflowStatuses = ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Completed', 'Archived', 'Returned to Sender'];
 
 const runPostSaveSideEffects = async (label, fn) => {
   try {
@@ -94,7 +94,7 @@ const startDocumentHandoff = async (req, doc, toOfficeIds, transmissionType = 'I
     throw err;
   }
   const requiresMayorApproval = await requiresMayorApprovalFor(doc);
-  const mayorsOfficeId = requiresMayorApproval ? await findMayorsOfficeId() : '';
+  const mayorsOfficeId = requiresMayorApproval || doc.intakeStatus === 'Pending Review' ? await findMayorsOfficeId() : '';
   const isMayorApprovalHandoff = requiresMayorApproval
     && !doc.mayorApprovalCleared
     && doc.currentOfficeId !== mayorsOfficeId
@@ -760,7 +760,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     });
     if (['Signed', 'Acknowledged'].includes(doc.status)) {
       await notifyApprovalUsers({
-        title: 'Document finished',
+        title: labels[action],
         message: `${doc.trackingNumber} is ${doc.status.toLowerCase()} and can be returned or archived.`,
         type: 'success',
         referenceType: 'document',
@@ -847,32 +847,42 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
 
 router.post('/:id/resubmit', documentCreateRoles, asyncHandler(async (req, res) => {
   const doc = await assertCanAccessDocument(req, req.params.id);
-  if (doc.intakeStatus !== 'Rejected') {
-    return res.status(400).json({ message: 'Only rejected documents can be resubmitted for review' });
+  if (!['Rejected', 'Returned to Sender'].includes(doc.intakeStatus)) {
+    return res.status(400).json({ message: 'Only rejected or returned documents can be resubmitted for review' });
   }
   const currentStatus = normalizeWorkflowStatus(doc.status, doc.status);
-  if (!registrationStatuses.includes(currentStatus)) {
+  if (!registrationStatuses.includes(currentStatus) && currentStatus !== 'Returned to Sender') {
     return res.status(400).json({ message: `Only Received, For Signing, or For Filing documents can be resubmitted for review. Current status: ${doc.status}` });
   }
   if (!isApprovalRole(req) && doc.currentOfficeId !== getUserOfficeId(req)) {
     return res.status(403).json({ message: 'Only the current office can resubmit this document' });
   }
 
-  const savedDoc = await appendDocumentTimeline(
-    doc.id,
-    createTimelineEvent(
-      req,
-      'document_resubmitted',
-      'Resubmitted for review',
-      `${doc.subject} was corrected and resubmitted for intake review`,
-      doc.currentOfficeId,
+  const reviewOffice = await findMayorsOfficeId();
+  const deferred = [];
+  const savedDoc = await withModelTransaction(Document._Model, async () => {
+    const revised = await appendDocumentTimeline(
       doc.id,
-    ),
-    {
-      ...buildResubmissionUpdates(),
-    },
-    { validate: snapshotGuard(req, doc, { custody: !isApprovalRole(req) }) }
-  );
+      createTimelineEvent(
+        req,
+        'document_resubmitted',
+        'Resubmitted for review',
+        `${doc.subject} was corrected and resubmitted for intake review`,
+        doc.currentOfficeId,
+        doc.id,
+      ),
+      {
+        ...buildResubmissionUpdates(),
+        status: currentStatus === 'Returned to Sender' ? 'Received' : currentStatus,
+        completedAt: '',
+      },
+      { validate: snapshotGuard(req, doc, { custody: !isApprovalRole(req) }) }
+    );
+    if (revised.currentOfficeId === reviewOffice) return revised;
+    const handoff = await startDocumentHandoff(req, revised, [reviewOffice], 'Internal', deferred);
+    return handoff.document;
+  });
+  for (const effect of deferred) await effect();
 
   await createLogEntry(req, 'document_resubmitted', `Resubmitted document for review: ${doc.subject}`, doc.id);
   await notifyApprovalUsers({
@@ -887,7 +897,7 @@ router.post('/:id/resubmit', documentCreateRoles, asyncHandler(async (req, res) 
   res.json(savedDoc);
 }));
 
-router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) => {
+router.post('/:id/process-note', allRoles, asyncHandler(async (req, res) => {
   const rawAction = normalizeText(req.body.action || 'action_note');
   const actionAliases = {
     processing_note: 'action_note',
@@ -906,6 +916,23 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
     acknowledge_document: 'Acknowledged',
   };
 
+  if (action === 'complete_document') {
+    const doc = await assertCanAccessDocument(req, req.params.id);
+    assertCurrentCustody(req, doc);
+    if (!transmittableStatuses.includes(normalizeWorkflowStatus(doc.status)) || (doc.intakeStatus || 'Approved') !== 'Approved'
+      || (doc.sendQueue || []).some(Boolean) || (doc.sendHistory || []).some(event => event.active)
+      || (await requiresMayorApprovalFor(doc) && !doc.mayorApprovalCleared)) {
+      throw createHttpError('Finish required approvals and office handoffs before completing processing.', 409);
+    }
+    const deliveries = await Transmission.find({ documentId: doc.id }).lean();
+    if (deliveries.some(item => !item.receivedBy)) throw createHttpError('An office receipt is still pending.', 409);
+    const saved = await appendDocumentTimeline(doc.id, createTimelineEvent(req, action, 'Processing completed',
+      'Holding office confirmed no further routing is required.', doc.currentOfficeId, doc.id),
+      { status: 'Completed', completedAt: new Date().toISOString() }, { validate: snapshotGuard(req, doc, { custody: true }) });
+    broadcastDataInvalidate(['documents', 'logs']);
+    return res.json(saved);
+  }
+  if (!isApprovalRole(req)) throw createHttpError('Approval role required for this action.', 403);
   if (!labels[action]) {
     return res.status(400).json({ message: 'Invalid document action' });
   }
@@ -935,7 +962,6 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
       return res.status(400).json({ message: 'Only Received or For Signing documents can be marked Signed' });
     }
     updates.status = 'Signed';
-    updates.completedAt = new Date().toISOString();
     const docType = doc.documentTypeId
       ? await DocumentType.findOne({ id: doc.documentTypeId }).lean()
       : null;
@@ -949,7 +975,6 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
       return res.status(400).json({ message: 'Only Received, For Filing, For Signing, or Signed documents can be acknowledged' });
     }
     updates.status = 'Acknowledged';
-    updates.completedAt = new Date().toISOString();
   }
 
   const savedDoc = await appendDocumentTimeline(
@@ -973,14 +998,14 @@ router.post('/:id/process-note', approvalRoles, asyncHandler(async (req, res) =>
     type: ['sign_document', 'acknowledge_document'].includes(action) ? 'success' : 'info',
     referenceType: 'document',
     referenceId: doc.id,
-    page: ['sign_document', 'acknowledge_document'].includes(action) ? 'archives' : 'documents',
+    page: 'documents',
   }));
 
   if (['sign_document', 'acknowledge_document'].includes(action)) {
     await runPostSaveSideEffects('process_office_notify', () => createNotification({
       officeId: doc.currentOfficeId,
       title: 'Document finished',
-      message: `${doc.trackingNumber} is ${updates.status.toLowerCase()} and ready to return or archive.`,
+      message: `${doc.trackingNumber} is ${updates.status.toLowerCase()}.`,
       type: 'success',
       referenceType: 'document',
       referenceId: doc.id,
@@ -1064,7 +1089,7 @@ router.post('/:id/return-to-sender', allowRoles('Admin', 'Receptionist'), asyncH
     {
       intakeStatus: 'Returned to Sender',
       status: 'Returned to Sender',
-      completedAt: new Date().toISOString(),
+      completedAt: '',
       destinationOfficeId: '',
       sendQueue: [],
     },

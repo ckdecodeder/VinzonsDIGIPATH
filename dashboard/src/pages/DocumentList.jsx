@@ -211,7 +211,7 @@ const DocumentList = ({
   const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
   const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
   const transmittableStatuses = [...registrationStatuses, ...finalWorkflowStatuses];
-  const statuses = ['All', 'Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived', 'Returned to Sender'];
+  const statuses = ['All', 'Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Completed', 'Archived', 'Returned to Sender'];
   const directions = currentRole === 'receptionist'
     ? ['All', 'Incoming']
     : currentRole === 'office'
@@ -364,11 +364,12 @@ const DocumentList = ({
       return 'Waiting for Mayor/Admin acknowledgement.';
     }
     if (status === 'Signed') {
-      return 'Signed and ready to acknowledge or archive.';
+      return 'Signed. The holding office can forward the document or complete processing.';
     }
     if (status === 'Acknowledged') {
-      return 'Released/acknowledged and ready to archive.';
+      return 'Acknowledged. The holding office can complete processing when routing is finished.';
     }
+    if (status === 'Completed') return 'Processing complete. Attach the final copy before archiving.';
     if (status === 'Archived') {
       return 'Archived as a final record.';
     }
@@ -620,7 +621,7 @@ const DocumentList = ({
         // On edit, never rewrite location offices — routing/receive/RFID own those fields.
         const normalizedFormData = {
           ...formData,
-          documentDirection: isReceptionist
+          documentDirection: editingDoc ? editingDoc.documentDirection : isReceptionist
             ? 'Incoming'
             : (isOfficeStaff ? 'Outgoing' : formData.documentDirection),
           status: editingDoc
@@ -973,7 +974,13 @@ const DocumentList = ({
     && (currentRole === 'admin' || currentRole === 'receptionist')
     && (currentRole === 'admin' || doc.currentOfficeId === currentUser?.officeId)
   );
-  const canResubmitDocument = () => false;
+  const canResubmitDocument = doc => canCreate && ['Rejected', 'Returned to Sender'].includes(doc.intakeStatus)
+    && (currentRole === 'admin' || doc.currentOfficeId === currentUser?.officeId);
+  const canCompleteDocument = doc => currentUser?.officeId && currentUser.officeId === doc.currentOfficeId
+    && isApprovedForWorkflow(doc) && transmittableStatuses.includes(getWorkflowStatus(doc))
+    && !getPendingTransmission(doc.id) && !(doc.sendHistory || []).some(event => event.active)
+    && !(doc.sendQueue || []).some(Boolean)
+    && (!documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval || doc.mayorApprovalCleared);
   const canRouteDocument = (doc) => {
     const status = getWorkflowStatus(doc);
     const finalStatus = finalWorkflowStatuses.includes(status);
@@ -1019,6 +1026,12 @@ const DocumentList = ({
             <X size={14} /> Reject
           </button>
         )}
+        {canResubmitDocument(doc) && (
+          <button className="btn btn-sm btn-primary" onClick={() => onResubmitDocument(doc.id)}>Resubmit corrected document</button>
+        )}
+        {canCompleteDocument(doc) && (
+          <button className="btn btn-sm btn-success" onClick={() => onProcessDocument(doc.id, 'complete_document')}>Complete processing</button>
+        )}
         {canReturnToSender(doc) && (
           <button className="btn btn-sm btn-secondary" onClick={() => onReturnToSender?.(doc.id)}>
             <Inbox size={14} /> Return to Sender
@@ -1049,7 +1062,7 @@ const DocumentList = ({
             <Archive size={14} /> Archive
           </button>
         )}
-        {!canReceiveTransmission(doc) && !canVerify && !canReturnToSender(doc) && !canRouteDocument(doc) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
+        {!canResubmitDocument(doc) && !canCompleteDocument(doc) && !canReceiveTransmission(doc) && !canVerify && !canReturnToSender(doc) && !canRouteDocument(doc) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
           <p className="detail-empty">No actions are currently available for your role and this document status.</p>
         )}
       </div>
@@ -1078,12 +1091,13 @@ const DocumentList = ({
         toolbar={
           <div className="document-toolbar">
             <div className="filter-dropdown filter-dropdown-search">
-              <label>Search</label>
+              <label htmlFor="document-search">Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
                 <input
+                  id="document-search"
                   type="text"
-                  placeholder="Search by subject, tracking, sender, office, type, or location..."
+                  placeholder="Subject, tracking #, or sender"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
@@ -1130,7 +1144,7 @@ const DocumentList = ({
         }
       >
       <section className="document-panel">
-        <div className="table-container documents-table-container">
+        <div className="table-container documents-table-container" role="region" aria-label="Documents table" tabIndex={0}>
           <table className="documents-table">
           <thead>
             <tr>
@@ -1212,7 +1226,7 @@ const DocumentList = ({
                             <CheckCircle2 size={14} /> {receivingDocumentId === doc.id ? 'Receiving…' : 'Receive'}
                           </button>
                         )}
-                        {canEdit && (
+                        {(canEdit || canResubmitDocument(doc)) && (
                           <button className="btn-icon" title="Edit" onClick={(e) => { e.stopPropagation(); handleOpenForm(doc); }}>
                             <Edit2 size={14} />
                           </button>

@@ -47,7 +47,7 @@ export const canRejectDocument = (doc, user) => (
 export const canArchiveDocument = (doc, user) => (
   approvalRoles.includes(user?.role)
   && (doc?.intakeStatus || 'Approved') === 'Approved'
-  && ['Signed', 'Acknowledged'].includes(statusOf(doc))
+  && doc.status === 'Completed' && Boolean(doc.completedAt) && Boolean(doc.attachmentCount || doc.scannedImageUrl || doc.scannedFiles?.some(file => file?.url || file?.dataUrl))
   && !(doc?.sendHistory || []).some((event) => event.active)
   && !(doc?.sendQueue || []).some(Boolean)
 );

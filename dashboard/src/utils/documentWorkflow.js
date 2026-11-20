@@ -218,8 +218,10 @@ export const getDocumentPipelineSteps = (doc, options = {}) => {
   const intakeStatus = doc?.intakeStatus || 'Approved';
   const status = getWorkflowStatus(doc);
   const flowKey = getWorkflowFlowKey(doc, status);
-  const rawSteps = buildFlowSteps(flowKey, doc, options);
-  const activeStepId = getActiveStepId(doc, intakeStatus, status, options);
+  const flowSteps = buildFlowSteps(flowKey, doc, options);
+  const completed = status === 'Completed' || doc?.statusBeforeArchive === 'Completed';
+  const rawSteps = completed ? [...flowSteps, { id: 'completed', label: 'Processing complete' }] : flowSteps;
+  const activeStepId = completed ? 'completed' : getActiveStepId(doc, intakeStatus, status, options);
   const steps = markStepStates(rawSteps, activeStepId, intakeStatus, doc, status);
 
   const displayStatus = getDocumentActionLabel(doc, options);

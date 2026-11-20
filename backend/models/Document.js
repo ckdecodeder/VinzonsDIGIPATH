@@ -29,7 +29,7 @@ const documentSchema = new mongoose.Schema({
   trackingNumber: { type: String, required: true, unique: true },
   subject: { type: String, required: true },
   documentDirection: { type: String, enum: ['Incoming', 'Outgoing'] },
-  status: { type: String, enum: ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'] },
+  status: { type: String, enum: ['Received', 'In Transit', 'Processing', 'For Signature', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Completed', 'Archived'] },
   preTransitStatus: { type: String },
   intakeStatus: { type: String, enum: ['Pending Review', 'Approved', 'Rejected'], default: 'Approved' },
   verifiedBy: { type: String },

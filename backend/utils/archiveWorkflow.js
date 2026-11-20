@@ -1,3 +1,25 @@
+const fs = require('node:fs/promises');
+const { resolveScanPath } = require('../config/storage');
+
+async function hasReadableCopy(doc) {
+  const files = [...(doc.scannedFiles || []), { url: doc.scannedImageUrl }];
+  for (const file of files) {
+    const source = file?.dataUrl || file?.url || '';
+    if (/^data:(?:application\/pdf|image\/(?:jpeg|png|webp));base64,[A-Za-z0-9+/]+={0,2}$/.test(source)) return true;
+    const localPath = resolveScanPath(file);
+    if (!localPath) continue;
+    try {
+      const stat = await fs.stat(localPath);
+      if (!stat.isFile() || !stat.size) continue;
+      await fs.access(localPath, fs.constants.R_OK);
+      return true;
+    } catch (error) {
+      if (!['ENOENT', 'EACCES', 'EPERM'].includes(error.code)) throw error;
+    }
+  }
+  return false;
+}
+
 const { createHttpError, generateId } = require('./helpers');
 const { canArchiveDocument } = require('./documentRouting');
 const { withModelTransaction } = require('./transactionContext');
@@ -12,8 +34,9 @@ const createArchiveService = ({ DocumentModel, TransmissionModel, ArchiveModel }
     const row = await lockDocument(documentId, tx);
     const doc = row.get({ plain: true });
     const pending = await TransmissionModel.findAll({ where: { documentId }, transaction: tx });
-    if ((doc.intakeStatus || 'Approved') !== 'Approved' || !canArchiveDocument({ status: doc.status, sendQueue: doc.sendQueue, hasPendingTransmission: pending.some(t => !t.get({ plain: true }).receivedBy) })
-      || (doc.sendHistory || []).some(e => e.active)) throw createHttpError('Complete all office handoffs and document actions before archiving.', 409);
+    if ((doc.intakeStatus || 'Approved') !== 'Approved' || !canArchiveDocument({ ...doc, hasPendingTransmission: pending.some(t => !t.get({ plain: true }).receivedBy) })
+      || (doc.sendHistory || []).some(e => e.active)) throw createHttpError('Complete processing and attach the final document copy before archiving.', 409);
+    if (!await hasReadableCopy(doc)) throw createHttpError('Attach a readable final document copy before archiving.', 409);
     if (await ArchiveModel.findOne({ where: { documentId }, transaction: tx })) throw createHttpError('This document is already archived.', 409);
     const now = new Date().toISOString();
     const archive = await ArchiveModel.create({ id: generateId('ARC'), documentId, userId, date: date || now.slice(0, 10), statusBeforeArchive: doc.status, createdAt: now, updatedAt: now }, { transaction: tx });
@@ -28,7 +51,7 @@ const createArchiveService = ({ DocumentModel, TransmissionModel, ArchiveModel }
       const archive = await ArchiveModel.findOne({ where: { id: archiveId }, transaction: tx, lock: tx.LOCK.UPDATE });
       if (!archive) throw createHttpError('Archive no longer exists. Refresh before trying again.', 409);
       const item = archive.get({ plain: true }), doc = row.get({ plain: true });
-      if (item.documentId !== doc.id || doc.status !== 'Archived' || !['Signed', 'Acknowledged', 'For Filing'].includes(item.statusBeforeArchive)
+      if (item.documentId !== doc.id || doc.status !== 'Archived' || !['Completed', 'Signed', 'Acknowledged', 'For Filing'].includes(item.statusBeforeArchive)
         || await ArchiveModel.count({ where: { documentId: doc.id }, transaction: tx }) !== 1) throw createHttpError('Archive state needs reconciliation before it can be restored.', 409);
       await row.update({ status: item.statusBeforeArchive, archivedAt: '', updatedAt: new Date().toISOString(), timeline: [...(doc.timeline || []), eventFor(item, doc)] }, { transaction: tx });
       await archive.destroy({ transaction: tx });

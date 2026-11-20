@@ -37,6 +37,56 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-20] - Implement revision, completion and archive rules
+
+- FIX / LOCAL on main at 479a60b. Implemented the planned same-record revision and transactional Mayor handoff, holding-office completion after handoffs and clearance, and readable-copy archiving with staff confirmation. Existing signed records require explicit completion. No schema or data migration.
+- Backend 52 passed, 49 skipped. Dashboard 52 passed and production build passed. Database-backed walkthrough and deployment unverified. Owner review pending; no commit, push or deployment. Reverse only this batch's hunks for local rollback, retaining prior edits.
+
+## [2026-11-20] - Audit the Figure 5 sending and receiving workflow
+
+- **State and scope:** AUDIT / LOCAL. Reviewed the working tree on main at 479a60b, including existing local dashboard edits. Traced registration, Mayor review, revision, office handoffs, completion and archive retrieval.
+- **Findings:** Return-to-sender marks the record completed and gives it a status the resubmit route refuses. The document list disables resubmission. Signing and acknowledgment can set completion time before final routing. Archive eligibility accepts For Filing and does not explicitly require Mayor clearance, a completion timestamp, or a digital copy.
+- **Validation:** 20 backend routing/scope and 11 dashboard workflow/timeline/receipt tests passed. Isolated database smoke run on the designated test target returned zero passes and 33 failures. Local PostgreSQL readiness probe received no response. Disposable cluster setup was interrupted. Database-backed acceptance, browser walkthrough, production and physical scanner/sorter remain unverified.
+- **Publication and recovery:** Changelog entry only. No application fix, commit, push or deployment. Remove this entry to reverse the audit documentation. Next: validate revision and archive rules with staff and repeat synthetic acceptance on a running test database.
+
+## [2026-11-09] - Export the pre-final defense guide as a PDF
+
+- **Type / state:** DOCS / LOCAL on `main` at `479a60b`.
+- **Result:** Created `output/pdf/Vinzons-DigiPath-Pre-Final-Defense-Guide.pdf`, a four-page A4 version of the whole-system study guide. It covers the architecture, roles, document workflow, hardware, access, reporting, test evidence and limitations.
+- **Validation:** Visually checked rendered pages and confirmed all six sections and key evidence in the extracted PDF text. The guide uses existing evidence. No application tests or live acceptance checks were run.
+- **Publication and recovery:** Local PDF and changelog entry. No application, data, configuration, service, commit, push or deployment changes. Removing the PDF and this entry reverses the documentation batch. The guide is ready for the group to review and share.
+
+## [2026-11-09] — Review the complete system for pre-final defense
+
+- **Type / state:** DOCS / LOCAL on `main` at `479a60b`.
+- **Scope and result:** Prepared an in-chat study guide covering architecture, roles, registration, approval, handoffs, public tracking, archiving, hardware capture and sorting, data storage, access controls, notifications, reports and evaluation evidence. Cross-checked the explanations against current source and recorded validation.
+- **Validation and impact:** Read-only source and evidence review. No new application tests, live availability checks or physical verification. Changelog entry only. No application, data, configuration, service or Git state changes, publication or deployment. No runtime rollback is needed.
+- **Outstanding:** Use the approved manuscript for research objectives and measured outcomes. Verify the exact dashboard, scanner and notification behavior on the intended demo setup.
+
+## [2026-11-09] — Prepare pre-final defense rehearsal
+
+- **Type / state:** DOCS / LOCAL on `main` at `479a60b`.
+- **Scope and evidence:** Reviewed the intake, office handoff, tracking and protected scan paths alongside the Chapter 4 workflow notes and recorded software tests. Prepared a sample defense opening, one-document demo sequence and panel practice prompts.
+- **Validation and impact:** Source and existing test evidence only. The thesis manuscript, research results and live demonstration setup were outside the materials reviewed. This entry is the only repository edit for the rehearsal. No tests, device commands, data changes, commits or deployments were performed.
+- **Outstanding:** Match the rehearsal to the approved objectives and measured results. Rehearse the intended demo build with a synthetic document and verify hardware separately.
+
+## [2026-11-09] — Check conveyor and lift movement after sorting
+
+- **Type / state** AUDIT / LOCAL documentation on `main` at `479a60b`.
+- **Conveyor sequence** The default deposit runs forward for 10 seconds. A positive duration takes precedence over the step count. The controller stops sending conveyor pulses and disables the sort driver before the lift parks. It uses elapsed time or steps to finish the deposit. The dashboard marks the command complete after the lift routine returns.
+- **Lift finding** In door monitor mode, the post-sort park requests layer 2 while the door is detected. Its fixed downward direction sends the lift away from layer 2 after a layer 3 deposit. A bounded position-based Hall simulation reproduced the wrong direction and failed park after the conveyor had shut off. With a travel limit of zero, this branch has no step-count cutoff.
+- **Validation** Six other mocked-hardware scenarios passed for timed and fixed-step deposit, parking with the door detected or released, staying at layer 2, open-loop return, and conveyor error cleanup. The relevant laptop transfer source matched the repository after normalizing file encoding markers and line endings. Read-only local database checks found the latest layer 3 sort took about four minutes from `Executing` to `Executed`. Three device reports spanning 93 seconds showed `lift_to_layer`. A late report showed `to_capture`, and the next report showed the lift idle at layer 1 with the door released. The reports do not measure belt rotation or its duration. The Pi journal remained unavailable because the current address had no saved SSH host key.
+- **Data, publication and recovery** Local changelog entry only. The checks issued no hardware commands and made no configuration, application, data, Git or deployment changes. No runtime rollback is needed.
+- **Outstanding** The Pi journal or physical observation is needed to identify the exact conveyor stop and lift direction in the recorded run. The reproduced layer 3 parking issue remains open.
+
+## [2026-11-09] — Fix clipped controls in the My Documents table
+
+- **Type / state:** FIX / LOCAL on `main`, starting at `479a60b`.
+- **Intended scope:** Reserve room for the date and row controls in the document table, contain horizontal scrolling on narrow screens, and shorten the search prompt. Verify the table with synthetic records across desktop and mobile widths. Leave the changes local for review.
+- **Changes:** Replaced oversubscribed percentage columns with space for the date and action buttons. The table scrolls inside a keyboard-focusable region when the viewport is narrow. Buttons wrap within their own cell if needed. The search field has an associated label and a shorter hint. Dashboard-only changes in `dashboard/src/index.css` and `dashboard/src/pages/DocumentList.jsx`.
+- **Validation:** Synthetic Chrome reproduced the overlap and clipping before the fix. Afterward, Office and Admin layouts passed geometry and button hit testing at 1881, 1440, 1024 and 390 CSS pixels. Controls were fully visible at the two wider sizes and reachable by scrolling only the table at the two narrower sizes. The mobile harness waited for resize and scroll to settle before measuring. All 52 dashboard tests and the dashboard production build passed.
+- **Data / recovery / next action:** Existing workflow and storage require no migration. Revert the two dashboard source edits to restore the previous layout. Local review is next. Commit, push and deployment are pending.
+
 ## [2026-11-08] — Restore Office handoff monitoring and identity
 
 - **Type / state:** FIX / COMMITTED in the local commit containing this entry.

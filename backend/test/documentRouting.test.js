@@ -174,10 +174,15 @@ test('test_receive_transition_moves_custody_only_after_destination_receipt', () 
 });
 
 test('archiving is blocked while a handoff or queued office remains incomplete', () => {
-  assert.equal(canArchiveDocument({ status: 'Signed', hasPendingTransmission: true, sendQueue: [] }), false);
-  assert.equal(canArchiveDocument({ status: 'Acknowledged', hasPendingTransmission: false, sendQueue: ['OFF-005'] }), false);
+  assert.equal(canArchiveDocument({ status: 'Completed', completedAt: 'now', scannedImageUrl: 'scan', hasPendingTransmission: true, sendQueue: [] }), false);
+  assert.equal(canArchiveDocument({ status: 'Completed', completedAt: 'now', scannedImageUrl: 'scan', hasPendingTransmission: false, sendQueue: ['OFF-005'] }), false);
 });
 
 test('a completed document without unfinished routes remains eligible for archive', () => {
-  assert.equal(canArchiveDocument({ status: 'Acknowledged', hasPendingTransmission: false, sendQueue: [] }), true);
+  assert.equal(canArchiveDocument({ status: 'Completed', completedAt: 'now', scannedImageUrl: 'scan', hasPendingTransmission: false, sendQueue: [] }), true);
+});
+
+test('archiving requires explicit completion and a final copy', () => {
+  assert.equal(canArchiveDocument({ status: 'Completed', completedAt: 'now' }), false);
+  assert.equal(canArchiveDocument({ status: 'Signed', completedAt: 'old', scannedImageUrl: 'scan' }), false);
 });

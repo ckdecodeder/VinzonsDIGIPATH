@@ -23,6 +23,8 @@ test('completed documents cannot be signed, acknowledged, or rejected again', ()
   assert.equal(canSignDocument(doc, approvalUser), false);
   assert.equal(canAcknowledgeDocument(doc, approvalUser), false);
   assert.equal(canRejectDocument(doc, approvalUser), false);
+  assert.equal(canArchiveDocument(doc, approvalUser), false);
+  Object.assign(doc, { status: 'Completed', completedAt: 'now', attachmentCount: 1 });
   assert.equal(canArchiveDocument(doc, approvalUser), true);
 });
 
@@ -34,7 +36,7 @@ test('office-originated documents outside office custody are tracking-only', () 
 });
 
 test('archiving remains unavailable until all selected offices have confirmed receipt', () => {
-  const doc = { status: 'Signed', intakeStatus: 'Approved', currentOfficeId: 'OFF-001', sendHistory: [
+  const doc = { status: 'Completed', completedAt: 'now', attachmentCount: 1, intakeStatus: 'Approved', currentOfficeId: 'OFF-001', sendHistory: [
     { active: false, receivedBy: 'FIRST' }, { active: true },
   ] };
   assert.equal(canArchiveDocument(doc, approvalUser), false);

@@ -13,8 +13,9 @@ const canSendDocument = ({ requiresMayorApproval, mayorApprovalCleared }) => (
   !requiresMayorApproval || Boolean(mayorApprovalCleared)
 );
 
-const canArchiveDocument = ({ status, hasPendingTransmission, sendQueue }) => (
-  ['Signed', 'Acknowledged', 'For Filing'].includes(status)
+const canArchiveDocument = ({ status, completedAt, scannedFiles, scannedImageUrl, hasPendingTransmission, sendQueue }) => (
+  status === 'Completed' && Boolean(completedAt)
+  && Boolean(scannedImageUrl || scannedFiles?.some(file => file?.url || file?.dataUrl))
   && !hasPendingTransmission
   && !(Array.isArray(sendQueue) && sendQueue.some(Boolean))
 );

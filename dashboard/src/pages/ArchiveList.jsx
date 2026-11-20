@@ -268,7 +268,7 @@ const ArchiveList = ({
 
   const archivableDocs = documents.filter(
     (d) =>
-      ["Signed", "Acknowledged"].includes(d.status) &&
+      d.status === 'Completed' && Boolean(d.completedAt) && Boolean(d.attachmentCount || d.scannedImageUrl || d.scannedFiles?.some(file => file?.url || file?.dataUrl)) &&
       !archives.some((a) => a.documentId === d.id),
   );
 

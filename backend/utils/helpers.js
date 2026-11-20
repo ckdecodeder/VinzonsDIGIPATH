@@ -54,8 +54,8 @@ const buildReportFileName = (categoryLabel, date = new Date()) => {
 };
 
 // ─── Workflow helpers ──────────────────────────────────────────────────────────
-const workflowStatuses = ['Received', 'In Transit', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Archived'];
-const legacyWorkflowStatuses = ['Processing', 'For Signature'];
+const workflowStatuses = ['Received', 'In Transit', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Completed', 'Archived'];
+const legacyWorkflowStatuses = ['Processing', 'For Signature', 'Returned to Sender'];
 const storedWorkflowStatuses = [...workflowStatuses, ...legacyWorkflowStatuses];
 
 const normalizeWorkflowStatus = (value, fallback = 'Received') => {
