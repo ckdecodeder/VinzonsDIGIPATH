@@ -5697,6 +5697,62 @@ body.modal-open .notification-dock {
 }
 
 /* ==================== DOCUMENT WORKFLOW DETAILS ==================== */
+.handoff-summary {
+  padding: clamp(0.875rem, 2vw, 1.25rem);
+  margin-bottom: 1rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-inline-start: 4px solid var(--text-accent);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+
+.handoff-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.875rem;
+}
+
+.handoff-heading h3 {
+  font-size: 1.125rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.handoff-note, .handoff-facts dt {
+  color: var(--text-secondary);
+}
+
+.handoff-note {
+  margin: 0.35rem 0 0;
+}
+
+.handoff-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 2rem;
+  border-top: 1px solid var(--border);
+  margin: 0.875rem 0 0;
+  padding-top: 0.75rem;
+}
+
+.handoff-facts dt { font-size: 0.8rem; }
+.handoff-facts dd { font-weight: 600; margin: 0.2rem 0 0; }
+.handoff-summary .workflow-actions { margin: 0.875rem 0 0; }
+.handoff-summary .workflow-actions:empty { display: none; }
+.handoff-summary button:focus-visible, .document-detail-modal .btn-icon:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 3px;
+}
+
+.status-badge.handoff-revision-badge {
+  color: var(--text-main);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+}
+
 .document-workflow-pipeline {
   background: var(--bg-surface);
   border: 1.5px solid var(--border-light);

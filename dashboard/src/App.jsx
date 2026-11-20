@@ -1365,6 +1365,7 @@ function App() {
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
                 onSendDocument={handleSendDocument}
+                onReceiveTransmission={handleUpdateTransmission}
                 onReturnToSender={handleReturnToSender}
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}

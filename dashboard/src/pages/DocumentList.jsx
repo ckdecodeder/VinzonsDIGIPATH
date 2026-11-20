@@ -2,13 +2,13 @@ import { createSubmissionGate } from '../utils/submissionGate';
 import React, { useEffect, useRef, useState } from 'react';
 import { documentService, senderNotificationService } from '../api/documentService';
 import PageShell from '../components/PageShell';
+import DocumentHandoffSummary from '../components/DocumentHandoffSummary';
 import ModalOverlay from '../components/ModalOverlay';
 import ScannedPreviewModal from '../components/ScannedPreviewModal';
-import DocumentWorkflowPipeline from '../components/DocumentWorkflowPipeline';
 import {
   Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
   User, Phone, MessageSquare, ChevronDown, ChevronUp,
-  Paperclip, Upload, Download, MapPin, History, ArrowRightLeft,
+  Paperclip, Upload, Download, MapPin, History,
   CheckCircle2, Archive, Clock, CalendarDays, AlertTriangle,
 } from 'lucide-react';
 import {
@@ -231,10 +231,13 @@ const DocumentList = ({
   const getTableStatusDisplay = (doc) => {
     const intake = doc.intakeStatus || 'Approved';
     if (intake === 'Returned to Sender') {
-      return { label: 'Returned to Sender', className: 'status-archived' };
+      return { label: 'Returned to Sender', className: 'handoff-revision-badge' };
     }
     if (intake === 'Rejected') {
-      return { label: 'Rejected', className: 'status-archived' };
+      return { label: 'Rejected', className: 'handoff-revision-badge' };
+    }
+    if (doc.status === 'Completed' || doc.status === 'Archived') {
+      return { label: doc.status, className: `status-${getStatusClass(doc)}` };
     }
     const delivery = (doc.sendHistory || []).find((event) => event.recipientOfficeId === currentUser?.officeId);
     if (delivery?.active) return { label: 'Awaiting receipt', className: 'status-in-transit' };
@@ -347,40 +350,6 @@ const DocumentList = ({
         || new Date(b.transmissionDate || 0) - new Date(a.transmissionDate || 0))[0];
   };
 
-  const getWorkflowExplanation = (doc) => {
-    const status = getWorkflowStatus(doc);
-    if (doc.intakeStatus === 'Returned to Sender' || status === 'Returned to Sender') {
-      return 'Returned to the external sender.';
-    }
-    if (doc.intakeStatus === 'Rejected') {
-      return doc.rejectionReason
-        ? `Rejected by Mayor — return to sender: ${doc.rejectionReason}`
-        : 'Rejected by Mayor — Reception should return it to the sender.';
-    }
-    if (status === 'For Signing') {
-      return 'Waiting for Mayor/Admin signing action.';
-    }
-    if (status === 'For Filing') {
-      return 'Waiting for Mayor/Admin acknowledgement.';
-    }
-    if (status === 'Signed') {
-      return 'Signed. The holding office can forward the document or complete processing.';
-    }
-    if (status === 'Acknowledged') {
-      return 'Acknowledged. The holding office can complete processing when routing is finished.';
-    }
-    if (status === 'Completed') return 'Processing complete. Attach the final copy before archiving.';
-    if (status === 'Archived') {
-      return 'Archived as a final record.';
-    }
-    if (status === 'Received' && isApprovedForWorkflow(doc)) {
-      return doc.documentDirection === 'Outgoing'
-        ? 'At current office — ready to send to other offices.'
-        : "At Mayor's Office (FIFO queue).";
-    }
-    return '';
-  };
-
   const getCurrentLocation = (doc, summarizeDeliveries = false) => {
     const pending = getPendingTransmission(doc.id);
     const latest = getLatestTransmission(doc.id);
@@ -397,9 +366,8 @@ const DocumentList = ({
 
     return getOfficeName(
       doc.currentOfficeId ||
-      latest?.toOfficeId ||
-      doc.originOfficeId ||
-      currentUser?.officeId
+      (latest?.receivedBy ? latest.toOfficeId : latest?.fromOfficeId) ||
+      doc.originOfficeId
     );
   };
 
@@ -1007,8 +975,7 @@ const DocumentList = ({
   const createButtonLabel = isOfficeUser ? 'Send Document' : (currentRole === 'receptionist' ? 'Register Document' : 'New Document');
   const destinationOffices = offices.filter(o => o.id !== (currentUser?.officeId || formData.currentOfficeId));
 
-  const renderDocumentActions = (doc, pendingTransmission) => {
-    const status = getWorkflowStatus(doc);
+  const renderDocumentActions = (doc) => {
     return (
       <div className="workflow-actions">
         {canReceiveTransmission(doc) && (
@@ -1016,7 +983,7 @@ const DocumentList = ({
             <CheckCircle2 size={14} /> {receivingDocumentId === doc.id ? 'Receiving…' : 'Receive document'}
           </button>
         )}
-        {canVerify && doc.intakeStatus === 'Pending Review' && (
+        {canVerify && doc.intakeStatus === 'Pending Review' && doc.currentOfficeId === currentUser?.officeId && registrationStatuses.includes(getWorkflowStatus(doc)) && (
           <button className="btn btn-sm btn-success" onClick={() => onVerifyDocument?.(doc.id, 'Approved')}>
             <CheckCircle2 size={14} /> Approve
           </button>
@@ -1062,12 +1029,26 @@ const DocumentList = ({
             <Archive size={14} /> Archive
           </button>
         )}
-        {!canResubmitDocument(doc) && !canCompleteDocument(doc) && !canReceiveTransmission(doc) && !canVerify && !canReturnToSender(doc) && !canRouteDocument(doc) && !canTakeDocumentAction(doc) && !canArchiveDocument(doc) && (
-          <p className="detail-empty">No actions are currently available for your role and this document status.</p>
-        )}
       </div>
     );
   };
+
+  const renderHandoffSummary = (doc) => (
+    <DocumentHandoffSummary
+      doc={doc}
+      status={getWorkflowStatus(doc)}
+      badge={getTableStatusDisplay(doc)}
+      officeId={currentUser?.officeId}
+      getOfficeName={getOfficeName}
+      recipients={getDeliveryRecipients(doc)}
+      pending={transmissions.filter(item => item.documentId === doc.id && !item.receivedBy)}
+      ownReceipt={canReceiveTransmission(doc)}
+      trackingOnly={isOfficeReadOnlyTracking(doc, currentUser, transmissions.some(item =>
+        item.documentId === doc.id && item.fromOfficeId === currentUser?.officeId))}
+    >
+      {renderDocumentActions(doc)}
+    </DocumentHandoffSummary>
+  );
 
   return (
     <>
@@ -1166,10 +1147,8 @@ const DocumentList = ({
           <tbody>
             {paginatedDocs.length > 0 ? paginatedDocs.map(doc => {
               const isExpanded = expandedRow === doc.id;
-              const pendingTransmission = getPendingTransmission(doc.id);
               const files = getDocumentFiles(doc);
               const timeline = getTimeline(doc);
-              const workflowExplanation = getWorkflowExplanation(doc);
               const tableStatus = getTableStatusDisplay(doc);
 
               return (
@@ -1244,12 +1223,7 @@ const DocumentList = ({
                   {isExpanded && (
                     <tr>
                       <td colSpan="11" style={{ padding: '1rem 1.5rem', background: 'var(--bg-elevated)' }}>
-                        <DocumentWorkflowPipeline
-                          doc={doc}
-                          hasPendingTransmission={Boolean(pendingTransmission)}
-                          locationLabel={getCurrentLocation(doc, true)}
-                          workflowNote={workflowExplanation}
-                        />
+                        {renderHandoffSummary(doc)}
 
                         {/* Phase 4 — Route Progress Stepper */}
                         {renderDeliveryStatus(doc)}
@@ -1315,8 +1289,7 @@ const DocumentList = ({
                           </div>
 
                           <div className="document-detail-section">
-                            <h4><ArrowRightLeft size={14} /> Workflow Actions</h4>
-                            {renderDocumentActions(doc, pendingTransmission)}
+                            <h4><MapPin size={14} /> Location</h4>
                             <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
                             <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc, true)}</strong></div>
                             <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
@@ -1456,21 +1429,19 @@ const DocumentList = ({
         const doc = detailDoc;
         const files = getDocumentFiles(doc);
         const timeline = getTimeline(doc);
-        const pendingTransmission = getPendingTransmission(doc.id);
         const senderOutbox = getSenderNotifications(doc.id);
-        const workflowExplanation = getWorkflowExplanation(doc);
 
         return (
           <ModalOverlay onClose={() => setDetailDoc(null)}>
-            <div className="modal document-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal document-detail-modal" role="dialog" aria-modal="true" aria-labelledby="document-detail-title" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
-                  <h2>{doc.subject}</h2>
+                  <h2 id="document-detail-title">{doc.subject}</h2>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                     {doc.trackingNumber} - {getDocumentTypeLabel(doc)}
                   </p>
                 </div>
-                <button className="btn-icon" onClick={() => setDetailDoc(null)}><X size={18} /></button>
+                <button className="btn-icon" aria-label="Close document details" onClick={() => setDetailDoc(null)}><X size={18} /></button>
               </div>
               <div className="modal-body">
                 {(detailLoading || detailError) && <div role="status" className="page-content-alert">
@@ -1478,29 +1449,13 @@ const DocumentList = ({
                   {detailError && <button onClick={() => setDetailRetry((value) => value + 1)}>Retry</button>}
                 </div>}
 
-                <DocumentWorkflowPipeline
-                  doc={doc}
-                  hasPendingTransmission={Boolean(pendingTransmission)}
-                  locationLabel={getCurrentLocation(doc, true)}
-                  workflowNote={workflowExplanation}
-                />
+                {renderHandoffSummary(doc)}
                 <div className="document-detail-grid">
                   {renderDeliveryStatus(doc)}
                   <div className="document-detail-section">
                     <h4><MapPin size={14} /> Location</h4>
                     <div className="detail-pair"><span>Status</span><strong>{getWorkflowStatus(doc)}</strong></div>
                     <div className="detail-pair"><span>Intake Review</span><strong>{doc.intakeStatus || 'Approved'}</strong></div>
-                    {workflowExplanation && <div className="detail-pair"><span>Workflow Note</span><strong>{workflowExplanation}</strong></div>}
-                    {doc.rejectionReason && <div className="detail-pair"><span>Rejection Reason</span><strong>{doc.rejectionReason}</strong></div>}
-                    {isOfficeReadOnlyTracking(doc, currentUser, transmissions.some((item) => (
-                      item.documentId === doc.id && item.fromOfficeId === currentUser?.officeId
-                    ))) && (
-                      <div className="detail-pair">
-                        <span>Custody</span>
-                        <strong className="documents-custody-badge">Read-only tracking</strong>
-                      </div>
-                    )}
-                    <div className="detail-pair"><span>Current</span><strong>{getCurrentLocation(doc, true)}</strong></div>
                     <div className="detail-pair"><span>Origin</span><strong>{getOriginOfficeLabel(doc)}</strong></div>
                     <div className="detail-pair"><span>Destination</span><strong>{getDestinationOfficeLabel(doc)}</strong></div>
                     {currentRole !== 'receptionist' && (
@@ -1566,11 +1521,6 @@ const DocumentList = ({
                     ) : (
                       <p className="detail-empty">No scanned file attached yet.</p>
                     )}
-                  </div>
-
-                  <div className="document-detail-section document-actions-section document-timeline-section">
-                    <h4><ArrowRightLeft size={14} /> Document Actions</h4>
-                    {renderDocumentActions(doc, pendingTransmission)}
                   </div>
 
                   <div className="document-detail-section document-timeline-section">

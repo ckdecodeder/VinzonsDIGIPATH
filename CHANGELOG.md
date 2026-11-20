@@ -37,6 +37,19 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-20] - Clarify the sender and receiving office document views
+
+- **Scope and state:** FEATURE / LOCAL on main at b534142. Planned and implemented the first UI pass for sender and recipient document details.
+- **Changes:** DocumentList uses DocumentHandoffSummary in the expanded row and details dialog. The summary groups recorded custody, outstanding receipts, role-specific actions and revision feedback above metadata. The Reception document list now connects the existing office-scoped receipt action. Updated dashboard styling for wrapping, revision badges and visible keyboard focus.
+- **Validation:** Dashboard suite 52 passed. Production build passed. Six synthetic React render scenarios covered sender, recipient, primary receipt, copy receipt, multiple pending offices and rejection. Rendered document lists exposed the receipt button only to the destination of the sample handoff. Headless Chrome failed to open and the in-app browser timed out reaching the local fixture. Visual layout, interactive keyboard navigation and live role walkthrough remain unverified.
+- **Publication and recovery:** Local dashboard source and documentation only. No backend, data, schema, commit, push or deployment change. Revert this batch's dashboard edits and its log entry to reverse. Next check is the sender/receiver walkthrough at laptop and mobile widths.
+
+## [2026-11-20] - Review dashboard and document workflow usability
+
+- AUDIT / LOCAL on main at b534142. Reviewed dashboard attention links, document statuses, custody explanations, table controls and archive form handling in source.
+- Proposed filtered work queues, custody-specific guidance, recoverable archive forms and keyboard-accessible controls. Browser layout, contrast, assistive technology and staff task performance remain unverified.
+- Documentation only. Remove this entry to reverse the audit record. No application, data, commit or deployment changes. Next action is owner review of the proposed UI priorities.
+
 ## [2026-11-20] - Implement revision, completion and archive rules
 
 - FIX / LOCAL on main at 479a60b. Implemented the planned same-record revision and transactional Mayor handoff, holding-office completion after handoffs and clearance, and readable-copy archiving with staff confirmation. Existing signed records require explicit completion. No schema or data migration.
