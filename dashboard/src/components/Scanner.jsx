@@ -9,7 +9,8 @@ import {
   Camera as CameraIcon,
   Scan,
   Loader2,
-  Zap,
+  Info,
+  ChevronDown,
   ArrowRight,
   ArrowLeft,
   Send,
@@ -578,14 +579,19 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const adaptiveStreamFps = Number(device?.payload?.adaptiveStreamFps || device?.payload?.previewFps || 0);
   const isCapturedPdf = isPdfMedia(capturedImage, capturedFileType);
   const renderCapturedImageGallery = (alt) => (
-    <div className="scanner-captured-gallery">
+    <div
+      className={`scanner-captured-gallery${capturedImages.length > 2 ? ' scanner-gallery-scroll' : ''}`}
+      role="region"
+      aria-label={`${alt}, ${capturedImages.length} ${capturedImages.length === 1 ? 'page' : 'pages'}`}
+      tabIndex={capturedImages.length > 2 ? 0 : undefined}
+    >
       {capturedImages.map((file, index) => (
         <div className="scanner-captured-gallery-item" key={file.id || `${file.url}-${index}`}>
           {renderScannedDocumentPreview(file.previewUrl || file.url, {
             alt: `${alt} ${index + 1}`,
             isPdf: isPdfMedia(file.previewUrl || file.url, file.type),
           })}
-          <span>Capture {index + 1}</span>
+          <span>Page {index + 1} of {capturedImages.length}</span>
         </div>
       ))}
     </div>
@@ -1764,23 +1770,30 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   const selectedPriority = { color: 'var(--text-muted)', bg: 'transparent' };
 
   const stepLabels = [
-    { num: 1, label: 'Scan Document' },
-    { num: 2, label: 'Fill Details' },
+    { num: 1, label: 'Capture' },
+    { num: 2, label: 'Details' },
     { num: 3, label: 'Review' },
-    { num: 4, label: 'Complete' },
+    { num: 4, label: 'Registered' },
   ];
+
+  const captureBusy = isDeviceScanning || isExtracting;
+  const captureButtonLabel = isExtracting ? 'Processing scan…'
+    : isDeviceScanning ? 'Capturing page…'
+    : requiredCaptureCount === 1 ? 'Capture page'
+    : `Capture page ${Math.min(capturedImages.length + 1, requiredCaptureCount)} of ${requiredCaptureCount}`;
 
   return (
     <PageShell
+      className="scan-documents-page"
       header={
         <div className="page-header">
           <div className="page-header-left">
-            <h1>Scan Document</h1>
-            <p>Scan first, then submit the document for intake review</p>
+            <h1>Scan Documents</h1>
+            <p>Capture paper documents and register them for routing.</p>
           </div>
-          <div className={(device?.connected || hardwareScannedDoc) ? 'status-badge status-online' : 'status-badge status-offline'}>
-            {(device?.connected || hardwareScannedDoc) ? <Wifi size={12} /> : <WifiOff size={12} />}
-            {(device?.connected || hardwareScannedDoc) ? 'Physical Scanner Online' : 'Physical Scanner Offline'}
+          <div className={`status-badge ${device?.connected ? 'status-online' : 'status-offline'}`} role="status">
+            {device?.connected ? <Wifi size={14} /> : <WifiOff size={14} />}
+            {device?.connected ? 'Scanner online' : 'Scanner offline'}
           </div>
         </div>
       }
@@ -1789,7 +1802,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
       <nav className="scanner-progress" aria-label="Scan workflow steps">
         {stepLabels.map((s, i) => (
           <React.Fragment key={s.num}>
-            <div className={`scanner-progress-step${step >= s.num ? ' is-active' : ''}${step > s.num ? ' is-done' : ''}`}>
+            <div aria-current={step === s.num ? "step" : undefined} className={`scanner-progress-step${step >= s.num ? ' is-active' : ''}${step > s.num ? ' is-done' : ''}`}>
               <div className="scanner-progress-badge" aria-hidden="true">
                 {step > s.num ? <CheckCircle2 size={16} /> : s.num}
               </div>
@@ -1807,6 +1820,21 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         <div className="scanner-scan-page">
           <div className="scanner-scan-layout">
             <div className="card scanner-scan-main">
+              <div className="scanner-preview-heading">
+                <h2 className="card-title"><CameraIcon size={19} /> Camera preview</h2>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm scanner-toolbar-refresh"
+                  onClick={() => {
+                    setStreamHasError(false);
+                    setPreviewErrorMessage('');
+                    setStreamReloadKey((value) => value + 1);
+                  }}
+                >
+                  <RefreshCw size={15} />
+                  Refresh preview
+                </button>
+              </div>
               <div className="scanner-preview-toolbar scanner-preview-toolbar--bar">
                 <div className="scanner-preview-toolbar-group">
                   <label className="form-label" htmlFor="paper-guide-size">Paper guide</label>
@@ -1821,39 +1849,6 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     ))}
                   </select>
                 </div>
-                <div className="scanner-preview-toolbar-group">
-                  <label className="form-label" htmlFor="required-capture-count">Pages to capture</label>
-                  <input
-                    id="required-capture-count"
-                    className="form-input"
-                    type="number"
-                    min="0"
-                    max={MAX_SCAN_ATTACHMENTS}
-                    inputMode="numeric"
-                    value={pagesToCaptureInput}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      if (raw === '') {
-                        setPagesToCaptureInput('');
-                        return;
-                      }
-                      if (!/^\d{1,3}$/.test(raw)) return;
-                      const next = Number(raw);
-                      if (next > MAX_SCAN_ATTACHMENTS) {
-                        setPagesToCaptureInput(String(MAX_SCAN_ATTACHMENTS));
-                        return;
-                      }
-                      setPagesToCaptureInput(raw);
-                    }}
-                    onBlur={commitPagesToCapture}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    disabled={isDeviceScanning || isExtracting || capturedImages.length > 0}
-                  />
-                </div>
                 <label className="scanner-toggle-row scanner-toggle-row--inline">
                   <input
                     type="checkbox"
@@ -1862,24 +1857,14 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   />
                   <span>Show guide</span>
                 </label>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm scanner-toolbar-refresh"
-                  onClick={() => {
-                    setStreamHasError(false);
-                    setPreviewErrorMessage('');
-                    setStreamReloadKey((value) => value + 1);
-                  }}
-                >
-                  <RefreshCw size={15} />
-                  Refresh
-                </button>
               </div>
 
               <div className={previewShellClassName} style={previewShellStyle}>
               <canvas
                 ref={previewCanvasRef}
                 className={`scanner-live-stream scanner-live-canvas${directStreamUrl ? ' scanner-live-stream--hidden' : ''}`}
+                role="img"
+                aria-label="Physical scanner live preview"
                 aria-hidden={Boolean(directStreamUrl)}
               />
               <img
@@ -1953,7 +1938,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </div>
               )}
 
-              {isPhysicalSource && previewReady && streamStale && (
+              {isPhysicalSource && streamOnline && previewReady && streamStale && !isExtracting && (
                 <div className="scanner-preview-overlay scanner-preview-overlay--reconnect">
                   <Loader2 size={28} className="animate-spin" />
                   <span>
@@ -1964,24 +1949,24 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </div>
               )}
 
-              {isPhysicalSource && streamOnline && !previewReady && !streamHasError && (
+              {isPhysicalSource && streamOnline && !previewReady && !streamHasError && !isExtracting && (
                 <div className="scanner-preview-overlay">
                   <CameraIcon size={32} />
                   <span>{previewErrorMessage || 'Connecting camera stream...'}</span>
                 </div>
               )}
 
-              {isPhysicalSource && !streamOnline && (
+              {isPhysicalSource && !streamOnline && !isExtracting && (
                 <div className="scanner-preview-overlay scanner-preview-overlay--offline">
                   <div className="scanner-offline-icon">
                     <WifiOff size={28} />
                   </div>
-                  <strong>Scanner offline</strong>
-                  <span>Waiting for Pi heartbeat — check power and network</span>
+                  <strong>Waiting for the scanner</strong>
+                  <span>Check that the scanner is powered on and connected to the network.</span>
                 </div>
               )}
 
-              {isPhysicalSource && streamHasError && !previewReady && (
+              {isPhysicalSource && streamOnline && streamHasError && !previewReady && !isExtracting && (
                 <div className="scanner-preview-overlay scanner-preview-overlay--error">
                   <AlertCircle size={28} />
                   <span>{previewErrorMessage || 'WebRTC preview is not ready yet.'}</span>
@@ -2000,45 +1985,61 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             </div>
 
             <aside className="card scanner-scan-sidebar">
-              <div className={`scanner-scan-connection${(device?.connected || hardwareScannedDoc) ? ' is-online' : ' is-offline'}`}>
-                {(device?.connected || hardwareScannedDoc) ? <Wifi size={18} /> : <WifiOff size={18} />}
-                <div>
-                  <strong>{(device?.connected || hardwareScannedDoc) ? 'Scanner ready' : 'Scanner offline'}</strong>
-                  <p>
-                    {(device?.connected || hardwareScannedDoc)
-                      ? 'Live preview active. Align the document in the frame, then capture.'
-                      : 'Start the Pi scanner service and wait for the device heartbeat.'}
-                  </p>
-                </div>
-              </div>
-
-              <ul className="scanner-scan-tips">
-                <li>Close the door — the lift drops to layer 2 for capture</li>
-                <li>Align the document in the live preview, then press Capture</li>
-                <li>After Confirm &amp; Register, the lift goes to the tray layer, sorts, then returns to layer 2</li>
-                <li>Open the door when done — the lift goes back up to layer 1</li>
-              </ul>
-
-              <div className="scanner-scan-actions">
-                <button
-                  onClick={() => {
-                    if (isExtracting || isDeviceScanning) return;
-                    if (isPhysicalSource && !device?.connected) {
-                      setDeviceScanStatus('Scanner is offline. Check Pi power and network, then wait for heartbeat.');
+              <h2 className="card-title"><Scan size={19} /> Capture pages</h2>
+              <p className="scanner-capture-hint">Place the page in the scanner, close the door and align it using the preview.</p>
+              <div className="scanner-page-count">
+                <label className="form-label" htmlFor="required-capture-count">Pages to capture</label>
+                <input
+                  id="required-capture-count"
+                  className="form-input"
+                  type="number"
+                  min="1"
+                  max={MAX_SCAN_ATTACHMENTS}
+                  inputMode="numeric"
+                  value={pagesToCaptureInput}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    if (raw === '') {
+                      setPagesToCaptureInput('');
                       return;
                     }
-                    handleCapture();
+                    if (!/^\d{1,3}$/.test(raw)) return;
+                    const next = Number(raw);
+                    if (next > MAX_SCAN_ATTACHMENTS) {
+                      setPagesToCaptureInput(String(MAX_SCAN_ATTACHMENTS));
+                      return;
+                    }
+                    setPagesToCaptureInput(raw);
                   }}
-                  disabled={isExtracting || isDeviceScanning}
+                  onBlur={commitPagesToCapture}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.currentTarget.blur();
+                    }
+                  }}
+                  disabled={isDeviceScanning || isExtracting || capturedImages.length > 0}
+                />
+              </div>
+              {requiredCaptureCount > 1 && (
+                <div className="scanner-batch-progress">
+                  <span>{capturedImages.length} of {requiredCaptureCount} pages captured</span>
+                  <progress aria-label="Pages captured" value={capturedImages.length} max={requiredCaptureCount} />
+                </div>
+              )}
+              <div className="scanner-scan-actions">
+                <button
+                  type="button"
+                  onClick={handleCapture}
+                  disabled={captureBusy || isMotorTesting || !device?.connected}
+                  aria-describedby={!device?.connected ? 'scanner-capture-unavailable' : undefined}
                   className="btn btn-primary scanner-capture-btn scanner-capture-btn--block"
                 >
-                  {isExtracting || isDeviceScanning ? <Loader2 className="animate-spin" /> : <Zap size={18} />}
-                  {isExtracting
-                    ? 'Processing...'
-                    : requiredCaptureCount <= 1
-                      ? 'Capture Document'
-                      : `Capture ${Math.min(capturedImages.length + 1, requiredCaptureCount)} of ${requiredCaptureCount}`}
+                  {captureBusy ? <Loader2 size={18} className="animate-spin" /> : <Scan size={18} />}
+                  {captureButtonLabel}
                 </button>
+                {!device?.connected && (
+                  <p className="scanner-capture-hint" id="scanner-capture-unavailable">Capture is available when the scanner comes online.</p>
+                )}
                 {(isDeviceScanning || /pending .*command|still busy/i.test(deviceScanStatus || '')) && (
                   <button
                     onClick={handleCancelPhysicalScan}
@@ -2049,96 +2050,99 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     Cancel Scan
                   </button>
                 )}
-                {isPhysicalSource && (
-                  <button
-                    onClick={handleMotorTest}
-                    disabled={isMotorTesting || isDeviceScanning || isExtracting}
-                    className="btn btn-secondary scanner-capture-btn--block"
-                  >
-                    {isMotorTesting ? <Loader2 size={18} className="animate-spin" /> : <RotateCw size={18} />}
-                    {isMotorTesting ? 'Testing Motors...' : 'Test Motors'}
-                  </button>
-                )}
               </div>
 
               {deviceScanStatus && (
-                <div className="scanner-device-status-banner">
-                  <AlertCircle size={14} />
+                <div className="scanner-device-status-banner" role="status">
+                  <Info size={16} />
                   <span>{deviceScanStatus}</span>
                 </div>
               )}
 
-              {isPhysicalSource && (() => {
-                const cameraLight = cameraLightState;
-                return (
-                  <div className="scanner-light-control">
-                    <div className="scanner-light-control__header">
-                      <span className="scanner-light-control__title">
-                        <Lightbulb size={16} />
-                        Camera light
-                      </span>
-                      <div className="scanner-light-control__toggle" role="group" aria-label="Camera light power">
-                        <button
-                          type="button"
-                          onClick={() => handleLightToggle(true)}
-                          disabled={isLightBusy}
-                          className={`btn ${lightOn ? 'btn-primary' : 'btn-secondary'}`}
-                          aria-pressed={lightOn}
-                        >
-                          On
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleLightToggle(false)}
-                          disabled={isLightBusy}
-                          className={`btn ${!lightOn ? 'btn-primary' : 'btn-secondary'}`}
-                          aria-pressed={!lightOn}
-                        >
-                          Off
-                        </button>
-                      </div>
-                    </div>
-                    <label className="scanner-light-control__slider">
-                      <span>Brightness</span>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        step="2"
-                        value={lightBrightness}
-                        disabled={isLightBusy}
-                        onChange={(e) => setLightBrightness(Number(e.target.value))}
-                        onPointerDown={() => { lightDraggingRef.current = true; }}
-                        onPointerUp={() => {
-                          lightDraggingRef.current = false;
-                          commitLightBrightness();
-                        }}
-                        onKeyUp={(e) => {
-                          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
-                            commitLightBrightness();
-                          }
-                        }}
-                      />
-                      <span className="scanner-light-control__value">
-                        {isLightBusy ? <Loader2 size={14} className="animate-spin" /> : `${lightBrightness}%`}
-                      </span>
-                    </label>
-                    <div className="scanner-light-control__colors">
-                      <span>Colour</span>
-                      <button type="button" onClick={handleLightColourChange} disabled={isLightBusy} className="btn btn-secondary">
-                        Change colour
+              <details className="scanner-disclosure">
+                <summary>Camera light <ChevronDown size={16} /></summary>
+                <div className="scanner-light-control">
+                  <div className="scanner-light-control__header">
+                    <span className="scanner-light-control__title"><Lightbulb size={16} /> Power</span>
+                    <div className="scanner-light-control__toggle" role="group" aria-label="Camera light power">
+                      <button
+                        type="button"
+                        onClick={() => handleLightToggle(true)}
+                        disabled={isLightBusy || !device?.connected}
+                        className={`btn ${lightOn ? 'btn-primary' : 'btn-secondary'}`}
+                        aria-pressed={lightOn}
+                      >
+                        On
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleLightToggle(false)}
+                        disabled={isLightBusy || !device?.connected}
+                        className={`btn ${!lightOn ? 'btn-primary' : 'btn-secondary'}`}
+                        aria-pressed={!lightOn}
+                      >
+                        Off
                       </button>
                     </div>
-                    {cameraLight && !cameraLight.mapped && (
-                      <p className="scanner-motor-diag__hint">
-                        The Pi cannot reach the camera&apos;s light control yet. Replug the USB into the Pi to update it.
-                        {cameraLight.probe?.hidError ? ` (${cameraLight.probe.hidError})` : ''}
-                      </p>
-                    )}
-                    {lightStatus && <p className="scanner-light-control__status">{lightStatus}</p>}
                   </div>
-                );
-              })()}
+                  <label className="scanner-light-control__slider">
+                    <span>Brightness</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="2"
+                      value={lightBrightness}
+                      disabled={isLightBusy || !device?.connected}
+                      onChange={(e) => setLightBrightness(Number(e.target.value))}
+                      onPointerDown={() => { lightDraggingRef.current = true; }}
+                      onPointerUp={() => {
+                        lightDraggingRef.current = false;
+                        commitLightBrightness();
+                      }}
+                      onKeyUp={(e) => {
+                        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+                          commitLightBrightness();
+                        }
+                      }}
+                    />
+                    <span className="scanner-light-control__value">
+                      {isLightBusy ? <Loader2 size={14} className="animate-spin" /> : `${lightBrightness}%`}
+                    </span>
+                  </label>
+                  <div className="scanner-light-control__colors">
+                    <span>Colour</span>
+                    <button type="button" onClick={handleLightColourChange} disabled={isLightBusy || !device?.connected} className="btn btn-secondary">
+                      Change colour
+                    </button>
+                  </div>
+                  {device?.connected && cameraLightState.mapped === false && (
+                    <p className="scanner-motor-diag__hint">
+                      The Pi cannot reach the camera&apos;s light control yet. Replug the USB into the Pi to update it.
+                      {cameraLightState.probe?.hidError ? ` (${cameraLightState.probe.hidError})` : ''}
+                    </p>
+                  )}
+                  {lightStatus && <p className="scanner-light-control__status" role="status">{lightStatus}</p>}
+                </div>
+              </details>
+              <details className="scanner-disclosure">
+                <summary>Paper handling <ChevronDown size={16} /></summary>
+                <ul className="scanner-scan-tips">
+                  <li>Closing the door lowers the lift to layer 2 for capture.</li>
+                  <li>After registration, the lift moves to the assigned tray, sorts the paper and returns to layer 2.</li>
+                  <li>Open the door after sorting to return the lift to layer 1.</li>
+                </ul>
+              </details>
+              <details className="scanner-disclosure">
+                <summary>Motor diagnostics <ChevronDown size={16} /></summary>
+                <p className="scanner-capture-hint">Run a lift and sorter movement test.</p>
+                <button type="button" onClick={handleMotorTest}
+                  disabled={!device?.connected || isMotorTesting || captureBusy}
+                  className="btn btn-secondary scanner-capture-btn--block">
+                  {isMotorTesting ? <Loader2 size={16} className="animate-spin" /> : <RotateCw size={16} />}
+                  {isMotorTesting ? 'Testing motors…' : 'Test motors'}
+                </button>
+              </details>
 
             </aside>
           </div>
@@ -2194,8 +2198,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   <div className="form-error-summary" role="alert">{formErrorSummary}</div>
                 )}
                 <div className="form-group">
-                  <label className="form-label">Document Subject <span className="required-mark">*</span></label>
+                  <label className="form-label" htmlFor="scan-subject">Document Subject <span className="required-mark">*</span></label>
                   <input
+                    id="scan-subject"
+                    aria-invalid={Boolean(formErrors.subject)}
+                    aria-describedby={formErrors.subject ? 'scan-subject-error' : undefined}
                     className={`form-input${formErrors.subject ? ' is-invalid' : ''}`}
                     type="text"
                     value={formData.subject}
@@ -2211,7 +2218,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     autoFocus
                   />
                   {formErrors.subject && (
-                    <p className="form-field-error">{formErrors.subject}</p>
+                    <p id="scan-subject-error" className="form-field-error">{formErrors.subject}</p>
                   )}
                   {enrichmentHint && (
                     <p className="form-hint" style={{ marginTop: '0.35rem', color: 'var(--warning)' }}>
@@ -2222,8 +2229,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
 
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Document Type</label>
-                    <select className="form-select" value={formData.documentTypeId}
+                    <label className="form-label" htmlFor="scan-documentTypeId">Document Type</label>
+                    <select id="scan-documentTypeId" className="form-select" value={formData.documentTypeId}
                       onChange={e => {
                         const nextTypeId = e.target.value;
                         handleFormChange('documentTypeId', nextTypeId);
@@ -2240,8 +2247,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     )}
                     {isOtherDocumentType(formData.documentTypeId) && (
                       <div className="form-group" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
-                        <label className="form-label">Specify Document Type <span className="required-mark">*</span></label>
+                        <label className="form-label" htmlFor="scan-documentTypeOther">Specify Document Type <span className="required-mark">*</span></label>
                         <input
+                          id="scan-documentTypeOther"
+                          aria-invalid={Boolean(formErrors.documentTypeOther)}
+                          aria-describedby={formErrors.documentTypeOther ? 'scan-documentTypeOther-error' : undefined}
                           className={`form-input${formErrors.documentTypeOther ? ' is-invalid' : ''}`}
                           type="text"
                           value={formData.documentTypeOther}
@@ -2250,21 +2260,24 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                           aria-required="true"
                         />
                         {formErrors.documentTypeOther && (
-                          <p className="form-field-error">{formErrors.documentTypeOther}</p>
+                          <p id="scan-documentTypeOther-error" className="form-field-error">{formErrors.documentTypeOther}</p>
                         )}
                       </div>
                     )}
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Date Received</label>
-                    <input className="form-input" type="date" value={formData.dateReceived}
+                    <label className="form-label" htmlFor="scan-dateReceived">Date Received</label>
+                    <input id="scan-dateReceived" className="form-input" type="date" value={formData.dateReceived}
                       disabled required />
                   </div>
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Destination</label>
+                  <label className="form-label" htmlFor="scan-toOfficeId">Destination <span className="required-mark">*</span></label>
                   <select
+                    id="scan-toOfficeId"
+                    aria-invalid={Boolean(formErrors.toOfficeId)}
+                    aria-describedby={formErrors.toOfficeId ? 'scan-toOfficeId-error' : undefined}
                     className={`form-select${formErrors.toOfficeId ? ' is-invalid' : ''}`}
                     value={formData.toOfficeId}
                     onChange={e => handleFormChange('toOfficeId', e.target.value)}
@@ -2275,7 +2288,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                       <option key={office.id} value={office.id}>{office.name}</option>
                     ))}
                   </select>
-                  {formErrors.toOfficeId && <p className="form-field-error">{formErrors.toOfficeId}</p>}
+                  {formErrors.toOfficeId && <p id="scan-toOfficeId-error" className="form-field-error">{formErrors.toOfficeId}</p>}
                   <p className="field-hint">If this document type requires Mayor approval, it will be sent there first, then forwarded to your selected destination after approval.</p>
                 </div>
 
@@ -2290,8 +2303,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                     External Sender
                   </p>
                   <div className="form-group">
-                    <label className="form-label">Sender Name <span className="required-mark">*</span></label>
+                    <label className="form-label" htmlFor="scan-senderName">Sender Name <span className="required-mark">*</span></label>
                     <input
+                      id="scan-senderName"
+                      aria-invalid={Boolean(formErrors.senderName)}
+                      aria-describedby={formErrors.senderName ? 'scan-senderName-error' : undefined}
                       className={`form-input${formErrors.senderName ? ' is-invalid' : ''}`}
                       type="text"
                       value={formData.senderName}
@@ -2300,21 +2316,21 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                       aria-required="true"
                     />
                     {formErrors.senderName && (
-                      <p className="form-field-error">{formErrors.senderName}</p>
+                      <p id="scan-senderName-error" className="form-field-error">{formErrors.senderName}</p>
                     )}
                   </div>
                   <div className="form-group">
-                    <label className="form-label">
+                    <label className="form-label" htmlFor="scan-senderContact">
                       <Phone size={12} style={{ display: 'inline', marginRight: '0.25rem' }} />
                       Contact Number (Optional)
                     </label>
-                    <input className="form-input" type="tel" value={formData.senderContact}
+                    <input id="scan-senderContact" className="form-input" type="tel" value={formData.senderContact}
                       onChange={e => handleFormChange('senderContact', e.target.value)}
                       placeholder="09XX-XXX-XXXX" />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">From Office / Organization (Optional)</label>
-                    <input
+                    <label className="form-label" htmlFor="scan-originOfficeOther">From Office / Organization (Optional)</label>
+                    <input id="scan-originOfficeOther"
                       className="form-input"
                       type="text"
                       value={formData.originOfficeOther}
@@ -2333,11 +2349,11 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                 </div>
 
                 <div className="form-group">
-                    <label className="form-label">
-                      <MessageSquare size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
+                  <label className="form-label" htmlFor="scan-remarks">
+                    <MessageSquare size={14} style={{ display: 'inline', marginRight: '0.25rem' }} />
                     Remarks / Notes <span className="optional-pill">Optional</span>
                   </label>
-                  <textarea className="form-input" value={formData.remarks}
+                  <textarea id="scan-remarks" className="form-input" value={formData.remarks}
                     onChange={e => handleFormChange('remarks', e.target.value)}
                     placeholder="Additional notes or remarks about this document"
                     rows={2}
@@ -2345,15 +2361,15 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
                   />
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem' }}>
+                <div className="scanner-workflow-actions">
                   <button type="button" className="btn btn-secondary" onClick={handleRescan}>
-                    <ArrowLeft size={16} /> Re-scan
+                    <ArrowLeft size={16} /> Rescan pages
                   </button>
                   <button
                     type="submit"
                     className="btn btn-primary"
                   >
-                    Review & Submit <ArrowRight size={16} />
+                    Continue to review <ArrowRight size={16} />
                   </button>
                 </div>
               </form>
@@ -2372,7 +2388,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             </h3>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-            Please verify all information below before submitting. Captured pages will be combined into one PDF in capture order.
+            Check the details and destination. Registration combines the pages into one PDF in the order shown.
           </p>
           {formErrorSummary && (
             <div className="form-error-summary" role="alert">{formErrorSummary}</div>
@@ -2423,7 +2439,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             marginBottom: '1.5rem',
           }}>
             <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600, letterSpacing: '0.05em', marginBottom: '0.5rem' }}>
-              Forward Path
+              First handoff
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', justifyContent: 'center' }}>
               <span style={{
@@ -2444,12 +2460,13 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <button className="btn btn-secondary" onClick={() => setStep(2)}>
+          <div className="scanner-workflow-actions">
+            <button className="btn btn-secondary" onClick={() => setStep(2)} disabled={isSubmitting}>
               <ArrowLeft size={16} /> Edit Details
             </button>
             <button className="btn btn-primary" onClick={handleConfirmSubmit} disabled={isSubmitting} style={{ padding: '0.75rem 2rem' }}>
-              <Send size={16} /> {isSubmitting ? 'Saving…' : 'Confirm & Register'}
+              {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              {isSubmitting ? 'Registering…' : 'Confirm & Register'}
             </button>
           </div>
         </div>
@@ -2478,7 +2495,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           </p>
 
           {sortStatus && (
-            <div className={`scanner-sort-status scanner-sort-status--${sortStatus.state}`}>
+            <div role="status" className={`scanner-sort-status scanner-sort-status--${sortStatus.state}`}>
               {sortStatus.state === 'running' && <Loader2 size={16} className="animate-spin" />}
               {sortStatus.state === 'done' && <CheckCircle2 size={16} />}
               {sortStatus.state === 'failed' && <AlertCircle size={16} />}
@@ -2496,9 +2513,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
               { label: 'Sender', value: formData.senderName },
               { label: 'Destination', value: getOfficeName(formData.toOfficeId) },
             ].map((item, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: i < 3 ? '0.5rem' : 0, fontSize: '0.8rem' }}>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginTop: i ? '0.5rem' : 0, fontSize: '0.85rem' }}>
                 <span style={{ color: 'var(--text-muted)' }}>{item.label}</span>
-                <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{item.value}</span>
+                <span className="scanner-receipt-value">{item.value}</span>
               </div>
             ))}
           </div>

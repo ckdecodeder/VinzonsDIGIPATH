@@ -37,6 +37,13 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-21] - Scan Documents capture and review
+
+- LOCAL on main at 5e1a895. Admin and Receptionist share the revised Scanner.jsx capture and review screens. Layout.jsx uses the same tab name for both. Scanner status follows the command connection. The capture panel groups page count, batch progress and the capture action. Camera light, handling instructions and motor diagnostics expand individually.
+- Updated index.css with container-based layouts, visible step labels on small screens, keyboard focus and touch targets. The details screen associates form errors with their fields and gives longer batches a scrollable preview. Review and registration have distinct action labels.
+- Verified all 52 dashboard tests, both scanner transport tests and the production build. Seven synthetic React render cases covered device and workflow states. Parsed the responsive CSS rules. Headless Chrome and Edge could not launch, and desktop inspection stopped because the browser URL could not be verified. Screen appearance and physical capture/sorting still need an operator check.
+- Source changes only. Review the scanner tab locally before publishing. Revert this batch in Scanner.jsx, Layout.jsx and index.css to restore the previous interface.
+
 ## [2026-11-21] - Give dashboard content clearance below the header divider
 
 - FIX / LOCAL on main at 5f2f655. Corrected the zero top padding on shared filter toolbars at desktop and mobile widths. Applied the same responsive clearance to page content and Reception's separate grid in both themes. Removed Reception's redundant hero margin.

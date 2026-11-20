@@ -230,7 +230,7 @@ const Layout = ({
       { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
     ]},
     { group: 'Operations', items: [
-      { id: 'scan-documents', label: 'Scan Document', icon: <ScanLine size={18} /> },
+      { id: 'scan-documents', label: 'Scan Documents', icon: <ScanLine size={18} /> },
       { id: 'documents', label: 'Document Tracker', icon: <FileText size={18} /> },
     ]},
     { group: 'Tools', items: [
