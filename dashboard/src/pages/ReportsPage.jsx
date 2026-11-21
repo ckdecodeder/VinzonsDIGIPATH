@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useId } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import {
@@ -63,6 +63,7 @@ const ReportsPage = ({
   currentUser,
   onNotify,
 }) => {
+  const titleId = useId();
   const [activeCategory, setActiveCategory] = useState('summary');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -707,13 +708,13 @@ const ReportsPage = ({
               })}
             </div>
 
-            {/* FIFO note instead of priority */}
+            {/* Priority labels do not change FIFO processing. */}
             <div className="card">
               <div className="card-header">
                 <h3 className="card-title">Processing Order</h3>
               </div>
               <p className="field-hint" style={{ padding: '0.75rem 1rem' }}>
-                Documents are processed first-come-first-served by registration date (oldest first). Priority levels have been removed.
+                Documents are processed first-come-first-served by registration date (oldest first). Priority labels remain available for tracking and reporting.
               </p>
             </div>
 
@@ -1119,10 +1120,10 @@ const ReportsPage = ({
       </PageShell>
 
       {showPreview && (
-        <ModalOverlay overlayClassName="report-preview-overlay" onClose={closePreview}>
+        <ModalOverlay aria-labelledby={titleId} overlayClassName="report-preview-overlay" onClose={closePreview}>
           <div className="modal report-preview-modal" onClick={(event) => event.stopPropagation()}>
             <div className="report-preview-toolbar">
-              <div><h2>Report Preview</h2><p>{categoryLabel} - {coverageText}</p></div>
+              <div><h2 id={titleId}>Report Preview</h2><p>{categoryLabel} - {coverageText}</p></div>
               <div className="report-preview-actions">
                 <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting}>
                   <Printer size={16} /> Print

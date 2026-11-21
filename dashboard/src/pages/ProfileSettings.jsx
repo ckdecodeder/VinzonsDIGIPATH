@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useId } from "react";
+import { focusFormError } from '../utils/formAccessibility';
 import PageShell from "../components/PageShell";
 import { Building2, Shield, Save } from "lucide-react";
 
@@ -8,6 +9,8 @@ const ProfileSettings = ({
   onUpdateProfile,
   onNotify,
 }) => {
+  const formId = useId();
+  const [fieldErrors, setFieldErrors] = useState({});
   const [formData, setFormData] = useState({
     fname: "",
     lname: "",
@@ -30,6 +33,7 @@ const ProfileSettings = ({
       confirmPassword: "",
     });
     setFormError("");
+    setFieldErrors({});
   }, [currentUser]);
 
   const getOfficeName = (officeId) => {
@@ -40,6 +44,8 @@ const ProfileSettings = ({
   const handleSubmit = async (event) => {
     event.preventDefault();
     setFormError("");
+    setFieldErrors({});
+    const formElement = event.currentTarget;
 
     const payload = {
       fname: formData.fname.trim(),
@@ -50,6 +56,8 @@ const ProfileSettings = ({
 
     if (!payload.fname || !payload.lname || !payload.username) {
       setFormError("First name, last name, and username are required.");
+      setFieldErrors(Object.fromEntries(["fname", "lname", "username"].filter(key => !payload[key]).map(key => [key, true])));
+      focusFormError(formElement);
       return;
     }
 
@@ -59,10 +67,12 @@ const ProfileSettings = ({
     if (nextPassword || confirmPassword) {
       if (nextPassword.length < 6) {
         setFormError("New password must be at least 6 characters long.");
+        setFieldErrors({ password: true }); focusFormError(formElement);
         return;
       }
       if (nextPassword !== confirmPassword) {
         setFormError("New password and confirmation do not match.");
+        setFieldErrors({ password: true, confirmPassword: true }); focusFormError(formElement);
         return;
       }
       payload.password = nextPassword;
@@ -86,6 +96,7 @@ const ProfileSettings = ({
       });
     } catch (error) {
       setFormError(error.message || "Unable to save profile changes.");
+      focusFormError(formElement);
     } finally {
       setIsSaving(false);
     }
@@ -125,7 +136,7 @@ const ProfileSettings = ({
           <div className="card profile-settings-card">
             <form className="profile-settings-form" onSubmit={handleSubmit}>
             {formError && (
-              <div className="profile-settings-error">{formError}</div>
+              <div className="profile-settings-error" id={`${formId}-error`} data-form-error role="alert" tabIndex={-1}>{formError}</div>
             )}
 
             <div className="form-grid">
@@ -135,6 +146,8 @@ const ProfileSettings = ({
                 </label>
                 <input
                   id="profile-fname"
+                  aria-invalid={fieldErrors.fname || undefined}
+                  aria-describedby={fieldErrors.fname ? `${formId}-error` : undefined}
                   className="form-input"
                   type="text"
                   value={formData.fname}
@@ -151,6 +164,8 @@ const ProfileSettings = ({
                 </label>
                 <input
                   id="profile-lname"
+                  aria-invalid={fieldErrors.lname || undefined}
+                  aria-describedby={fieldErrors.lname ? `${formId}-error` : undefined}
                   className="form-input"
                   type="text"
                   value={formData.lname}
@@ -182,6 +197,8 @@ const ProfileSettings = ({
                 </label>
                 <input
                   id="profile-username"
+                  aria-invalid={fieldErrors.username || undefined}
+                  aria-describedby={fieldErrors.username ? `${formId}-error` : undefined}
                   className="form-input"
                   type="text"
                   value={formData.username}
@@ -196,7 +213,7 @@ const ProfileSettings = ({
 
             <div className="profile-settings-section">
               <h3>Change Password</h3>
-              <p className="field-hint">
+              <p id={`${formId}-password-hint`} className="field-hint">
                 Leave blank to keep your current password.
               </p>
 
@@ -207,6 +224,8 @@ const ProfileSettings = ({
                   </label>
                   <input
                     id="profile-password"
+                    aria-invalid={fieldErrors.password || undefined}
+                    aria-describedby={`${formId}-password-hint${fieldErrors.password ? ` ${formId}-error` : ''}`}
                     className="form-input"
                     type="password"
                     value={formData.password}
@@ -223,6 +242,8 @@ const ProfileSettings = ({
                   </label>
                   <input
                     id="profile-confirm-password"
+                    aria-invalid={fieldErrors.confirmPassword || undefined}
+                    aria-describedby={`${formId}-password-hint${fieldErrors.confirmPassword ? ` ${formId}-error` : ''}`}
                     className="form-input"
                     type="password"
                     value={formData.confirmPassword}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useId } from "react";
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
 import {
@@ -31,6 +31,7 @@ const TransmissionList = ({
   onUpdate,
   onNotify,
 }) => {
+  const formId = useId();
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("All");
   const [filterDate, setFilterDate] = useState("");
@@ -348,10 +349,10 @@ const TransmissionList = ({
         toolbar={
           <div className="document-toolbar">
             <div className="filter-dropdown filter-dropdown-search">
-              <label>Search</label>
+              <label htmlFor={`${formId}-search`}>Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
-                <input
+                <input id={`${formId}-search`}
                   type="text"
                   placeholder="Search by subject, tracking, office, type, or name..."
                   value={search}
@@ -373,8 +374,8 @@ const TransmissionList = ({
 
             <div className="filter-dropdowns">
               <div className="filter-dropdown">
-                <label>Type</label>
-                <select
+                <label htmlFor={`${formId}-type-filter`}>Type</label>
+                <select id={`${formId}-type-filter`}
                   className="form-select"
                   value={filterType}
                   onChange={(e) => setFilterType(e.target.value)}
@@ -419,7 +420,7 @@ const TransmissionList = ({
                     onClick={() => setDetailTransmission(t)}
                   >
                     <td className="transmissions-col-id" title={t.id}>
-                      <span className="td-mono documents-tracking-code">{t.id}</span>
+                      <button type="button" className="row-open-control td-mono documents-tracking-code" aria-label={`Open transmission for ${doc?.subject || t.id}`} onClick={event => { event.stopPropagation(); setDetailTransmission(t); }}>{t.id}</button>
                     </td>
                     <td
                       className="td-primary transmissions-col-document"
@@ -539,14 +540,14 @@ const TransmissionList = ({
           const timeline = getTransmissionTimeline(transmission);
 
           return (
-            <ModalOverlay onClose={() => setDetailTransmission(null)}>
+            <ModalOverlay aria-labelledby={`${formId}-detail-title`} onClose={() => setDetailTransmission(null)}>
               <div
                 className="modal document-detail-modal"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="modal-header">
                   <div>
-                    <h2>Transmission Details</h2>
+                    <h2 id={`${formId}-detail-title`}>Transmission Details</h2>
                     <p
                       style={{
                         color: "var(--text-muted)",
@@ -557,7 +558,7 @@ const TransmissionList = ({
                       {transmission.id}
                     </p>
                   </div>
-                  <button
+                  <button aria-label="Close dialog"
                     className="btn-icon"
                     onClick={() => setDetailTransmission(null)}
                   >
@@ -726,21 +727,21 @@ const TransmissionList = ({
 
       {/* Form Modal */}
       {showForm && (
-        <ModalOverlay onClose={() => setShowForm(false)}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => setShowForm(false)}>
           <div
             className="modal document-form-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="modal-header">
-              <h2>New Transmission</h2>
-              <button className="btn-icon" onClick={() => setShowForm(false)}>
+              <h2 id={`${formId}-form-title`}>New Transmission</h2>
+              <button aria-label="Close dialog" className="btn-icon" onClick={() => setShowForm(false)}>
                 <X size={18} />
               </button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label">Eligible Documents</label>
+                  <p className="form-label">Eligible Documents</p>
                   <div className="route-document-table-wrap">
                     <table className="route-document-table">
                       <thead>
@@ -764,6 +765,9 @@ const TransmissionList = ({
                               <td>
                                 <input
                                   type="radio"
+                                  name={`${formId}-document`}
+                                  aria-label={`Select ${doc.subject || doc.trackingNumber}`}
+                                  aria-describedby={`${formId}-document-hint`}
                                   checked={formData.documentId === doc.id}
                                   onChange={() => selectRouteDocument(doc)}
                                 />
@@ -816,7 +820,7 @@ const TransmissionList = ({
                     required
                     readOnly
                   />
-                  <p className="field-hint">
+                  <p id={`${formId}-document-hint`} className="field-hint">
                     Only approved routable documents are shown here. Admin/Mayor
                     can also return Signed and Acknowledged documents; In
                     Transit and Archived records are hidden from transmission.
@@ -832,8 +836,8 @@ const TransmissionList = ({
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">From Office</label>
-                    <select
+                    <label className="form-label" htmlFor={`${formId}-from-office`}>From Office</label>
+                    <select id={`${formId}-from-office`} aria-describedby={`${formId}-from-office-hint`}
                       className="form-select"
                       value={formData.fromOfficeId}
                       onChange={(e) =>
@@ -861,14 +865,14 @@ const TransmissionList = ({
                         </option>
                       ))}
                     </select>
-                    <p className="field-hint">
+                    <p id={`${formId}-from-office-hint`} className="field-hint">
                       The office currently holding and sending the selected
                       document.
                     </p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">To Office</label>
-                    <select
+                    <label className="form-label" htmlFor={`${formId}-to-office`}>To Office</label>
+                    <select id={`${formId}-to-office`} aria-describedby={`${formId}-to-office-hint`}
                       className="form-select"
                       value={formData.toOfficeId}
                       onChange={(e) =>
@@ -881,7 +885,7 @@ const TransmissionList = ({
                         </option>
                       ))}
                     </select>
-                    <p className="field-hint">
+                    <p id={`${formId}-to-office-hint`} className="field-hint">
                       The office that must receive and acknowledge the
                       transmission.
                     </p>
@@ -889,8 +893,8 @@ const TransmissionList = ({
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Sent By</label>
-                    <input
+                    <label className="form-label" htmlFor={`${formId}-sent-by`}>Sent By</label>
+                    <input id={`${formId}-sent-by`} aria-describedby={`${formId}-sent-by-hint`}
                       className="form-input"
                       value={
                         currentUser
@@ -899,14 +903,14 @@ const TransmissionList = ({
                       }
                       readOnly
                     />
-                    <p className="field-hint">
+                    <p id={`${formId}-sent-by-hint`} className="field-hint">
                       Automatically records the signed-in user creating the
                       route.
                     </p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Type</label>
-                    <select
+                    <label className="form-label" htmlFor={`${formId}-type`}>Type</label>
+                    <select id={`${formId}-type`} aria-describedby={`${formId}-type-hint`}
                       className="form-select"
                       value={formData.transmissionType}
                       onChange={(e) =>
@@ -919,15 +923,15 @@ const TransmissionList = ({
                       <option>Internal</option>
                       <option>External</option>
                     </select>
-                    <p className="field-hint">
+                    <p id={`${formId}-type-hint`} className="field-hint">
                       Marks whether the movement is inside the municipality or
                       external.
                     </p>
                   </div>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Transmission Date</label>
-                  <input
+                  <label className="form-label" htmlFor={`${formId}-date`}>Transmission Date</label>
+                  <input id={`${formId}-date`} aria-describedby={`${formId}-date-hint`}
                     className="form-input"
                     type="date"
                     value={formData.transmissionDate}
@@ -939,7 +943,7 @@ const TransmissionList = ({
                     }
                     required
                   />
-                  <p className="field-hint">
+                  <p id={`${formId}-date-hint`} className="field-hint">
                     The official date saved in the routing history and reports.
                   </p>
                 </div>

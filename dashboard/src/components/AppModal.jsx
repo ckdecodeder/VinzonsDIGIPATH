@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { AlertTriangle, CheckCircle2, Info, XCircle } from 'lucide-react';
 import ModalOverlay from './ModalOverlay';
 
@@ -19,6 +19,7 @@ const AppModal = ({
   onConfirm,
   onCancel,
 }) => {
+  const titleId = useId();
   if (!open) return null;
 
   const variant = modalIcons[type] ? type : 'info';
@@ -26,12 +27,9 @@ const AppModal = ({
   const handleCancel = () => (onCancel || onConfirm)?.();
 
   return (
-    <ModalOverlay onClose={handleCancel} overlayClassName="app-dialog-overlay">
+    <ModalOverlay onClose={handleCancel} overlayClassName="app-dialog-overlay" aria-labelledby={titleId}>
       <div
         className={`modal app-dialog app-dialog-${variant}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="app-dialog-title"
         onClick={e => e.stopPropagation()}
       >
         <div className="app-dialog-body">
@@ -39,7 +37,7 @@ const AppModal = ({
             {modalIcons[variant]}
           </div>
           <div className="app-dialog-content">
-            <h2 id="app-dialog-title">{title}</h2>
+            <h2 id={titleId}>{title}</h2>
             {message && <p>{message}</p>}
           </div>
         </div>

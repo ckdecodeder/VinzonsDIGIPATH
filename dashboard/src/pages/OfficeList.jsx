@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useId, useState } from "react";
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
 import {
@@ -22,6 +22,7 @@ const OfficeList = ({
   onUpdateOffice,
   onDeleteOffice,
 }) => {
+  const formId = useId();
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editOffice, setEditOffice] = useState(null);
@@ -83,10 +84,10 @@ const OfficeList = ({
         toolbar={
           <div className="page-toolbar-row">
             <div className="filter-dropdown filter-dropdown-search">
-              <label>Search</label>
+              <label htmlFor={`${formId}-search`}>Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
-                <input
+                <input id={`${formId}-search`}
                   type="text"
                   placeholder="Search offices..."
                   value={search}
@@ -217,19 +218,19 @@ const OfficeList = ({
       </PageShell>
 
       {showForm && (
-        <ModalOverlay onClose={() => setShowForm(false)}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{editOffice ? "Edit Office" : "New Office"}</h2>
-              <button className="btn-icon" onClick={() => setShowForm(false)}>
+              <h2 id={`${formId}-form-title`}>{editOffice ? "Edit Office" : "New Office"}</h2>
+              <button className="btn-icon" aria-label="Close office form" onClick={() => setShowForm(false)}>
                 <X size={18} />
               </button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="modal-body">
                 <div className="form-group">
-                  <label className="form-label">Office Name *</label>
-                  <input
+                  <label htmlFor={`${formId}-name`} className="form-label">Office Name *</label>
+                  <input id={`${formId}-name`} aria-describedby={`${formId}-name-hint`}
                     className="form-input"
                     type="text"
                     value={formData.name}
@@ -238,7 +239,7 @@ const OfficeList = ({
                     }
                     required
                   />
-                  <p className="field-hint">
+                  <p id={`${formId}-name-hint`} className="field-hint">
                     This name appears in routing, tracking, reports, and user
                     assignments.
                   </p>

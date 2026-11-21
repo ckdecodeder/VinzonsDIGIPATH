@@ -1,6 +1,8 @@
+import { focusFormError } from '../utils/formAccessibility';
 import { matchesQueue, queueFilters } from '../utils/documentQueue';
 import { createSubmissionGate } from '../utils/submissionGate';
-import React, { useEffect, useRef, useState } from 'react';
+import { getSendRecipients, confirmsDocumentSend, sendDocumentWithRecovery } from '../utils/documentSend';
+import React, { useId, useEffect, useRef, useState } from 'react';
 import { documentService, senderNotificationService } from '../api/documentService';
 import PageShell from '../components/PageShell';
 import DocumentHandoffSummary from '../components/DocumentHandoffSummary';
@@ -45,6 +47,8 @@ const DocumentList = ({
   onEdit,
   onAdd,
   onSendDocument,
+  onSendReconciled,
+  pendingSendAttempts,
   onRouteDocument,
   onReceiveTransmission,
   onVerifyDocument,
@@ -60,6 +64,7 @@ const DocumentList = ({
   onFocusDocumentConsumed,
   onNotify,
 }) => {
+  const formId = useId();
   const sendDocument = onSendDocument || (async (documentId, toOfficeIds) => {
     if (onRouteDocument && toOfficeIds?.[0]) {
       return onRouteDocument({ documentId, toOfficeIds, toOfficeId: toOfficeIds[0], fromOfficeId: currentUser?.officeId });
@@ -143,7 +148,17 @@ const DocumentList = ({
   const [processingError, setProcessingError] = useState('');
   const [documentFormErrors, setDocumentFormErrors] = useState({});
   const [documentFormErrorSummary, setDocumentFormErrorSummary] = useState('');
-  const [sendOfficeIds, setSendOfficeIds] = useState([]);
+  const [sendCustodyOfficeId, setSendCustodyOfficeId] = useState('');
+  const [sendCopyOfficeIds, setSendCopyOfficeIds] = useState([]);
+  const [routeError, setRouteError] = useState('');
+  const [routeAttempt, setRouteAttempt] = useState(null);
+  const [isSendingDocument, setIsSendingDocument] = useState(false);
+  const routeFormRef = useRef(null);
+  const routeSubmitGate = useRef(null);
+  if (!routeSubmitGate.current) routeSubmitGate.current = createSubmissionGate(setIsSendingDocument);
+  // shortcut: attempts are session-local; recovery across reloads needs server idempotency.
+  const localSendAttempts = useRef(new Map());
+  const sendAttempts = pendingSendAttempts || localSendAttempts.current;
   const [receivingDocumentId, setReceivingDocumentId] = useState('');
 
   const detailVersion = documents.find((item) => item.id === detailDoc?.id)?.updatedAt;
@@ -436,7 +451,7 @@ const DocumentList = ({
         getDocumentTypeLabel(d).toLowerCase().includes(term) ||
         getOfficeName(d.originOfficeId).toLowerCase().includes(term) ||
         getCurrentLocation(d).toLowerCase().includes(term);
-      const matchStatus = matchesQueue(d, filterStatus, currentUser, transmissions);
+      const matchStatus = matchesQueue(d, filterStatus, currentUser, transmissions, documentTypes);
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
       const priority = (d.priorityLevel || 'normal').toLowerCase();
       const matchPriority = filterPriority === 'All' || priority === filterPriority.toLowerCase();
@@ -542,6 +557,7 @@ const DocumentList = ({
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const form = e.currentTarget;
     return documentSubmitGate.current(async () => {
 
       const hasExistingAttachment = Boolean(formScannedFiles.length || editDoc?.scannedImageUrl);
@@ -572,6 +588,7 @@ const DocumentList = ({
       if (!validation.isValid) {
         setDocumentFormErrors(validation.errors);
         setDocumentFormErrorSummary(validation.summary);
+        focusFormError(form);
         return;
       }
 
@@ -584,6 +601,7 @@ const DocumentList = ({
         if (!nextScannedFiles.length) {
           setDocumentFormErrors({ attachmentFile: 'Attach at least one scanned file.' });
           setDocumentFormErrorSummary('A scanned file attachment is required.');
+          focusFormError(form);
           return;
         }
 
@@ -629,12 +647,14 @@ const DocumentList = ({
         if ((isOfficeStaff || isReceptionist) && !editingDoc && !normalizedFormData.destinationOfficeId) {
           setDocumentFormErrors({ destinationOfficeId: 'Choose where to send this document.' });
           setDocumentFormErrorSummary('Destination office is required.');
+          focusFormError(form);
           return;
         }
 
         if ((isOfficeStaff || isReceptionist) && !editingDoc && normalizedFormData.destinationOfficeId === myOfficeId) {
           setDocumentFormErrors({ destinationOfficeId: 'Choose a different office than your own.' });
           setDocumentFormErrorSummary('Choose an office other than the current office.');
+          focusFormError(form);
           return;
         }
 
@@ -662,38 +682,98 @@ const DocumentList = ({
         setFormScannedFiles([]);
       } catch (error) {
         setDocumentFormErrorSummary(error?.message || 'Unable to save the document. Please retry.');
+        focusFormError(form);
       }
     });
   };
 
   const openRouteModal = (doc) => {
-    const fromOfficeId = doc.currentOfficeId || currentUser?.officeId || offices[0]?.id || 'OFF-001';
-    const queued = Array.isArray(doc.sendQueue) ? doc.sendQueue : [];
+    const attempt = sendAttempts.get(doc.id);
     setRouteDoc(doc);
-    setSendOfficeIds(
-      queued.length
-        ? queued
-        : [offices.find(o => o.id !== fromOfficeId)?.id].filter(Boolean),
-    );
+    setSendCustodyOfficeId(attempt?.destinations[0] || '');
+    setSendCopyOfficeIds(attempt?.destinations.slice(1) || []);
+    setRouteAttempt(attempt || null);
+    setRouteError(attempt ? 'The previous send result is not confirmed. Check its status before sending again.' : '');
+  };
+
+  const clearRouteForm = () => {
+    setRouteDoc(null);
+    setSendCustodyOfficeId('');
+    setSendCopyOfficeIds([]);
+    setRouteAttempt(null);
+    setRouteError('');
+  };
+  const closeRouteModal = () => {
+    if (!isSendingDocument && sendAttempts.get(routeDoc?.id)?.status !== 'sending') clearRouteForm();
   };
 
   const handleRouteSubmit = async (e) => {
     e.preventDefault();
-    if (!routeDoc) return;
-    const destinations = sendOfficeIds.filter(Boolean);
-    if (!destinations.length) {
-      notify('Select at least one destination office.');
-      return;
-    }
-    if (destinations.includes(routeDoc.currentOfficeId)) {
-      notify('Cannot send a document to its current office.');
-      return;
-    }
+    if (!routeDoc || routeAttempt || sendAttempts.has(routeDoc.id)) return;
+    await routeSubmitGate.current(async () => {
+      setRouteError('');
+      let attempt;
+      try {
+        const destinations = getSendRecipients(sendCustodyOfficeId, sendCopyOfficeIds, routeDoc.currentOfficeId, offices);
+        attempt = { document: routeDoc, destinations, userId: currentUser?.id, status: 'preparing' };
+        sendAttempts.set(routeDoc.id, attempt);
+        let latest;
+        try { latest = await documentService.getById(routeDoc.id); }
+        catch { throw new Error('No send was attempted. Unable to check the latest document; restore the connection and try again.'); }
+        if (sendAttempts.get(routeDoc.id) !== attempt) return;
+        if (!latest || latest.id !== routeDoc.id) throw new Error('No send was attempted. The latest document could not be checked.');
+        if (latest.currentOfficeId !== routeDoc.currentOfficeId) {
+          setRouteDoc(latest);
+          throw new Error('No send was attempted because custody changed. Review the current office and your selections before sending.');
+        }
+        attempt.document = latest;
+        attempt.status = 'sending';
+        const result = await sendDocumentWithRecovery({ ...attempt, send: sendDocument, read: id => documentService.getById(id) });
+        if (sendAttempts.get(routeDoc.id) !== attempt) return;
+        if (result.status === 'sent') {
+          sendAttempts.delete(routeDoc.id);
+          setDetailDoc(previous => previous?.id === result.document.id ? result.document : previous);
+          clearRouteForm();
+          if (result.reconciled) onSendReconciled?.(result.document);
+          return;
+        }
+        attempt.status = 'unknown';
+        setRouteAttempt(attempt);
+        setRouteError('The send result is not confirmed. Your selections are kept and another send is blocked. Check send status when the connection is available.');
+      } catch (error) {
+        if (attempt && sendAttempts.get(routeDoc.id) !== attempt) return;
+        if (attempt) sendAttempts.delete(routeDoc.id);
+        setRouteError(error.message || 'The document could not be sent. Your selections are kept.');
+      }
+      focusFormError(routeFormRef.current);
+    });
+  };
 
-    const routingDoc = routeDoc;
-    setRouteDoc(null);
-    setSendOfficeIds([]);
-    await sendDocument(routingDoc.id, destinations);
+  const checkRouteSendStatus = async () => {
+    const attempt = routeAttempt;
+    if (!attempt) return;
+    if (attempt.status === 'preparing') {
+      setRouteError('The latest document is still being checked before sending. Wait for that check to finish.');
+      return;
+    }
+    await routeSubmitGate.current(async () => {
+      try {
+        const current = await documentService.getById(attempt.document.id);
+        if (sendAttempts.get(attempt.document.id) !== attempt) return;
+        if (confirmsDocumentSend(attempt.document, current, attempt.destinations, attempt.userId)) {
+          sendAttempts.delete(attempt.document.id);
+          setDetailDoc(previous => previous?.id === current.id ? current : previous);
+          clearRouteForm();
+          onSendReconciled?.(current);
+          return;
+        }
+        setRouteError('A matching send is not confirmed yet. Another send remains blocked because the earlier request may still finish. Check send status again later.');
+      } catch {
+        if (sendAttempts.get(attempt.document.id) !== attempt) return;
+        setRouteError('Unable to check the send result. Restore the connection and check again. Your selections are kept and another send remains blocked.');
+      }
+      focusFormError(routeFormRef.current);
+    });
   };
 
   const handleReceive = async (doc) => {
@@ -719,9 +799,11 @@ const DocumentList = ({
 
   const handleRejectSubmit = async (e) => {
     e.preventDefault();
+    const form = e.currentTarget;
     if (!rejectDoc) return;
     if (!rejectReason.trim()) {
       setRejectError('Rejection reason is required.');
+      focusFormError(form);
       return;
     }
     setRejectError('');
@@ -759,10 +841,12 @@ const DocumentList = ({
 
   const handleProcessingSubmit = async (e) => {
     e.preventDefault();
+    const form = e.currentTarget;
     if (!processingAction) return;
     const config = processingActionLabels[processingAction.action];
     if (config?.required && !processingNote.trim()) {
       setProcessingError('Action note is required.');
+      focusFormError(form);
       return;
     }
     setProcessingError('');
@@ -1076,11 +1160,11 @@ const DocumentList = ({
         toolbar={
           <div className="document-toolbar">
             <div className="filter-dropdown filter-dropdown-search">
-              <label htmlFor="document-search">Search</label>
+              <label htmlFor={`${formId}-search`}>Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
                 <input
-                  id="document-search"
+                  id={`${formId}-search`}
                   type="text"
                   placeholder="Subject, tracking #, or sender"
                   value={search}
@@ -1090,9 +1174,9 @@ const DocumentList = ({
             </div>
 
             <div className="filter-dropdown filter-dropdown-date">
-              <label htmlFor="document-date-filter">Date</label>
+              <label htmlFor={`${formId}-date-filter`}>Date</label>
               <input
-                id="document-date-filter"
+                id={`${formId}-date-filter`}
                 className="form-input"
                 type="date"
                 value={filterDate}
@@ -1102,8 +1186,8 @@ const DocumentList = ({
 
             <div className="filter-dropdowns">
               <div className="filter-dropdown">
-                <label>Status</label>
-                <select className="form-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                <label htmlFor={`${formId}-status-filter`}>Status</label>
+                <select id={`${formId}-status-filter`} className="form-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
                   {statuses.map(status => (
                     <option key={status} value={status}>{status}</option>
                   ))}
@@ -1111,16 +1195,16 @@ const DocumentList = ({
               </div>
 
               <div className="filter-dropdown">
-                <label>Direction</label>
-                <select className="form-select" value={filterDirection} onChange={e => setFilterDirection(e.target.value)}>
+                <label htmlFor={`${formId}-direction-filter`}>Direction</label>
+                <select id={`${formId}-direction-filter`} className="form-select" value={filterDirection} onChange={e => setFilterDirection(e.target.value)}>
                   {directions.map(direction => (
                     <option key={direction} value={direction}>{direction}</option>
                   ))}
                 </select>
               </div>
               <div className="filter-dropdown">
-                <label>Priority</label>
-                <select className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+                <label htmlFor={`${formId}-priority-filter`}>Priority</label>
+                <select id={`${formId}-priority-filter`} className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
                   {priorities.map(priority => <option key={priority} value={priority}>{priority}</option>)}
                 </select>
               </div>
@@ -1273,7 +1357,7 @@ const DocumentList = ({
                                       className="attachment-format-select"
                                       value={downloadFormats[file.id] || 'original'}
                                       onChange={e => setDownloadFormats(prev => ({ ...prev, [file.id]: e.target.value }))}
-                                      title="Choose download format"
+                                      aria-label={`Download format for ${file.name}`} title="Choose download format"
                                     >
                                       <option value="original">Original</option>
                                       <option value="pdf">PDF</option>
@@ -1396,11 +1480,11 @@ const DocumentList = ({
         const senderOutbox = getSenderNotifications(doc.id);
 
         return (
-          <ModalOverlay onClose={() => setDetailDoc(null)}>
-            <div className="modal document-detail-modal" role="dialog" aria-modal="true" aria-labelledby="document-detail-title" onClick={e => e.stopPropagation()}>
+          <ModalOverlay aria-labelledby={`${formId}-detail-title`} onClose={() => setDetailDoc(null)}>
+            <div className="modal document-detail-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
-                  <h2 id="document-detail-title">{doc.subject}</h2>
+                  <h2 id={`${formId}-detail-title`}>{doc.subject}</h2>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                     {doc.trackingNumber} - {getDocumentTypeLabel(doc)}
                   </p>
@@ -1452,7 +1536,7 @@ const DocumentList = ({
                               className="attachment-format-select"
                               value={downloadFormats[file.id] || 'original'}
                               onChange={e => setDownloadFormats(prev => ({ ...prev, [file.id]: e.target.value }))}
-                              title="Choose download format"
+                              aria-label={`Download format for ${file.name}`} title="Choose download format"
                             >
                               <option value="original">Original</option>
                               <option value="pdf">PDF</option>
@@ -1538,30 +1622,37 @@ const DocumentList = ({
                   </div>
                 </div>
               </div>
+              {!detailLoading && !detailError && doc.trackingNumber && (
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-secondary" onClick={() => handlePrintClaimSlip(doc)}>
+                    <FileText size={16} /> Print claim slip
+                  </button>
+                </div>
+              )}
             </div>
           </ModalOverlay>
         );
       })()}
 
       {showForm && (
-        <ModalOverlay onClose={() => { if (!isSavingDocument) setShowForm(false); }}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => { if (!isSavingDocument) setShowForm(false); }}>
           <div className="modal document-form-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>
+              <h2 id={`${formId}-form-title`}>
                 {editDoc
                   ? 'Edit Document'
                   : (isOfficeUser ? 'Send Document' : 'New Document')}
               </h2>
-              <button className="btn-icon" disabled={isSavingDocument} onClick={() => setShowForm(false)}><X size={18} /></button>
+              <button className="btn-icon" aria-label="Close document form" disabled={isSavingDocument} onClick={() => setShowForm(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleSubmit} noValidate>
               <div className="modal-body">
                 {documentFormErrorSummary && (
-                  <div className="form-error-summary" role="alert">{documentFormErrorSummary}</div>
+                  <div data-form-error tabIndex={-1} className="form-error-summary" role="alert">{documentFormErrorSummary}</div>
                 )}
                 <div className="form-group">
-                  <label className="form-label">Document Subject <span className="required-mark">*</span></label>
-                  <input
+                  <label htmlFor={`${formId}-subject`} className="form-label">Document Subject <span className="required-mark">*</span></label>
+                  <input id={`${formId}-subject`} aria-describedby={`${formId}-subject-hint${documentFormErrors.subject ? ` ${formId}-subject-error` : ''}`} aria-invalid={Boolean(documentFormErrors.subject)} required
                     className={`form-input${documentFormErrors.subject ? ' is-invalid' : ''}`}
                     type="text"
                     value={formData.subject}
@@ -1573,15 +1664,15 @@ const DocumentList = ({
                     placeholder="Enter document subject"
                   />
                   {documentFormErrors.subject && (
-                    <p className="form-field-error">{documentFormErrors.subject}</p>
+                    <p id={`${formId}-subject-error`} className="form-field-error">{documentFormErrors.subject}</p>
                   )}
-                  <p className="field-hint">Shortly describe the document so staff can recognize it in lists, reports, and tracking.</p>
+                  <p id={`${formId}-subject-hint`} className="field-hint">Shortly describe the document so staff can recognize it in lists, reports, and tracking.</p>
                 </div>
-                <div className="form-grid">
+                <div className="form-grid document-registration-metadata">
                   {!isOfficeUser && (
                     <div className="form-group">
-                      <label className="form-label">Document Type</label>
-                      <select
+                      <label htmlFor={`${formId}-type`} className="form-label">Document Type</label>
+                      <select id={`${formId}-type`} aria-describedby={`${formId}-type-hint`}
                         className="form-select"
                         value={formData.documentTypeId}
                         onChange={e => setFormData({ ...formData, documentTypeId: e.target.value })}
@@ -1590,10 +1681,10 @@ const DocumentList = ({
                           <option key={dt.id} value={dt.id}>{dt.category}</option>
                         ))}
                       </select>
-                      <p className="field-hint">For external/citizen documents only.</p>
+                      <p id={`${formId}-type-hint`} className="field-hint">For external/citizen documents only.</p>
                       {isOtherDocumentType(formData.documentTypeId) && (
                         <>
-                          <input
+                          <input id={`${formId}-other-type`} aria-label="Other document type" required aria-invalid={Boolean(documentFormErrors.documentTypeOther)} aria-describedby={documentFormErrors.documentTypeOther ? `${formId}-other-type-error` : undefined}
                             className={`form-input${documentFormErrors.documentTypeOther ? ' is-invalid' : ''}`}
                             type="text"
                             value={formData.documentTypeOther}
@@ -1606,16 +1697,16 @@ const DocumentList = ({
                             style={{ marginTop: '0.5rem' }}
                           />
                           {documentFormErrors.documentTypeOther && (
-                            <p className="form-field-error">{documentFormErrors.documentTypeOther}</p>
+                            <p id={`${formId}-other-type-error`} className="form-field-error">{documentFormErrors.documentTypeOther}</p>
                           )}
                         </>
                       )}
                     </div>
                   )}
                   <div className="form-group">
-                    <label className="form-label" htmlFor="document-priority-level">Priority Level</label>
+                    <label className="form-label" htmlFor={`${formId}-priority`}>Priority Level</label>
                     <select
-                      id="document-priority-level"
+                      id={`${formId}-priority`}
                       className="form-select"
                       value={formData.priorityLevel || 'normal'}
                       onChange={e => setFormData({ ...formData, priorityLevel: e.target.value })}
@@ -1626,8 +1717,8 @@ const DocumentList = ({
                     </select>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Direction</label>
-                    <select
+                    <label htmlFor={`${formId}-direction`} className="form-label">Direction</label>
+                    <select id={`${formId}-direction`} aria-describedby={`${formId}-direction-hint`}
                       className="form-select"
                       value={formData.documentDirection}
                       onChange={e => setFormData({ ...formData, documentDirection: e.target.value })}
@@ -1636,29 +1727,27 @@ const DocumentList = ({
                       {!isOfficeUser && <option>Incoming</option>}
                       {(currentRole !== 'receptionist' || isOfficeUser) && <option>Outgoing</option>}
                     </select>
-                    <p className="field-hint">
+                    <p id={`${formId}-direction-hint`} className="field-hint">
                       {isOfficeUser
                         ? 'Office staff send outgoing documents to other offices.'
                         : 'Incoming means received from an external sender.'}
                     </p>
                   </div>
-                </div>
-                <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Date Received</label>
-                    <input
+                    <label htmlFor={`${formId}-date`} className="form-label">Date Received</label>
+                    <input id={`${formId}-date`} aria-describedby={`${formId}-date-hint`}
                       className="form-input"
                       type="date"
                       value={formData.dateReceived}
                       disabled
                       required
                     />
-                    <p className="field-hint">Locked to the registration date. Processing follows FIFO (oldest first).</p>
+                    <p id={`${formId}-date-hint`} className="field-hint">Locked to the registration date. Processing follows FIFO (oldest first).</p>
                   </div>
                   {isOfficeUser ? (
-                    <div className="form-group">
-                      <label className="form-label">Send To Office <span className="required-mark">*</span></label>
-                      <select
+                    <div className="form-group document-registration-destination">
+                      <label htmlFor={`${formId}-destination`} className="form-label">Send To Office <span className="required-mark">*</span></label>
+                      <select id={`${formId}-destination`} aria-describedby={`${formId}-destination-hint${documentFormErrors.destinationOfficeId ? ` ${formId}-destination-error` : ''}`} aria-invalid={Boolean(documentFormErrors.destinationOfficeId)} required
                         className={`form-select${documentFormErrors.destinationOfficeId ? ' is-invalid' : ''}`}
                         value={formData.destinationOfficeId}
                         onChange={e => {
@@ -1674,14 +1763,14 @@ const DocumentList = ({
                         ))}
                       </select>
                       {documentFormErrors.destinationOfficeId && (
-                        <p className="form-field-error">{documentFormErrors.destinationOfficeId}</p>
+                        <p id={`${formId}-destination-error`} className="form-field-error">{documentFormErrors.destinationOfficeId}</p>
                       )}
-                      <p className="field-hint">Document is registered from your office, then sent to this destination.</p>
+                      <p id={`${formId}-destination-hint`} className="field-hint">Document is registered from your office, then sent to this destination.</p>
                     </div>
                   ) : currentRole === 'receptionist' ? (
-                    <div className="form-group">
-                      <label className="form-label">Destination <span className="required-mark">*</span></label>
-                      <select
+                    <div className="form-group document-registration-destination">
+                      <label htmlFor={`${formId}-destination`} className="form-label">Destination <span className="required-mark">*</span></label>
+                      <select id={`${formId}-destination`} aria-describedby={`${formId}-destination-hint${documentFormErrors.destinationOfficeId ? ` ${formId}-destination-error` : ''}`} aria-invalid={Boolean(documentFormErrors.destinationOfficeId)} required
                         className={`form-select${documentFormErrors.destinationOfficeId ? ' is-invalid' : ''}`}
                         value={formData.destinationOfficeId}
                         onChange={e => {
@@ -1694,48 +1783,21 @@ const DocumentList = ({
                         <option value="">Select a destination office</option>
                         {destinationOffices.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                       </select>
-                      {documentFormErrors.destinationOfficeId && <p className="form-field-error">{documentFormErrors.destinationOfficeId}</p>}
-                      <p className="field-hint">If this document type requires Mayor approval, it will go there first. The selected office remains its destination after approval.</p>
+                      {documentFormErrors.destinationOfficeId && <p id={`${formId}-destination-error`} className="form-field-error">{documentFormErrors.destinationOfficeId}</p>}
+                      <p id={`${formId}-destination-hint`} className="field-hint">If this document type requires Mayor approval, it will go there first. The selected office remains its destination after approval.</p>
                     </div>
-                  ) : (
-                    <div className="form-group">
-                      <label className="form-label">From Organization (Optional)</label>
-                      <input
-                        className="form-input"
-                        type="text"
-                        value={formData.originOfficeOther}
-                        onChange={e => setFormData({ ...formData, originOfficeOther: e.target.value })}
-                        placeholder="School, agency, barangay, or organization"
-                        disabled={Boolean(editDoc)}
-                      />
-                      <p className="field-hint">Optional external source for outsider documents.</p>
-                    </div>
-                  )}
+                  ) : null}
                 </div>
                 {isOfficeUser && (
                   <div className="form-group">
-                    <label className="form-label">From Office</label>
-                    <select className="form-select" value={formData.currentOfficeId} disabled>
+                    <label htmlFor={`${formId}-office`} className="form-label">From Office</label>
+                    <select id={`${formId}-office`} aria-describedby={`${formId}-office-hint`} className="form-select" value={formData.currentOfficeId} disabled>
                       {offices
                         .filter(o => o.id === formData.currentOfficeId)
                         .map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
                     </select>
-                    <p className="field-hint">Your assigned office — documents are always sent from here.</p>
+                    <p id={`${formId}-office-hint`} className="field-hint">Your assigned office — documents are always sent from here.</p>
                   </div>
-                )}
-
-                {!isOfficeUser && (
-                <div className="form-group">
-                  <label className="form-label">From Office / Organization (Optional)</label>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={formData.originOfficeOther}
-                    onChange={e => setFormData({ ...formData, originOfficeOther: e.target.value })}
-                    placeholder="School, agency, municipality, barangay, or other sender office"
-                  />
-                  <p className="field-hint">Optional external source for outsider documents.</p>
-                </div>
                 )}
 
                 <div style={{
@@ -1747,9 +1809,25 @@ const DocumentList = ({
                     <User size={12} style={{ marginRight: '0.25rem' }} />
                     Sender Information
                   </p>
+                  {!isOfficeUser && (
+                    <div className="form-group">
+                      <label htmlFor={`${formId}-organization`} className="form-label">Source organization (optional)</label>
+                      <input id={`${formId}-organization`} aria-describedby={`${formId}-organization-hint`}
+                        className="form-input"
+                        type="text"
+                        value={formData.originOfficeOther}
+                        onChange={e => setFormData({ ...formData, originOfficeOther: e.target.value })}
+                        placeholder="School, agency, barangay, or other external organization"
+                        disabled={Boolean(editDoc)}
+                      />
+                      <p id={`${formId}-organization-hint`} className="field-hint">
+                        {editDoc ? 'Source organization is fixed after registration.' : 'The external sender’s organization, separate from municipal offices.'}
+                      </p>
+                    </div>
+                  )}
                   <div className="form-group">
-                    <label className="form-label">Sender Name <span className="required-mark">*</span></label>
-                    <input
+                    <label htmlFor={`${formId}-sender-name`} className="form-label">Sender Name <span className="required-mark">*</span></label>
+                    <input id={`${formId}-sender-name`} aria-describedby={`${formId}-sender-name-hint${documentFormErrors.senderName ? ` ${formId}-sender-name-error` : ''}`} aria-invalid={Boolean(documentFormErrors.senderName)} required
                       className={`form-input${documentFormErrors.senderName ? ' is-invalid' : ''}`}
                       type="text"
                       value={formData.senderName}
@@ -1761,19 +1839,19 @@ const DocumentList = ({
                       placeholder="Full name of the sender"
                     />
                     {documentFormErrors.senderName && (
-                      <p className="form-field-error">{documentFormErrors.senderName}</p>
+                      <p id={`${formId}-sender-name-error`} className="form-field-error">{documentFormErrors.senderName}</p>
                     )}
-                    <p className="field-hint">Appears in tracking and helps staff identify who submitted the document.</p>
+                    <p id={`${formId}-sender-name-hint`} className="field-hint">Appears in tracking and helps staff identify who submitted the document.</p>
                   </div>
                   <div className="form-grid">
                     <div className="form-group">
-                      <label className="form-label">
+                      <label htmlFor={`${formId}-contact`} className="form-label">
                         <Phone size={12} style={{ marginRight: '0.25rem' }} />Contact Number
                       </label>
-                      <input className="form-input" type="tel" value={formData.senderContact}
+                      <input id={`${formId}-contact`} aria-describedby={`${formId}-contact-hint`} className="form-input" type="tel" value={formData.senderContact}
                         onChange={e => setFormData({ ...formData, senderContact: e.target.value })}
                         placeholder="09XX-XXX-XXXX" />
-                      <p className="field-hint">Optional SMS tracking updates for external senders.</p>
+                      <p id={`${formId}-contact-hint`} className="field-hint">Optional SMS tracking updates for external senders.</p>
                     </div>
                   </div>
                   {!isOfficeUser && (
@@ -1789,18 +1867,18 @@ const DocumentList = ({
                     </div>
                   )}
                   <div className="form-group">
-                    <label className="form-label">
+                    <label htmlFor={`${formId}-remarks`} className="form-label">
                       <MessageSquare size={12} style={{ marginRight: '0.25rem' }} />Remarks
                     </label>
-                    <textarea className="form-input" value={formData.remarks}
+                    <textarea id={`${formId}-remarks`} aria-describedby={`${formId}-remarks-hint`} className="form-input" value={formData.remarks}
                       onChange={e => setFormData({ ...formData, remarks: e.target.value })}
                       placeholder="Additional notes" rows={2} style={{ resize: 'vertical' }} />
-                    <p className="field-hint">Optional internal note for context, instructions, or special handling.</p>
+                    <p id={`${formId}-remarks-hint`} className="field-hint">Optional internal note for context, instructions, or special handling.</p>
                   </div>
                 </div>
 
                 <div className="form-group" style={{ marginTop: '1rem' }}>
-                  <label className="form-label">
+                  <label htmlFor={`${formId}-attachment`} className="form-label">
                     <Upload size={12} style={{ marginRight: '0.25rem' }} />
                     Scanned File Attachment <span className="required-mark">*</span>
                   </label>
@@ -1827,7 +1905,7 @@ const DocumentList = ({
                       ))}
                     </div>
                   )}
-                  <input
+                  <input required={!formScannedFiles.length} id={`${formId}-attachment`} aria-describedby={`${formId}-attachment-hint${documentFormErrors.attachmentFile ? ` ${formId}-attachment-error` : ''}`} aria-invalid={Boolean(documentFormErrors.attachmentFile)}
                     className={`form-input${documentFormErrors.attachmentFile ? ' is-invalid' : ''}`}
                     type="file"
                     accept="image/*,.pdf"
@@ -1838,7 +1916,7 @@ const DocumentList = ({
                     }}
                   />
                   {documentFormErrors.attachmentFile && (
-                    <p className="form-field-error">{documentFormErrors.attachmentFile}</p>
+                    <p id={`${formId}-attachment-error`} className="form-field-error">{documentFormErrors.attachmentFile}</p>
                   )}
                   {attachmentFile && (
                     <div className="attachment-item" style={{ marginTop: '0.45rem' }}>
@@ -1855,7 +1933,7 @@ const DocumentList = ({
                       </button>
                     </div>
                   )}
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  <p id={`${formId}-attachment-hint`} className="field-hint" style={{ marginTop: '0.35rem' }}>
                     Attach a scanned image or PDF. You can remove existing files above, then add a replacement if needed.
                   </p>
                 </div>
@@ -1874,21 +1952,21 @@ const DocumentList = ({
       )}
 
       {rejectDoc && (
-        <ModalOverlay onClose={() => setRejectDoc(null)}>
+        <ModalOverlay aria-labelledby={`${formId}-reject-title`} onClose={() => setRejectDoc(null)}>
           <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h2>Reject Document</h2>
+                <h2 id={`${formId}-reject-title`}>Reject Document</h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                   {rejectDoc.trackingNumber} - {rejectDoc.subject}
                 </p>
               </div>
-              <button className="btn-icon" onClick={() => setRejectDoc(null)}><X size={18} /></button>
+              <button className="btn-icon" aria-label="Close rejection form" onClick={() => setRejectDoc(null)}><X size={18} /></button>
             </div>
             <form onSubmit={handleRejectSubmit} noValidate>
               <div className="modal-body">
                 {rejectError && (
-                  <div className="form-error-summary" role="alert">{rejectError}</div>
+                  <div id={`${formId}-reject-error`} data-form-error tabIndex={-1} className="form-error-summary" role="alert">{rejectError}</div>
                 )}
                 <div className="reject-warning">
                   <AlertTriangle size={18} />
@@ -1898,8 +1976,8 @@ const DocumentList = ({
                   </div>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Rejection Reason</label>
-                  <textarea
+                  <label htmlFor={`${formId}-reject-reason`} className="form-label">Rejection Reason</label>
+                  <textarea id={`${formId}-reject-reason`} aria-describedby={`${formId}-reject-reason-hint${rejectError ? ` ${formId}-reject-error` : ''}`} aria-invalid={Boolean(rejectError)} required
                     className={`form-input${rejectError ? ' is-invalid' : ''}`}
                     value={rejectReason}
                     onChange={e => {
@@ -1911,7 +1989,7 @@ const DocumentList = ({
                     autoFocus
                     style={{ resize: 'vertical' }}
                   />
-                  <p className="field-hint">This is shown to the office that must correct and resubmit the document.</p>
+                  <p id={`${formId}-reject-reason-hint`} className="field-hint">This is shown to the office that must correct and resubmit the document.</p>
                 </div>
               </div>
               <div className="modal-footer">
@@ -1929,21 +2007,21 @@ const DocumentList = ({
         const config = processingActionLabels[processingAction.action];
         const doc = processingAction.doc;
         return (
-          <ModalOverlay onClose={() => setProcessingAction(null)}>
+          <ModalOverlay aria-labelledby={`${formId}-action-title`} onClose={() => setProcessingAction(null)}>
             <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
-                  <h2>{config?.title || 'Document Action'}</h2>
+                  <h2 id={`${formId}-action-title`}>{config?.title || 'Document Action'}</h2>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                     {doc.trackingNumber} - {doc.subject}
                   </p>
                 </div>
-                <button className="btn-icon" onClick={() => setProcessingAction(null)}><X size={18} /></button>
+                <button className="btn-icon" aria-label="Close document action" onClick={() => setProcessingAction(null)}><X size={18} /></button>
               </div>
               <form onSubmit={handleProcessingSubmit} noValidate>
                 <div className="modal-body">
                   {processingError && (
-                    <div className="form-error-summary" role="alert">{processingError}</div>
+                    <div data-form-error tabIndex={-1} className="form-error-summary" role="alert">{processingError}</div>
                   )}
                   <div className="reject-warning">
                     <Clock size={18} />
@@ -1953,8 +2031,8 @@ const DocumentList = ({
                     </div>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">{config?.required ? 'Action Note' : 'Remarks'}</label>
-                    <textarea
+                    <label htmlFor={`${formId}-action-note`} className="form-label">{config?.required ? 'Action Note' : 'Remarks'}</label>
+                    <textarea required={Boolean(config?.required)} id={`${formId}-action-note`} aria-describedby={`${formId}-action-note-hint${processingError ? ` ${formId}-action-note-error` : ''}`} aria-invalid={Boolean(processingError)}
                       className={`form-input${processingError ? ' is-invalid' : ''}`}
                       value={processingNote}
                       onChange={e => {
@@ -1967,9 +2045,9 @@ const DocumentList = ({
                       style={{ resize: 'vertical' }}
                     />
                     {processingError && (
-                      <p className="form-field-error">{processingError}</p>
+                      <p id={`${formId}-action-note-error`} className="form-field-error">{processingError}</p>
                     )}
-                    <p className="field-hint">Records the action on the document timeline for audit and tracking.</p>
+                    <p id={`${formId}-action-note-hint`} className="field-hint">Records the action on the document timeline for audit and tracking.</p>
                   </div>
                 </div>
                 <div className="modal-footer">
@@ -1996,38 +2074,56 @@ const DocumentList = ({
       )}
 
       {routeDoc && (
-        <ModalOverlay onClose={() => { setRouteDoc(null); setSendOfficeIds([]); }}>
+        <ModalOverlay aria-labelledby={`${formId}-route-title`} onClose={closeRouteModal}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Send Document</h2>
-              <button className="btn-icon" onClick={() => { setRouteDoc(null); setSendOfficeIds([]); }}><X size={18} /></button>
+              <h2 id={`${formId}-route-title`}>Send Document</h2>
+              <button type="button" className="btn-icon" aria-label="Close send form" disabled={isSendingDocument} onClick={closeRouteModal}><X size={18} /></button>
             </div>
-            <form onSubmit={handleRouteSubmit}>
+            <form ref={routeFormRef} onSubmit={handleRouteSubmit} aria-busy={isSendingDocument}>
               <div className="modal-body">
+                {routeError && <div id={`${formId}-route-error`} className="form-error-summary" data-form-error role="alert" tabIndex={-1}>{routeError}</div>}
                 <div className="form-group">
-                  <label className="form-label">Document</label>
-                  <input className="form-input" value={`${routeDoc.trackingNumber} - ${routeDoc.subject}`} readOnly />
+                  <label htmlFor={`${formId}-route-document`} className="form-label">Document</label>
+                  <input id={`${formId}-route-document`} className="form-input" value={`${routeDoc.trackingNumber} - ${routeDoc.subject}`} readOnly />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Current Office</label>
-                  <input className="form-input" value={getOfficeName(routeDoc.currentOfficeId)} readOnly />
+                  <label htmlFor={`${formId}-route-office`} className="form-label">Current Office</label>
+                  <input id={`${formId}-route-office`} className="form-input" value={getOfficeName(routeDoc.currentOfficeId)} readOnly />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Destination Offices</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '220px', overflow: 'auto' }}>
+                  <label htmlFor={`${formId}-route-custody`} className="form-label">Custody office *</label>
+                  <select id={`${formId}-route-custody`} className="form-select" required
+                    value={sendCustodyOfficeId} disabled={isSendingDocument || Boolean(routeAttempt)}
+                    aria-invalid={Boolean(routeError && !sendCustodyOfficeId)}
+                    aria-describedby={`${formId}-route-custody-hint${routeError ? ` ${formId}-route-error` : ''}`}
+                    onChange={event => {
+                      setSendCustodyOfficeId(event.target.value);
+                      setSendCopyOfficeIds(previous => previous.filter(id => id !== event.target.value));
+                    }}>
+                    <option value="">Choose the receiving office</option>
+                    {offices.filter(office => office.id !== routeDoc.currentOfficeId).map(office => <option key={office.id} value={office.id}>{office.name}</option>)}
+                  </select>
+                  <p id={`${formId}-route-custody-hint`} className="field-hint">
+                    This office takes custody after confirming receipt.
+                    {routeDoc.sendQueue?.length > 0 && ` Planned next offices: ${routeDoc.sendQueue.map(getOfficeName).join(', ')}. Choose custody explicitly.`}
+                  </p>
+                </div>
+                <div className="form-group">
+                  <div id={`${formId}-route-copies-label`} className="form-label">Copy recipients (optional)</div>
+                  <div role="group" aria-labelledby={`${formId}-route-copies-label`} aria-describedby={`${formId}-route-copies-hint`} style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '220px', overflow: 'auto' }}>
                     {offices
-                      .filter((office) => office.id !== routeDoc.currentOfficeId)
+                      .filter((office) => office.id !== routeDoc.currentOfficeId && office.id !== sendCustodyOfficeId)
                       .map((office) => {
-                        const checked = sendOfficeIds.includes(office.id);
-                        const order = sendOfficeIds.indexOf(office.id) + 1;
+                        const checked = sendCopyOfficeIds.includes(office.id);
                         return (
-                          <label key={office.id} className="checkbox-row" style={{ justifyContent: 'space-between' }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <label key={office.id} className="checkbox-row">
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                disabled={isSendingDocument || Boolean(routeAttempt)}
                                 onChange={() => {
-                                  setSendOfficeIds((prev) => (
+                                  setSendCopyOfficeIds((prev) => (
                                     checked
                                       ? prev.filter((id) => id !== office.id)
                                       : [...prev, office.id]
@@ -2035,20 +2131,24 @@ const DocumentList = ({
                                 }}
                               />
                               {office.name}
-                            </span>
-                            {checked && <span className="field-hint" style={{ margin: 0 }}>{order === 1 ? 'Custody office' : 'Copy'}</span>}
                           </label>
                         );
                       })}
                   </div>
-                  <p className="field-hint">
-                    Every selected office receives a copy and confirms receipt independently. The first selected office takes custody after confirming receipt.
+                  <p id={`${formId}-route-copies-hint`} className="field-hint">
+                    Copy recipients confirm receipt independently. They do not take custody.
                   </p>
                 </div>
               </div>
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => { setRouteDoc(null); setSendOfficeIds([]); }}>Cancel</button>
-                <button type="submit" className="btn btn-primary"><Send size={16} /> Send Document</button>
+                <button type="button" className="btn btn-secondary" disabled={isSendingDocument} onClick={closeRouteModal}>{routeAttempt ? 'Close' : 'Cancel'}</button>
+                {routeAttempt ? (
+                  <button type="button" className="btn btn-primary" disabled={isSendingDocument} onClick={checkRouteSendStatus}>
+                    {isSendingDocument ? 'Checking send…' : 'Check send status'}
+                  </button>
+                ) : (
+                  <button type="submit" className="btn btn-primary" disabled={isSendingDocument}><Send size={16} /> {isSendingDocument ? 'Sending…' : 'Send Document'}</button>
+                )}
               </div>
             </form>
           </div>

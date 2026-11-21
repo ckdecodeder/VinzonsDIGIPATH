@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useId } from "react";
 import { documentService } from '../api/documentService';
+import { focusFormError } from '../utils/formAccessibility';
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
 import ScannedPreviewModal from "../components/ScannedPreviewModal";
@@ -38,6 +39,7 @@ const ArchiveList = ({
   onEditDocument,
   onNotify,
 }) => {
+  const formId = useId();
   const [search, setSearch] = useState("");
   const [filterDate, setFilterDate] = useState("");
   const [showForm, setShowForm] = useState(Boolean(initialDocumentId));
@@ -276,6 +278,7 @@ const ArchiveList = ({
 
   const handleSubmit = async e => {
     e.preventDefault();
+    const formElement = e.currentTarget;
     if (saving || !confirmed || reviewDoc?.id !== formData.documentId) return;
     setSaving(true); setArchiveError('');
     try {
@@ -284,6 +287,7 @@ const ArchiveList = ({
       setFormData(previous => ({ ...previous, documentId: '' }));
     } catch (error) {
       setArchiveError(error.message || 'Could not archive this document. Review the attachment and try again.');
+      focusFormError(formElement);
     } finally {
       setSaving(false);
     }
@@ -314,10 +318,10 @@ const ArchiveList = ({
         toolbar={
           <div className="document-toolbar document-toolbar--archives">
             <div className="filter-dropdown filter-dropdown-search">
-              <label>Search</label>
+              <label htmlFor={`${formId}-search`}>Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
-                <input
+                <input id={`${formId}-search`}
                   type="text"
                   placeholder="Search by subject, tracking, name, type, or location..."
                   value={search}
@@ -364,7 +368,7 @@ const ArchiveList = ({
                   onClick={() => setDetailArchive(a)}
                 >
                   <td className="archives-col-id" title={a.id}>
-                    <span className="td-mono documents-tracking-code">{a.id}</span>
+                    <button type="button" className="row-open-control td-mono documents-tracking-code" aria-label={`Open archive ${a.doc?.subject || a.id}`} onClick={event => { event.stopPropagation(); setDetailArchive(a); }}>{a.id}</button>
                   </td>
                   <td className="archives-col-tracking" title={a.doc?.trackingNumber || "-"}>
                     <span className="td-mono documents-tracking-code">
@@ -461,14 +465,14 @@ const ArchiveList = ({
           const timeline = getArchiveTimeline(archive, doc);
 
           return (
-            <ModalOverlay onClose={() => setDetailArchive(null)}>
+            <ModalOverlay aria-labelledby={`${formId}-detail-title`} onClose={() => setDetailArchive(null)}>
               <div
                 className="modal document-detail-modal"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="modal-header">
                   <div>
-                    <h2>Archive Details</h2>
+                    <h2 id={`${formId}-detail-title`}>Archive Details</h2>
                     <p
                       style={{
                         color: "var(--text-muted)",
@@ -479,7 +483,7 @@ const ArchiveList = ({
                       {archive.id}
                     </p>
                   </div>
-                  <button
+                  <button aria-label="Close dialog"
                     className="btn-icon"
                     onClick={() => setDetailArchive(null)}
                   >
@@ -654,11 +658,11 @@ const ArchiveList = ({
         })()}
 
       {showForm && !previewFile && (
-        <ModalOverlay onClose={() => !saving && setShowForm(false)}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => !saving && setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Archive a Document</h2>
-              <button className="btn-icon" onClick={() => !saving && setShowForm(false)}>
+              <h2 id={`${formId}-form-title`}>Archive a Document</h2>
+              <button aria-label="Close dialog" className="btn-icon" onClick={() => !saving && setShowForm(false)}>
                 <X size={18} />
               </button>
             </div>
@@ -668,6 +672,7 @@ const ArchiveList = ({
                   <label htmlFor="archive-document" className="form-label">Document to Archive</label>
                   <select
                     className="form-select"
+                    aria-describedby={`${formId}-document-hint`}
                     id="archive-document" disabled={saving} value={formData.documentId}
                     onChange={(e) =>
                       setFormData({ ...formData, documentId: e.target.value })
@@ -681,7 +686,7 @@ const ArchiveList = ({
                       </option>
                     ))}
                   </select>
-                  <p className="field-hint">
+                  <p id={`${formId}-document-hint`} className="field-hint">
                     Only completed documents that can be moved into archive are
                     listed.
                   </p>
@@ -692,12 +697,12 @@ const ArchiveList = ({
                     {getDocumentFiles(reviewDoc).map(file => <button key={file.id || file.name} type="button" className="attachment-link" disabled={saving} onClick={() => openPreview(file, reviewDoc)}><Eye size={16} />{file.name}</button>)}
                     {getDocumentFiles(reviewDoc).length ? <label><input type="checkbox" checked={confirmed} disabled={saving} onChange={e => setConfirmed(e.target.checked)} /> I confirm the final copy is attached.</label> : <p>Attach the final copy in Documents before archiving.</p>}
                   </> : !archiveError && <p role="status">Loading attachments…</p>}
-                  {archiveError && <div role="alert">{archiveError} <button type="button" className="btn btn-secondary" onClick={() => setRetry(n => n + 1)}>Reload attachments</button></div>}
+                  {archiveError && <div role="alert" data-form-error tabIndex={-1}>{archiveError} <button type="button" className="btn btn-secondary" onClick={() => setRetry(n => n + 1)}>Reload attachments</button></div>}
                 </section>}
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Archived By</label>
-                    <input
+                    <label className="form-label" htmlFor={`${formId}-archived-by`}>Archived By</label>
+                    <input id={`${formId}-archived-by`} aria-describedby={`${formId}-archived-by-hint`}
                       className="form-input"
                       value={
                         currentUser
@@ -706,14 +711,14 @@ const ArchiveList = ({
                       }
                       readOnly
                     />
-                    <p className="field-hint">
+                    <p id={`${formId}-archived-by-hint`} className="field-hint">
                       Automatically records the signed-in user performing the
                       archive action.
                     </p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Archive Date</label>
-                    <input
+                    <label className="form-label" htmlFor={`${formId}-archive-date`}>Archive Date</label>
+                    <input id={`${formId}-archive-date`} aria-describedby={`${formId}-archive-date-hint`}
                       className="form-input"
                       type="date"
                       value={formData.date}
@@ -722,7 +727,7 @@ const ArchiveList = ({
                       }
                       required
                     />
-                    <p className="field-hint">
+                    <p id={`${formId}-archive-date-hint`} className="field-hint">
                       The official date used in archive records and reports.
                     </p>
                   </div>

@@ -27,10 +27,10 @@ export const documentTypes = [
 
 // =============== PRIORITY LEVELS ===============
 export const priorityLevels = [
-  { id: 'urgent', label: 'Urgent', color: '#ef4444', bg: 'rgba(239, 68, 68, 0.1)' },
-  { id: 'high', label: 'High', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' },
-  { id: 'normal', label: 'Normal', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)' },
-  { id: 'low', label: 'Low', color: '#6b7280', bg: 'rgba(107, 114, 128, 0.1)' },
+  { id: 'urgent', label: 'Urgent', color: 'var(--danger)', bg: 'var(--danger-bg)' },
+  { id: 'high', label: 'High', color: 'var(--warning)', bg: 'var(--warning-bg)' },
+  { id: 'normal', label: 'Normal', color: 'var(--info)', bg: 'var(--info-bg)' },
+  { id: 'low', label: 'Low', color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' },
 ];
 
 // =============== USERS (3 roles: Admin, Mayor, Receptionist) ===============
@@ -229,7 +229,7 @@ export const getDocTypeName = (typeId) => {
 
 export const getPriorityInfo = (priorityId) => {
   const p = priorityLevels.find(pl => pl.id === priorityId);
-  return p || { id: 'normal', label: 'Normal', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)' };
+  return p || { id: 'normal', label: 'Normal', color: 'var(--info)', bg: 'var(--info-bg)' };
 };
 
 export const generateTrackingNumber = () => {

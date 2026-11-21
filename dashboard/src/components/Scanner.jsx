@@ -323,7 +323,7 @@ const resolveAutoSubject = (doc) => {
   return isPlaceholderSubject(fromText) ? '' : fromText;
 };
 
-const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device: deviceProp }) => {
+const Scanner = ({ onCapture, onEditDocument, onOpenRecord, currentUser, offices = defaultOffices, documentTypes = defaultDocumentTypes, device: deviceProp }) => {
   const { device, cameOnline } = useLiveDevice(deviceProp);
   const camera = useRef(null);
   const commandPollRef = useRef(null);
@@ -356,6 +356,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   };
   // Step 1 = Scan, Step 2 = Fill Details, Step 3 = Review, Step 4 = Done
   const [step, setStep] = useState(1);
+  const [registeredDoc, setRegisteredDoc] = useState(null);
   const [cameraSource] = useState(PHYSICAL_CAMERA_VALUE);
   const [paperGuideId, setPaperGuideId] = useState('letter-landscape');
   const [pagesToCaptureInput, setPagesToCaptureInput] = useState('1');
@@ -1568,7 +1569,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         const scanOfficeId = hardwareScannedDoc.currentOfficeId
           || hardwareScannedDoc.originOfficeId
           || receptionOfficeId;
-        await onEditDocument?.({
+        const savedDoc = await onEditDocument?.({
           id: hardwareScannedDoc.id,
           subject: formData.subject,
           documentDirection: 'Incoming',
@@ -1598,6 +1599,8 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
           toOfficeIds: getInitialHandoffOfficeIds(),
           transmissionType: 'External',
         } : null);
+        if (!savedDoc?.id) throw new Error('The saved record could not be confirmed. Check All Documents before registering again.');
+        setRegisteredDoc(savedDoc);
         capturedImagesRef.current = filesToSave;
         setCapturedImages(filesToSave);
         setCapturedImage(combinedPdf.dataUrl);
@@ -1655,7 +1658,9 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
         intakeStatus: 'Approved',
       };
 
-      await onCapture?.(null, extractedText, newDoc);
+      const saved = await onCapture?.(null, extractedText, newDoc);
+      if (!saved?.document?.id) throw new Error('The saved record could not be confirmed. Check All Documents before registering again.');
+      setRegisteredDoc(saved.document);
       capturedImagesRef.current = filesToSave;
       setCapturedImages(filesToSave);
       setCapturedImage(combinedPdf.dataUrl);
@@ -1667,6 +1672,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   });
 
   const handleRescan = () => {
+    setRegisteredDoc(null);
     if (enrichPollRef.current) {
       clearInterval(enrichPollRef.current);
       enrichPollRef.current = null;
@@ -1693,6 +1699,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
   };
 
   const handleReset = () => {
+    setRegisteredDoc(null);
     sortPollAbortRef.current = true;
     setSortStatus(null);
     if (enrichPollRef.current) {
@@ -2509,6 +2516,7 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             textAlign: 'left',
           }}>
             {[
+              { label: 'Tracking number', value: registeredDoc?.trackingNumber || 'Open the record for tracking details' },
               { label: 'Subject', value: formData.subject },
               { label: 'Sender', value: formData.senderName },
               { label: 'Destination', value: getOfficeName(formData.toOfficeId) },
@@ -2520,11 +2528,17 @@ const Scanner = ({ onCapture, onEditDocument, currentUser, offices = defaultOffi
             ))}
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '0.75rem' }}>
-            <button onClick={handleReset} className="btn btn-primary">
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '0.75rem' }}>
+            {onOpenRecord && registeredDoc?.id && (
+              <button type="button" onClick={() => onOpenRecord(registeredDoc.id)} className="btn btn-primary">
+                <FileText size={16} /> Open record
+              </button>
+            )}
+            <button type="button" onClick={handleReset} className="btn btn-secondary">
               <Scan size={16} /> Scan Another
             </button>
           </div>
+          {onOpenRecord && registeredDoc?.id && <p className="field-hint" style={{ marginTop: '0.75rem' }}>Open the record to view details or print the claim slip.</p>}
         </div>
       )}
 

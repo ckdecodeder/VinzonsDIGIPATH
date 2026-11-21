@@ -1,5 +1,6 @@
+import { focusFormError } from '../utils/formAccessibility';
 import { createSubmissionGate } from '../utils/submissionGate';
-import React, { useRef, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import ModalOverlay from '../components/ModalOverlay';
 import formatBadgeCount from '../utils/formatBadgeCount';
 import {
@@ -23,10 +24,12 @@ import {
 } from '../data/mockData';
 import { compareOldest } from '../utils/sorting';
 import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
+import { manilaDate, matchesReceptionQueue } from '../utils/documentQueue';
 
 const ReceptionistDashboard = ({
   dataStates = {},
   documents,
+  transmissions = [],
   offices = defaultOffices,
   documentTypes = defaultDocumentTypes,
   currentUser,
@@ -36,7 +39,9 @@ const ReceptionistDashboard = ({
   onNotify,
   onReturnToSender,
 }) => {
+  const formId = useId();
   const [activeTab, setActiveTab] = useState('overview');
+  const [incomingFilter, setIncomingFilter] = useState('All');
   const [showReceiveForm, setShowReceiveForm] = useState(false);
   const [attachmentFile, setAttachmentFile] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -52,7 +57,7 @@ const ReceptionistDashboard = ({
     documentTypeOther: '',
     status: 'Received',
     priorityLevel: 'normal',
-    dateReceived: new Date().toISOString().split('T')[0],
+    dateReceived: manilaDate(),
     originOfficeId: currentUser?.officeId || 'OFF-001',
     currentOfficeId: mayorsOfficeId,
     destinationOfficeId: mayorsOfficeId,
@@ -72,7 +77,6 @@ const ReceptionistDashboard = ({
   const [receiveFormErrors, setReceiveFormErrors] = useState({});
   const [receiveFormErrorSummary, setReceiveFormErrorSummary] = useState('');
 
-  const finishedStatuses = ['Signed', 'Acknowledged', 'Archived', 'Returned to Sender'];
   const incomingDocuments = documents.filter(d => d.documentDirection === 'Incoming');
   const getWorkflowStatus = (doc) => {
     if (doc?.status === 'For Signature') return 'For Signing';
@@ -80,15 +84,18 @@ const ReceptionistDashboard = ({
     return doc?.status || 'Received';
   };
 
-  const todayDocs = incomingDocuments.filter(d => {
-    const today = new Date().toISOString().split('T')[0];
-    return d.dateReceived === today;
-  });
-  const forwardedToMayorDocs = incomingDocuments.filter(d => d.destinationOfficeId === mayorsOfficeId || d.currentOfficeId === mayorsOfficeId);
+  const receptionQueueOptions = { mayorsOfficeId, transmissions };
+  const todayDocs = incomingDocuments.filter(doc => matchesReceptionQueue(doc, 'Received Today', receptionQueueOptions));
+  const forwardedToMayorDocs = incomingDocuments.filter(doc => matchesReceptionQueue(doc, 'Sent to Mayor', receptionQueueOptions));
+  const filteredIncomingDocuments = incomingDocuments.filter(doc => matchesReceptionQueue(doc, incomingFilter, receptionQueueOptions));
   const pendingDocuments = [...incomingDocuments]
-    .filter(doc => !finishedStatuses.includes(getWorkflowStatus(doc)) && doc.intakeStatus !== 'Returned to Sender')
+    .filter(doc => matchesReceptionQueue(doc, 'Pending', receptionQueueOptions))
     .sort((a, b) => compareOldest(a, b, ['createdAt', 'dateReceived', 'updatedAt']));
   const rejectedDocs = incomingDocuments.filter(d => ['Rejected', 'Returned to Sender'].includes(d.intakeStatus) && d.currentOfficeId === currentUser?.officeId);
+  const openIncoming = (filter) => {
+    setIncomingFilter(filter);
+    setActiveTab('incoming');
+  };
 
   const statCards = [
     {
@@ -96,28 +103,29 @@ const ReceptionistDashboard = ({
       value: todayDocs.length,
       icon: <Inbox size={26} />,
       color: 'blue',
-      onClick: () => setActiveTab('incoming'),
+      onClick: () => openIncoming('Received Today'),
     },
     {
       label: 'Sent to Mayor',
       value: forwardedToMayorDocs.length,
+      ready: dataStates.transmissions?.status === 'ready' && dataStates.offices?.status === 'ready',
       icon: <Send size={26} />,
       color: 'purple',
-      onClick: () => setActiveTab('incoming'),
+      onClick: () => openIncoming('Sent to Mayor'),
     },
     {
-      label: 'Pending',
+      label: 'Pending workflow',
       value: pendingDocuments.length,
       icon: <Clock size={26} />,
       color: 'amber',
       onClick: () => setActiveTab('routing'),
     },
     {
-      label: 'Total In System',
+      label: 'Total incoming',
       value: incomingDocuments.length,
       icon: <FileText size={26} />,
       color: 'purple',
-      onClick: () => onNavigate('documents'),
+      onClick: () => openIncoming('All'),
     },
   ];
 
@@ -162,7 +170,7 @@ const ReceptionistDashboard = ({
     if (status === 'For Filing') {
       return 'Waiting for Mayor acknowledgement.';
     }
-    if (status === 'Signed' || status === 'Acknowledged' || status === 'Archived') {
+    if (status === 'Completed' || status === 'Signed' || status === 'Acknowledged' || status === 'Archived') {
       return 'Completed workflow.';
     }
     return '';
@@ -185,6 +193,7 @@ const ReceptionistDashboard = ({
 
   const handleReceive = (e) => {
     e.preventDefault();
+    const form = e.currentTarget;
     return receiveSubmitGate.current(async () => {
       const validation = validateRequiredFields([
         { key: 'subject', label: 'Document subject', value: receiveForm.subject },
@@ -204,6 +213,7 @@ const ReceptionistDashboard = ({
       if (!validation.isValid) {
         setReceiveFormErrors(validation.errors);
         setReceiveFormErrorSummary(validation.summary);
+        focusFormError(form);
         return;
       }
       setReceiveFormErrors({});
@@ -273,7 +283,7 @@ const ReceptionistDashboard = ({
             </div>
             <div>
               <h3>Quick Scan Intake</h3>
-              <p>Scan a document, save it, then wait for intake review</p>
+              <p>Scan a document, review its details, then register it</p>
             </div>
           </div>
           <ArrowRight size={22} className="receptionist-scan-cta-arrow" />
@@ -285,6 +295,7 @@ const ReceptionistDashboard = ({
               type="button"
               key={i}
               className={`stat-card ${stat.color}`}
+              disabled={dataStates.documents?.status !== 'ready' || stat.ready === false}
               onClick={stat.onClick}
               title={`Open ${stat.label}`}
               style={{ textAlign: 'left' }}
@@ -292,7 +303,7 @@ const ReceptionistDashboard = ({
               <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
               <div className="stat-info">
                 <p className="stat-label">{stat.label}</p>
-                <p className="stat-value">{dataStates.documents?.status === 'ready' ? stat.value : '—'}</p>
+                <p className="stat-value">{dataStates.documents?.status === 'ready' && stat.ready !== false ? stat.value : '—'}</p>
               </div>
             </button>
           ))}
@@ -301,8 +312,8 @@ const ReceptionistDashboard = ({
 
       <div className="tab-bar receptionist-tabs">
         <button className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>Overview</button>
-        <button className={`tab-btn ${activeTab === 'incoming' ? 'active' : ''}`} onClick={() => setActiveTab('incoming')}>Incoming Docs</button>
-        <button className={`tab-btn ${activeTab === 'routing' ? 'active' : ''}`} onClick={() => setActiveTab('routing')}>Pending</button>
+        <button className={`tab-btn ${activeTab === 'incoming' ? 'active' : ''}`} onClick={() => openIncoming('All')}>Incoming Docs</button>
+        <button className={`tab-btn ${activeTab === 'routing' ? 'active' : ''}`} onClick={() => setActiveTab('routing')}>Pending workflow</button>
       </div>
 
       <div className="receptionist-dashboard-body">
@@ -352,7 +363,7 @@ const ReceptionistDashboard = ({
           {/* Pending Documents */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Pending</h3>
+              <h3 className="card-title">Pending workflow</h3>
               <span className="nav-badge">{formatBadgeCount(pendingDocuments.length)}</span>
             </div>
             {pendingDocuments.length > 0 ? (
@@ -404,6 +415,10 @@ const ReceptionistDashboard = ({
 
       {activeTab === 'incoming' && (
         <div className="receptionist-tab-panel table-container">
+          <div className="card-header">
+            <h2 className="card-title">{incomingFilter === 'All' ? 'Incoming documents' : incomingFilter} ({filteredIncomingDocuments.length})</h2>
+            {incomingFilter !== 'All' && <button type="button" className="btn btn-sm btn-secondary" onClick={() => openIncoming('All')}>Show all incoming</button>}
+          </div>
           <table>
             <thead>
               <tr>
@@ -418,7 +433,7 @@ const ReceptionistDashboard = ({
               </tr>
             </thead>
             <tbody>
-              {incomingDocuments.map(doc => {
+              {filteredIncomingDocuments.map(doc => {
                 return (
                   <tr
                     key={doc.id}
@@ -427,7 +442,7 @@ const ReceptionistDashboard = ({
                     title="Open document details"
                   >
                     <td><span className="td-mono">{doc.trackingNumber}</span></td>
-                    <td className="td-primary">{doc.subject}</td>
+                    <td className="td-primary">{doc.subject} <button type="button" className="btn btn-sm btn-secondary" aria-label={`Open ${doc.subject || doc.trackingNumber || 'document'}`} onClick={(event) => { event.stopPropagation(); openDocumentInterface(doc); }}>Open</button></td>
                     <td>{getDocTypeName(doc.documentTypeId)}</td>
                     <td style={{ fontSize: '0.8rem' }}>{doc.senderName || '—'}</td>
                     <td>
@@ -441,6 +456,7 @@ const ReceptionistDashboard = ({
                   </tr>
                 );
               })}
+              {!filteredIncomingDocuments.length && <tr><td colSpan="8">No documents match this view.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -469,7 +485,7 @@ const ReceptionistDashboard = ({
                     title="Open document details"
                   >
                     <td><span className="td-mono">{doc.trackingNumber}</span></td>
-                    <td className="td-primary">{doc?.subject || '—'}</td>
+                    <td className="td-primary">{doc?.subject || '—'} <button type="button" className="btn btn-sm btn-secondary" aria-label={`Open ${doc.subject || doc.trackingNumber || 'document'}`} onClick={(event) => { event.stopPropagation(); openDocumentInterface(doc); }}>Open</button></td>
                     <td>
                       <span className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, '-')}`}>
                         {getWorkflowStatus(doc)}
@@ -515,20 +531,20 @@ const ReceptionistDashboard = ({
 
       {/* Receive Document Modal */}
       {showReceiveForm && (
-        <ModalOverlay onClose={() => { if (!isSubmitting) setShowReceiveForm(false); }}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => { if (!isSubmitting) setShowReceiveForm(false); }}>
           <div className="modal receptionist-register-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>Register External Document</h2>
-              <button className="btn-icon" disabled={isSubmitting} onClick={() => setShowReceiveForm(false)}><X size={18} /></button>
+              <h2 id={`${formId}-form-title`}>Register External Document</h2>
+              <button className="btn-icon" aria-label="Close registration form" disabled={isSubmitting} onClick={() => setShowReceiveForm(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleReceive} noValidate>
               <div className="modal-body">
                 {receiveFormErrorSummary && (
-                  <div className="form-error-summary" role="alert">{receiveFormErrorSummary}</div>
+                  <div data-form-error tabIndex={-1} className="form-error-summary" role="alert">{receiveFormErrorSummary}</div>
                 )}
                 <div className="form-group">
-                  <label className="form-label">Document Subject <span className="required-mark">*</span></label>
-                  <input
+                  <label htmlFor={`${formId}-subject`} className="form-label">Document Subject <span className="required-mark">*</span></label>
+                  <input id={`${formId}-subject`} aria-describedby={`${formId}-subject-hint${receiveFormErrors.subject ? ` ${formId}-subject-error` : ''}`} aria-invalid={Boolean(receiveFormErrors.subject)} required
                     className={`form-input${receiveFormErrors.subject ? ' is-invalid' : ''}`}
                     type="text"
                     value={receiveForm.subject}
@@ -540,50 +556,55 @@ const ReceptionistDashboard = ({
                     placeholder="Enter document subject"
                   />
                   {receiveFormErrors.subject && (
-                    <p className="form-field-error">{receiveFormErrors.subject}</p>
+                    <p id={`${formId}-subject-error`} className="form-field-error">{receiveFormErrors.subject}</p>
                   )}
-                  <p className="field-hint">Shortly describe the document so it is easy to find in tracking, tables, and reports.</p>
+                  <p id={`${formId}-subject-hint`} className="field-hint">Shortly describe the document so it is easy to find in tracking, tables, and reports.</p>
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Document Type</label>
-                    <select className="form-select" value={receiveForm.documentTypeId}
+                    <label htmlFor={`${formId}-type`} className="form-label">Document Type</label>
+                    <select id={`${formId}-type`} aria-describedby={`${formId}-type-hint`} className="form-select" value={receiveForm.documentTypeId}
                       onChange={e => setReceiveForm({ ...receiveForm, documentTypeId: e.target.value })}>
                       {documentTypes.map(dt => <option key={dt.id} value={dt.id}>{dt.category}</option>)}
                     </select>
-                    <p className="field-hint">Classifies the record for filters, reports, and workflow review.</p>
+                    <p id={`${formId}-type-hint`} className="field-hint">Classifies the record for filters, reports, and workflow review.</p>
                     {isOtherDocumentType(receiveForm.documentTypeId) && (
                       <>
-                        <input
-                          className="form-input"
+                        <input id={`${formId}-other-type`} aria-label="Other document type" aria-invalid={Boolean(receiveFormErrors.documentTypeOther)} aria-describedby={`${formId}-other-type-hint${receiveFormErrors.documentTypeOther ? ` ${formId}-other-type-error` : ''}`}
+                          className={`form-input${receiveFormErrors.documentTypeOther ? ' is-invalid' : ''}`}
                           type="text"
                           value={receiveForm.documentTypeOther}
-                          onChange={e => setReceiveForm({ ...receiveForm, documentTypeOther: e.target.value })}
+                          onChange={e => {
+                            setReceiveForm({ ...receiveForm, documentTypeOther: e.target.value });
+                            setReceiveFormErrors(prev => clearFieldError(prev, 'documentTypeOther'));
+                            if (receiveFormErrorSummary) setReceiveFormErrorSummary('');
+                          }}
                           placeholder="Specify document type"
                           required
                           style={{ marginTop: '0.5rem' }}
                         />
-                        <p className="field-hint">Names the custom type when the document is not covered by the list.</p>
+                        {receiveFormErrors.documentTypeOther && <p id={`${formId}-other-type-error`} className="form-field-error">{receiveFormErrors.documentTypeOther}</p>}
+                        <p id={`${formId}-other-type-hint`} className="field-hint">Names the custom type when the document is not covered by the list.</p>
                       </>
                     )}
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Date Received</label>
-                    <input className="form-input" type="date" value={receiveForm.dateReceived}
+                    <label htmlFor={`${formId}-date`} className="form-label">Date Received</label>
+                    <input id={`${formId}-date`} aria-describedby={`${formId}-date-hint`} className="form-input" type="date" value={receiveForm.dateReceived}
                       disabled required />
-                    <p className="field-hint">Locked to the registration date.</p>
+                    <p id={`${formId}-date-hint`} className="field-hint">Locked to the registration date.</p>
                   </div>
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Destination Office</label>
-                  <input
+                  <label htmlFor={`${formId}-destination`} className="form-label">Destination Office</label>
+                  <input id={`${formId}-destination`} aria-describedby={`${formId}-destination-hint`}
                     className="form-input"
                     type="text"
                     value="Mayor's Office"
                     disabled
                   />
-                  <p className="field-hint">All external documents are automatically routed to the Mayor's Office.</p>
+                  <p id={`${formId}-destination-hint`} className="field-hint">All external documents are automatically routed to the Mayor's Office.</p>
                 </div>
 
                 {/* Sender Info */}
@@ -596,8 +617,8 @@ const ReceptionistDashboard = ({
                     <User size={12} style={{ marginRight: '0.25rem' }} />Sender Information (External)
                   </p>
                   <div className="form-group">
-                    <label className="form-label">Sender Name <span className="required-mark">*</span></label>
-                    <input
+                    <label htmlFor={`${formId}-sender-name`} className="form-label">Sender Name <span className="required-mark">*</span></label>
+                    <input id={`${formId}-sender-name`} aria-describedby={`${formId}-sender-name-hint${receiveFormErrors.senderName ? ` ${formId}-sender-name-error` : ''}`} aria-invalid={Boolean(receiveFormErrors.senderName)} required
                       className={`form-input${receiveFormErrors.senderName ? ' is-invalid' : ''}`}
                       type="text"
                       value={receiveForm.senderName}
@@ -609,43 +630,43 @@ const ReceptionistDashboard = ({
                       placeholder="Full name of the sender"
                     />
                     {receiveFormErrors.senderName && (
-                      <p className="form-field-error">{receiveFormErrors.senderName}</p>
+                      <p id={`${formId}-sender-name-error`} className="form-field-error">{receiveFormErrors.senderName}</p>
                     )}
-                    <p className="field-hint">Identifies who submitted the document and appears in tracking details.</p>
+                    <p id={`${formId}-sender-name-hint`} className="field-hint">Identifies who submitted the document and appears in tracking details.</p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label"><Phone size={12} style={{ marginRight: '0.25rem' }} />Contact Number (Optional)</label>
-                    <input className="form-input" type="tel" value={receiveForm.senderContact}
+                    <label htmlFor={`${formId}-contact`} className="form-label"><Phone size={12} style={{ marginRight: '0.25rem' }} />Contact Number (Optional)</label>
+                    <input id={`${formId}-contact`} aria-describedby={`${formId}-contact-hint`} className="form-input" type="tel" value={receiveForm.senderContact}
                       onChange={e => setReceiveForm({ ...receiveForm, senderContact: e.target.value })}
                       placeholder="09XX-XXX-XXXX" />
-                    <p className="field-hint">Used for SMS tracking updates. Enter a Philippine mobile number starting with 09 or +639.</p>
+                    <p id={`${formId}-contact-hint`} className="field-hint">Used for SMS tracking updates. Enter a Philippine mobile number starting with 09 or +639.</p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Sender's Organization / Office (Optional)</label>
-                    <input
+                    <label htmlFor={`${formId}-organization`} className="form-label">Sender's Organization / Office (Optional)</label>
+                    <input id={`${formId}-organization`} aria-describedby={`${formId}-organization-hint`}
                       className="form-input"
                       type="text"
                       value={receiveForm.originOfficeOther}
                       onChange={e => setReceiveForm({ ...receiveForm, originOfficeOther: e.target.value })}
                       placeholder="School, agency, barangay, or organization"
                     />
-                    <p className="field-hint">Optional: school, agency, barangay, or organization (from office).</p>
+                    <p id={`${formId}-organization-hint`} className="field-hint">Optional: school, agency, barangay, or organization (from office).</p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label"><MessageSquare size={12} style={{ marginRight: '0.25rem' }} />Remarks</label>
-                    <textarea className="form-input" value={receiveForm.remarks}
+                    <label htmlFor={`${formId}-remarks`} className="form-label"><MessageSquare size={12} style={{ marginRight: '0.25rem' }} />Remarks</label>
+                    <textarea id={`${formId}-remarks`} aria-describedby={`${formId}-remarks-hint`} className="form-input" value={receiveForm.remarks}
                       onChange={e => setReceiveForm({ ...receiveForm, remarks: e.target.value })}
                       placeholder="Notes" rows={2} style={{ resize: 'vertical' }} />
-                    <p className="field-hint">Optional internal context, instructions, or special handling notes.</p>
+                    <p id={`${formId}-remarks-hint`} className="field-hint">Optional internal context, instructions, or special handling notes.</p>
                   </div>
                 </div>
 
                 <div className="form-group" style={{ marginTop: '1rem' }}>
-                  <label className="form-label">
+                  <label htmlFor={`${formId}-attachment`} className="form-label">
                     <Upload size={12} style={{ marginRight: '0.25rem' }} />
                     Scanned File Attachment <span className="required-mark">*</span>
                   </label>
-                  <input
+                  <input id={`${formId}-attachment`} aria-describedby={`${formId}-attachment-hint${receiveFormErrors.attachmentFile ? ` ${formId}-attachment-error` : ''}`} aria-invalid={Boolean(receiveFormErrors.attachmentFile)} required
                     className={`form-input${receiveFormErrors.attachmentFile ? ' is-invalid' : ''}`}
                     type="file"
                     accept="image/*,.pdf"
@@ -656,7 +677,7 @@ const ReceptionistDashboard = ({
                     }}
                   />
                   {receiveFormErrors.attachmentFile && (
-                    <p className="form-field-error">{receiveFormErrors.attachmentFile}</p>
+                    <p id={`${formId}-attachment-error`} className="form-field-error">{receiveFormErrors.attachmentFile}</p>
                   )}
                   {attachmentFile && (
                     <div className="attachment-item" style={{ marginTop: '0.45rem' }}>
@@ -673,7 +694,7 @@ const ReceptionistDashboard = ({
                       </button>
                     </div>
                   )}
-                  <p className="field-hint">Attach a scanned image or PDF, matching the Document Tracker form.</p>
+                  <p id={`${formId}-attachment-hint`} className="field-hint">Attach a scanned image or PDF, matching the Document Tracker form.</p>
                 </div>
 
                 <div style={{ padding: '0.75rem', background: 'var(--info-bg)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem', color: 'var(--info)', marginTop: '0.5rem' }}>

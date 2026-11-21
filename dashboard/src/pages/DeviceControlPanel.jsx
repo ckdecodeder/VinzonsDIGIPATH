@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useId } from 'react';
 import PageShell from '../components/PageShell';
 import {
   Activity,
@@ -112,6 +112,7 @@ const formatSignalAge = (seconds) => {
 
 const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defaultUsers, offices = [], deviceEvents = [] }) => {
   const { device: liveDevice } = useLiveDevice(deviceProp);
+  const formId = useId();
   const [clockMs, setClockMs] = useState(Date.now());
   const [showLegacyBridgeControls, setShowLegacyBridgeControls] = useState(false);
 
@@ -516,8 +517,8 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
         {!isWsOnlyBridge && showLegacyBridgeControls && (
           <div className="scanner-bridge-controls" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
             <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Legacy Scanner Bridge URL</label>
-              <input
+              <label className="form-label" htmlFor={`${formId}-bridge-url`}>Legacy Scanner Bridge URL</label>
+              <input id={`${formId}-bridge-url`} aria-describedby={`${formId}-bridge-url-hint`}
                 className="form-input"
                 value={manualBridgeUrl}
                 onChange={(e) => {
@@ -526,7 +527,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
                 }}
                 placeholder="http://raspberry-pi-ip:8080"
               />
-              <p className="field-hint">
+              <p id={`${formId}-bridge-url-hint`} className="field-hint">
                 {bridgeUrlSource === 'auto'
                   ? `Auto-detected IP (${detectedIp || 'waiting for heartbeat'}). Optional manual control for older HTTP bridges.`
                   : bridgeUrlSource === 'manual'
@@ -617,6 +618,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <input
                 className="form-input"
+                aria-label="Scanner name"
                 value={deviceForm.name}
                 onChange={(e) => setDeviceForm((prev) => ({ ...prev, name: e.target.value }))}
                 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: 0 }}
@@ -652,8 +654,8 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                 <MapPin size={14} style={{ color: 'var(--text-muted)' }} />
-                <span style={{ color: 'var(--text-muted)' }}>Location:</span>
-                <input
+                <label htmlFor={`${formId}-location`} style={{ color: 'var(--text-muted)' }}>Location:</label>
+                <input id={`${formId}-location`}
                   className="form-input"
                   value={deviceForm.location}
                   onChange={(e) => setDeviceForm((prev) => ({ ...prev, location: e.target.value }))}
@@ -678,8 +680,8 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
                 <Building2 size={14} style={{ color: 'var(--text-muted)' }} />
-                <span style={{ color: 'var(--text-muted)' }}>Assigned Office:</span>
-                <select
+                <label htmlFor={`${formId}-office`} style={{ color: 'var(--text-muted)' }}>Assigned Office:</label>
+                <select id={`${formId}-office`}
                   className="form-select"
                   value={deviceForm.assignedTo}
                   onChange={(e) => setDeviceForm((prev) => ({ ...prev, assignedTo: e.target.value }))}

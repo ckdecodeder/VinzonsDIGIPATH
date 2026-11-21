@@ -45,7 +45,9 @@ const clampNotificationDockPosition = (x, y) => {
 const getDefaultNotificationDockPosition = () => {
   if (typeof window === 'undefined') return { x: 0, y: 0 };
   const rootStyle = getComputedStyle(document.documentElement);
-  const topbarHeight = parseFloat(rootStyle.getPropertyValue('--app-topbar-height')) || 120;
+  const headerHeight = rootStyle.getPropertyValue('--app-topbar-height').trim();
+  const topbarHeight = (parseFloat(headerHeight)
+    * (headerHeight.endsWith('rem') ? parseFloat(rootStyle.fontSize) : 1)) || 120;
   const top = topbarHeight - 20 - NOTIFICATION_DOCK_SIZE;
   const right = 27.2;
   const x = window.innerWidth - right - NOTIFICATION_DOCK_SIZE;
@@ -57,8 +59,12 @@ const loadNotificationDockPosition = () => {
     const raw = localStorage.getItem(NOTIFICATION_POS_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
-      return clampNotificationDockPosition(parsed.x, parsed.y);
+    if (Number.isFinite(parsed?.x) && Number.isFinite(parsed?.y)) {
+      const position = clampNotificationDockPosition(parsed.x, parsed.y);
+      // Earlier defaults parsed rem as pixels; reset only the old top-right corner.
+      if (window.innerWidth > 900 && position.y === NOTIFICATION_DOCK_MARGIN
+        && position.x >= window.innerWidth - NOTIFICATION_DOCK_SIZE - NOTIFICATION_DOCK_MARGIN - 16) return null;
+      return position;
     }
   } catch {
     // ignore invalid saved position
@@ -87,13 +93,23 @@ const Layout = ({
 }) => {
   const [isNotificationDockOpen, setIsNotificationDockOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const sidebarRef = useRef(null);
+  const mobileMenuRef = useRef(null);
+  const notificationDockIsDefaultRef = useRef(true);
   const [notificationDockPosition, setNotificationDockPosition] = useState(
-    () => loadNotificationDockPosition() || getDefaultNotificationDockPosition(),
+    () => {
+      const saved = loadNotificationDockPosition();
+      notificationDockIsDefaultRef.current = !saved;
+      return saved || getDefaultNotificationDockPosition();
+    },
   );
   const [isNotificationDockDragging, setIsNotificationDockDragging] = useState(false);
   const notificationDockDragRef = useRef({
     active: false,
     moved: false,
+    suppressClick: false,
+    pointerId: null,
+    element: null,
     startX: 0,
     startY: 0,
     originX: 0,
@@ -107,17 +123,21 @@ const Layout = ({
 
   useEffect(() => {
     const handleResize = () => {
-      setNotificationDockPosition((prev) => clampNotificationDockPosition(prev.x, prev.y));
+      setNotificationDockPosition((prev) => notificationDockIsDefaultRef.current
+        ? getDefaultNotificationDockPosition() : clampNotificationDockPosition(prev.x, prev.y));
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   const handleNotificationDockPointerDown = (event) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || event.isPrimary === false || notificationDockDragRef.current.active) return;
     notificationDockDragRef.current = {
       active: true,
       moved: false,
+      suppressClick: false,
+      pointerId: event.pointerId,
+      element: event.currentTarget,
       startX: event.clientX,
       startY: event.clientY,
       originX: notificationDockPositionRef.current.x,
@@ -128,7 +148,7 @@ const Layout = ({
 
   const handleNotificationDockPointerMove = (event) => {
     const drag = notificationDockDragRef.current;
-    if (!drag.active) return;
+    if (!drag.active || drag.pointerId !== event.pointerId) return;
 
     const deltaX = event.clientX - drag.startX;
     const deltaY = event.clientY - drag.startY;
@@ -138,18 +158,18 @@ const Layout = ({
     }
     if (!drag.moved) return;
 
-    setNotificationDockPosition((prev) => {
-      const next = clampNotificationDockPosition(drag.originX + deltaX, drag.originY + deltaY);
-      notificationDockPositionRef.current = next;
-      return next;
-    });
+    notificationDockIsDefaultRef.current = false;
+    const next = clampNotificationDockPosition(drag.originX + deltaX, drag.originY + deltaY);
+    notificationDockPositionRef.current = next;
+    setNotificationDockPosition(next);
   };
 
-  const finishNotificationDockPointer = (event) => {
+  const finishNotificationDockPointer = (event, cancelled = false) => {
     const drag = notificationDockDragRef.current;
-    if (!drag.active) return;
+    if (!drag.active || drag.pointerId !== event.pointerId) return;
 
     drag.active = false;
+    drag.suppressClick = drag.moved || cancelled;
     setIsNotificationDockDragging(false);
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -164,14 +184,33 @@ const Layout = ({
       } catch {
         // ignore storage failures
       }
-      return;
     }
+  };
 
+  const cancelNotificationDockDrag = () => {
+    const drag = notificationDockDragRef.current;
+    if (drag.active) {
+      finishNotificationDockPointer({ pointerId: drag.pointerId, currentTarget: drag.element }, true);
+    }
+  };
+
+  useEffect(() => {
+    window.addEventListener('blur', cancelNotificationDockDrag);
+    return () => window.removeEventListener('blur', cancelNotificationDockDrag);
+  }, []);
+
+  const handleNotificationDockClick = (event) => {
+    const drag = notificationDockDragRef.current;
+    const suppressClick = drag.suppressClick && event.detail !== 0;
+    drag.suppressClick = false;
+    if (suppressClick) return;
     setIsNotificationDockOpen((prev) => !prev);
   };
 
   const handleNotificationDockDoubleClick = () => {
     const resetPosition = getDefaultNotificationDockPosition();
+    notificationDockIsDefaultRef.current = true;
+    notificationDockPositionRef.current = resetPosition;
     setNotificationDockPosition(resetPosition);
     try {
       localStorage.removeItem(NOTIFICATION_POS_KEY);
@@ -181,11 +220,34 @@ const Layout = ({
   };
 
   const notificationPanelOnRight = notificationDockPosition.x < 380;
+  const viewportHeight = typeof window === 'undefined' ? 768 : window.innerHeight;
+  const notificationPanelAbove = notificationDockPosition.y > viewportHeight / 2;
+  const notificationPanelHeight = notificationPanelAbove
+    ? notificationDockPosition.y + NOTIFICATION_DOCK_SIZE - NOTIFICATION_DOCK_MARGIN
+    : viewportHeight - notificationDockPosition.y - NOTIFICATION_DOCK_MARGIN;
 
   const handleNavigate = (id) => {
     onNavigate(id);
     setIsSidebarOpen(false);
   };
+
+  useEffect(() => {
+    if (!isSidebarOpen) return;
+    const mobile = window.matchMedia('(max-width: 900px)');
+    const menuTrigger = mobileMenuRef.current;
+    if (mobile.matches) sidebarRef.current?.querySelector('.nav-item')?.focus();
+    const handleEscape = (event) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || !mobile.matches
+        || document.body.classList.contains('modal-open')) return;
+      event.preventDefault();
+      setIsSidebarOpen(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      if (mobile.matches && !document.body.classList.contains('modal-open')) menuTrigger?.focus();
+    };
+  }, [isSidebarOpen]);
 
   // ==================== ADMIN NAV (was Superadmin) ====================
   const adminNav = [
@@ -311,7 +373,7 @@ const Layout = ({
           aria-hidden="true"
         />
       )}
-      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
+      <aside id="main-sidebar" ref={sidebarRef} className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
         {/* Logo */}
         <div className="sidebar-header">
           <div className="logo">
@@ -330,6 +392,8 @@ const Layout = ({
               className="sidebar-close-btn"
               onClick={() => setIsSidebarOpen(false)}
               aria-label="Close menu"
+              aria-expanded={isSidebarOpen}
+              aria-controls="main-sidebar"
             >
               <X size={18} />
             </button>
@@ -337,20 +401,22 @@ const Layout = ({
         </div>
 
         {/* Navigation */}
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" aria-label="Main navigation">
           {navGroups.map((group, gi) => (
             <div className="nav-group" key={gi}>
               <p className="nav-label">{group.group}</p>
               {group.items.map((item) => (
-                <div
+                <button
+                  type="button"
                   key={item.id}
                   className={`nav-item ${currentPage === item.id ? 'active' : ''}`}
                   onClick={() => handleNavigate(item.id)}
+                  aria-current={currentPage === item.id ? 'page' : undefined}
                 >
                   {item.icon}
                   {item.label}
                   {item.badge > 0 && <span className="nav-badge">{formatBadgeCount(item.badge)}</span>}
-                </div>
+                </button>
               ))}
             </div>
           ))}
@@ -392,9 +458,12 @@ const Layout = ({
         <div className="mobile-topbar">
           <button
             type="button"
+            ref={mobileMenuRef}
             className="mobile-menu-btn"
             onClick={() => setIsSidebarOpen(true)}
             aria-label="Open menu"
+            aria-expanded={isSidebarOpen}
+            aria-controls="main-sidebar"
           >
             <Menu size={22} />
           </button>
@@ -455,22 +524,29 @@ const Layout = ({
           isNotificationDockOpen ? 'open' : 'collapsed',
           isNotificationDockDragging ? 'is-dragging' : '',
           notificationPanelOnRight ? 'panel-right' : '',
+          notificationPanelAbove ? 'panel-above' : '',
         ].filter(Boolean).join(' ')}
         style={{
           top: `${notificationDockPosition.y}px`,
           left: `${notificationDockPosition.x}px`,
+          '--notification-panel-height': `${notificationPanelHeight}px`,
         }}
       >
         <button
           type="button"
           className="notification-dock-toggle"
+          onClick={handleNotificationDockClick}
           onPointerDown={handleNotificationDockPointerDown}
           onPointerMove={handleNotificationDockPointerMove}
           onPointerUp={finishNotificationDockPointer}
-          onPointerCancel={finishNotificationDockPointer}
+          onPointerCancel={cancelNotificationDockDrag}
+          onLostPointerCapture={cancelNotificationDockDrag}
+          onBlur={cancelNotificationDockDrag}
           onDoubleClick={handleNotificationDockDoubleClick}
           title="Drag to move. Click to open. Double-click to reset position."
-          aria-label="Notifications. Drag to move, click to open."
+          aria-label={`Notifications, ${notifications.length} active item${notifications.length === 1 ? '' : 's'}`}
+          aria-expanded={isNotificationDockOpen}
+          aria-controls="notification-dock-panel"
         >
           <Bell size={16} />
           {notifications.length > 0 && (
@@ -478,8 +554,7 @@ const Layout = ({
           )}
         </button>
 
-        {isNotificationDockOpen && (
-          <div className="notification-dock-panel">
+          <div id="notification-dock-panel" className="notification-dock-panel" hidden={!isNotificationDockOpen}>
             <div className="notification-dock-header">
               <div>
                 <strong>Needs Attention</strong>
@@ -487,7 +562,7 @@ const Layout = ({
                   {notifications.length} active item{notifications.length === 1 ? '' : 's'}
                 </span>
               </div>
-              <button className="btn-icon" onClick={() => setIsNotificationDockOpen(false)} title="Collapse notifications">
+              <button type="button" className="btn-icon" onClick={() => setIsNotificationDockOpen(false)} title="Collapse notifications" aria-label="Collapse notifications">
                 <X size={15} />
               </button>
             </div>
@@ -514,7 +589,6 @@ const Layout = ({
               )}
             </div>
           </div>
-        )}
       </aside>
     </div>
   );

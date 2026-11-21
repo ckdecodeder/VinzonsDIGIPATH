@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { focusFormError } from '../utils/formAccessibility';
+import React, { useId, useEffect, useMemo, useState } from "react";
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import {
@@ -27,10 +28,12 @@ const UserList = ({
   onUpdateUser,
   onDeleteUser,
 }) => {
+  const formId = useId();
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editUser, setEditUser] = useState(null);
   const [formError, setFormError] = useState("");
+  const [invalidFields, setInvalidFields] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
@@ -130,19 +133,19 @@ const UserList = ({
 
   const validatePayload = (payload) => {
     if (!payload.fname || !payload.lname || !payload.username) {
-      return "First name, last name, and username are required.";
+      return { message: "First name, last name, and username are required.", fields: ["fname", "lname", "username"].filter(key => !payload[key]) };
     }
 
     if (!payload.role) {
-      return "No role is available for the selected office. Choose a different office or free up an Admin/Mayor slot.";
+      return { message: "No role is available for the selected office. Choose a different office or free up an Admin/Mayor slot.", fields: ["officeId", "role"] };
     }
 
     if (!editUser && !payload.password) {
-      return "Password is required for a new user.";
+      return { message: "Password is required for a new user.", fields: ["password"] };
     }
 
     if (payload.password && payload.password.length < 6) {
-      return "Password must be at least 6 characters long.";
+      return { message: "Password must be at least 6 characters long.", fields: ["password"] };
     }
 
     const duplicateUsername = users.some(
@@ -152,7 +155,7 @@ const UserList = ({
     );
 
     if (duplicateUsername) {
-      return "That username is already used by another account.";
+      return { message: "That username is already used by another account.", fields: ["username"] };
     }
 
     const roleError = validateRoleAssignment({
@@ -163,7 +166,7 @@ const UserList = ({
       excludeUserId: editUser?.id || null,
     });
     if (roleError) {
-      return roleError;
+      return { message: roleError, fields: ["officeId", "role"] };
     }
 
     return "";
@@ -210,15 +213,19 @@ const UserList = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const form = e.currentTarget;
 
     const payload = buildPayload();
     const validationError = validatePayload(payload);
     if (validationError) {
-      setFormError(validationError);
+      setFormError(validationError.message);
+      setInvalidFields(validationError.fields);
+      focusFormError(form);
       return;
     }
 
     setFormError("");
+    setInvalidFields([]);
     setIsSaving(true);
 
     try {
@@ -239,6 +246,7 @@ const UserList = ({
       setEditUser(null);
     } catch (err) {
       setFormError(err.message || "Unable to save this user.");
+      focusFormError(form);
     } finally {
       setIsSaving(false);
     }
@@ -246,6 +254,7 @@ const UserList = ({
 
   const openForm = (user = null) => {
     setFormError("");
+    setInvalidFields([]);
     const defaultOfficeId = offices[0]?.id || "";
     const excludeUserId = user?.id || null;
     if (user) {
@@ -300,10 +309,10 @@ const UserList = ({
         toolbar={
           <div className="page-toolbar-row">
             <div className="filter-dropdown filter-dropdown-search">
-              <label>Search</label>
+              <label htmlFor={`${formId}-search`}>Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
-                <input
+                <input id={`${formId}-search`}
                   type="text"
                   placeholder="Search by name, username, role, or office..."
                   value={search}
@@ -476,22 +485,23 @@ const UserList = ({
       </PageShell>
 
       {showForm && (
-        <ModalOverlay onClose={closeForm}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={closeForm}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{editUser ? "Edit User" : "New User"}</h2>
+              <h2 id={`${formId}-form-title`}>{editUser ? "Edit User" : "New User"}</h2>
               <button
                 className="btn-icon"
+                aria-label="Close user form"
                 onClick={closeForm}
                 disabled={isSaving}
               >
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} aria-describedby={formError ? `${formId}-form-error` : undefined}>
               <div className="modal-body">
                 {formError && (
-                  <div
+                  <div id={`${formId}-form-error`} data-form-error tabIndex={-1} role="alert"
                     style={{
                       marginBottom: "1rem",
                       padding: "0.75rem 1rem",
@@ -508,8 +518,8 @@ const UserList = ({
                 )}
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">First Name *</label>
-                    <input
+                    <label htmlFor={`${formId}-first-name`} className="form-label">First Name *</label>
+                    <input id={`${formId}-first-name`} aria-invalid={invalidFields.includes("fname")} aria-describedby={`${formId}-first-name-hint${invalidFields.includes("fname") ? ` ${formId}-form-error` : ''}`}
                       className="form-input"
                       type="text"
                       value={formData.fname}
@@ -518,13 +528,13 @@ const UserList = ({
                       }
                       required
                     />
-                    <p className="field-hint">
+                    <p id={`${formId}-first-name-hint`} className="field-hint">
                       Given name shown in user lists and activity logs.
                     </p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Last Name *</label>
-                    <input
+                    <label htmlFor={`${formId}-last-name`} className="form-label">Last Name *</label>
+                    <input id={`${formId}-last-name`} aria-invalid={invalidFields.includes("lname")} aria-describedby={`${formId}-last-name-hint${invalidFields.includes("lname") ? ` ${formId}-form-error` : ''}`}
                       className="form-input"
                       type="text"
                       value={formData.lname}
@@ -533,14 +543,14 @@ const UserList = ({
                       }
                       required
                     />
-                    <p className="field-hint">
+                    <p id={`${formId}-last-name-hint`} className="field-hint">
                       Family name used for sorting users and reports.
                     </p>
                   </div>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Middle Name</label>
-                  <input
+                  <label htmlFor={`${formId}-middle-name`} className="form-label">Middle Name</label>
+                  <input id={`${formId}-middle-name`} aria-describedby={`${formId}-middle-name-hint`}
                     className="form-input"
                     type="text"
                     value={formData.mname}
@@ -548,14 +558,14 @@ const UserList = ({
                       setFormData({ ...formData, mname: e.target.value })
                     }
                   />
-                  <p className="field-hint">
+                  <p id={`${formId}-middle-name-hint`} className="field-hint">
                     Optional middle name or initial for complete records.
                   </p>
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Assigned Office</label>
-                    <select
+                    <label htmlFor={`${formId}-office`} className="form-label">Assigned Office</label>
+                    <select id={`${formId}-office`} aria-invalid={invalidFields.includes("officeId")} aria-describedby={`${formId}-office-hint${invalidFields.includes("officeId") ? ` ${formId}-form-error` : ''}`}
                       className="form-select"
                       value={formData.officeId}
                       onChange={(e) => handleOfficeChange(e.target.value)}
@@ -566,14 +576,14 @@ const UserList = ({
                         </option>
                       ))}
                     </select>
-                    <p className="field-hint">
+                    <p id={`${formId}-office-hint`} className="field-hint">
                       Choose the office first. Available roles depend on this
                       selection.
                     </p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Role</label>
-                    <select
+                    <label htmlFor={`${formId}-role`} className="form-label">Role</label>
+                    <select id={`${formId}-role`} aria-invalid={invalidFields.includes("role")} aria-describedby={`${formId}-role-hint${invalidFields.includes("role") ? ` ${formId}-form-error` : ''}`}
                       className="form-select"
                       value={formData.role}
                       onChange={(e) =>
@@ -591,7 +601,7 @@ const UserList = ({
                         ))
                       )}
                     </select>
-                    <p className="field-hint">
+                    <p id={`${formId}-role-hint`} className="field-hint">
                       {ROLE_HINTS[formData.role] ||
                         "Controls the dashboards, actions, and reports this user can access."}
                     </p>
@@ -599,8 +609,8 @@ const UserList = ({
                 </div>
                 <div className="form-grid">
                   <div className="form-group">
-                    <label className="form-label">Username *</label>
-                    <input
+                    <label htmlFor={`${formId}-username`} className="form-label">Username *</label>
+                    <input id={`${formId}-username`} aria-invalid={invalidFields.includes("username")} aria-describedby={`${formId}-username-hint${invalidFields.includes("username") ? ` ${formId}-form-error` : ''}`}
                       className="form-input"
                       type="text"
                       value={formData.username}
@@ -609,15 +619,15 @@ const UserList = ({
                       }
                       required
                     />
-                    <p className="field-hint">
+                    <p id={`${formId}-username-hint`} className="field-hint">
                       The sign-in name this user enters on the login screen.
                     </p>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">
+                    <label htmlFor={`${formId}-password`} className="form-label">
                       {editUser ? "Password" : "Password *"}
                     </label>
-                    <input
+                    <input id={`${formId}-password`} aria-invalid={invalidFields.includes("password")} aria-describedby={`${formId}-password-hint${invalidFields.includes("password") ? ` ${formId}-form-error` : ''}`}
                       className="form-input"
                       type="password"
                       value={formData.password}
@@ -629,7 +639,7 @@ const UserList = ({
                       }
                       required={!editUser}
                     />
-                    <p className="field-hint">
+                    <p id={`${formId}-password-hint`} className="field-hint">
                       {editUser
                         ? "Leave blank to keep the current password."
                         : "Temporary password for the new account sign-in."}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useId } from 'react';
 import {
   X,
   MapPin,
@@ -40,7 +40,9 @@ const DocumentPreviewModal = ({
   transmissions = [],
   currentUser,
   onClose,
+  onOpenRecord,
 }) => {
+  const titleId = useId();
   const [fileError, setFileError] = useState('');
   const openFile = async (event, href) => {
     event.preventDefault();
@@ -54,10 +56,10 @@ const DocumentPreviewModal = ({
     } catch (error) { popup.close(); setFileError(error.message || 'Unable to open this file.'); }
   };
   if (loading || refreshError) return (
-    <ModalOverlay onClose={onClose}>
+    <ModalOverlay onClose={onClose} aria-labelledby={titleId}>
       <div className="modal document-detail-modal" onClick={event => event.stopPropagation()}>
         <div className="modal-header">
-          <h2>Document details</h2>
+          <h2 id={titleId}>Document details</h2>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close document details"><X size={18} /></button>
         </div>
         <div className="modal-body" aria-busy={loading}>
@@ -122,11 +124,11 @@ const DocumentPreviewModal = ({
   const currentLocation = getOfficeName(doc.currentOfficeId) || '-';
 
   return (
-    <ModalOverlay onClose={onClose}>
+    <ModalOverlay onClose={onClose} aria-labelledby={titleId}>
       <div className="modal document-detail-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <div>
-            <h2>{doc.subject}</h2>
+            <h2 id={titleId}>{doc.subject}</h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
               {doc.trackingNumber} - {getDocumentTypeLabel(doc)}
             </p>
@@ -288,6 +290,11 @@ const DocumentPreviewModal = ({
             )}
           </div>
         </div>
+        {onOpenRecord && doc.id && (
+          <div className="modal-footer">
+            <button type="button" className="btn btn-primary" onClick={() => onOpenRecord(doc.id)}>Open record</button>
+          </div>
+        )}
       </div>
     </ModalOverlay>
   );

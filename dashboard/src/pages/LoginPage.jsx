@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import { focusFormError } from '../utils/formAccessibility';
+import React, { useId, useEffect, useState } from 'react';
 import { AlertCircle, ArrowRight, CheckCircle2, Clock, Eye, EyeOff, FileText, Flag, Loader2, LogIn, MapPin, RefreshCw, Search, X } from 'lucide-react';
 import { authService, trackingService } from '../api/documentService';
 import ModalOverlay from '../components/ModalOverlay';
 import ThemeToggle from '../components/ThemeToggle';
 
 const LoginPage = ({ onLogin, systemMessage = '' }) => {
+  const formId = useId();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordHidden, setPasswordHidden] = useState(true);
@@ -107,6 +109,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const panel = e.currentTarget.parentElement;
     setError('');
     setIsLoading(true);
 
@@ -115,6 +118,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
       await onLogin(user);
     } catch (err) {
       setError(err.message || 'Invalid username or password');
+      focusFormError(panel);
     } finally {
       setIsLoading(false);
     }
@@ -168,7 +172,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                 </div>
 
                 {error && (
-                  <div className="login-error">
+                  <div id={`${formId}-login-error`} data-form-error tabIndex={-1} role="alert" className="login-error">
                     <AlertCircle size={16} />
                     {error}
                   </div>
@@ -181,10 +185,10 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                   </div>
                 )}
 
-                <form onSubmit={handleSubmit}>
+                <form onSubmit={handleSubmit} aria-describedby={error ? `${formId}-login-error` : undefined}>
                   <div className="form-group">
-                    <label className="form-label">Username</label>
-                    <input
+                    <label htmlFor={`${formId}-username`} className="form-label">Username</label>
+                    <input autoComplete="username" id={`${formId}-username`} aria-describedby={`${formId}-username-hint`}
                       className="form-input"
                       type="text"
                       value={username}
@@ -193,13 +197,13 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                       required
                       autoFocus
                     />
-                    <p className="field-hint">Use the username assigned to your DigiPath account.</p>
+                    <p id={`${formId}-username-hint`} className="field-hint">Use the username assigned to your DigiPath account.</p>
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Password</label>
+                    <label htmlFor={`${formId}-password`} className="form-label">Password</label>
                     <div style={{ position: 'relative' }}>
-                      <input
+                      <input id={`${formId}-password`} aria-describedby={`${formId}-password-hint`}
                         className="form-input"
                         type={passwordHidden ? 'password' : 'text'}
                         value={password}
@@ -219,7 +223,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                         {passwordHidden ? <EyeOff size={16} /> : <Eye size={16} />}
                       </button>
                     </div>
-                    <p className="field-hint">Enter the password linked to your municipal user account.</p>
+                    <p id={`${formId}-password-hint`} className="field-hint">Enter the password linked to your municipal user account.</p>
                   </div>
 
                   <button
@@ -257,7 +261,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                       handleTrackingLookup();
                     }}
                   >
-                    <input
+                    <input id={`${formId}-tracking`} aria-label="Tracking number" aria-describedby={`${formId}-tracking-hint${trackingError ? ` ${formId}-tracking-error` : ''}`}
                       className="form-input"
                       type="text"
                       value={trackingNumber}
@@ -273,10 +277,10 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
                       {isTracking ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
                     </button>
                   </form>
-                  <p className="field-hint">Enter the claim slip tracking number to open the latest public document status.</p>
+                  <p id={`${formId}-tracking-hint`} className="field-hint">Enter the claim slip tracking number to open the latest public document status.</p>
 
                   {trackingError && !isTrackingModalOpen && (
-                    <div className="login-tracking-message danger">
+                    <div id={`${formId}-tracking-error`} className="login-tracking-message danger" role="alert">
                       <AlertCircle size={14} />
                       {trackingError}
                     </div>
@@ -368,11 +372,11 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
       </div>
 
       {isTrackingModalOpen && (trackingResult || trackingError) && (
-        <ModalOverlay overlayClassName="login-tracking-overlay" onClose={() => setIsTrackingModalOpen(false)}>
+        <ModalOverlay aria-labelledby={`${formId}-tracking-title`} overlayClassName="login-tracking-overlay" onClose={() => setIsTrackingModalOpen(false)}>
           <div className="modal login-tracking-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h2>Document Tracking Status</h2>
+                <h2 id={`${formId}-tracking-title`}>Document Tracking Status</h2>
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                   {trackingNumber || trackingResult?.trackingNumber || 'Tracking lookup'}
                 </p>
@@ -383,7 +387,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
             </div>
             <div className="modal-body">
               {trackingError && !trackingResult ? (
-                <div className="login-tracking-message danger login-tracking-modal-message">
+                <div id={`${formId}-tracking-error`} className="login-tracking-message danger login-tracking-modal-message" role="alert">
                   <AlertCircle size={16} />
                   {trackingError}
                 </div>

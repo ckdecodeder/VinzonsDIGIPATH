@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState, useId } from 'react';
 import {
   X,
   Maximize2,
@@ -56,6 +56,7 @@ const ScannedPreviewModal = ({
 }) => {
   const surfaceRef = useRef(null);
   const modalBodyRef = useRef(null);
+  const titleId = useId();
   const [isMaximized, setIsMaximized] = useState(false);
   const [downloadFormat, setDownloadFormat] = useState('original');
   const [previewRotation, setPreviewRotation] = useState(0);
@@ -198,6 +199,7 @@ const ScannedPreviewModal = ({
 
   return (
     <ModalOverlay
+      aria-labelledby={titleId}
       overlayClassName="scanned-preview-overlay"
       onClose={closePreview}
     >
@@ -207,7 +209,7 @@ const ScannedPreviewModal = ({
       >
         <div className="modal-header">
           <div>
-            <h2>Scanned Paper Preview</h2>
+            <h2 id={titleId}>Scanned Paper Preview</h2>
             <p className="scanned-preview-filename">{file.name}</p>
           </div>
           <div className="scanned-preview-header-actions">
@@ -219,7 +221,7 @@ const ScannedPreviewModal = ({
             >
               {isMaximized ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
             </button>
-            <button type="button" className="btn-icon" onClick={closePreview}>
+            <button aria-label="Close dialog" type="button" className="btn-icon" onClick={closePreview}>
               <X size={18} />
             </button>
           </div>
@@ -264,6 +266,7 @@ const ScannedPreviewModal = ({
         <div className="modal-footer scanned-preview-footer">
           <select
             className="form-select preview-format-select"
+            aria-label="Download format"
             value={downloadFormat}
             onChange={(event) => setDownloadFormat(event.target.value)}
           >

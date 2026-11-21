@@ -1,10 +1,9 @@
-import { matchesQueue } from '../utils/documentQueue';
+import { getDocumentNextAction, matchesQueue } from '../utils/documentQueue';
 import React from "react";
 import {
   FileText,
   ArrowRightLeft,
   Archive,
-  TrendingUp,
   ArrowRight,
   Inbox,
   Send,
@@ -19,13 +18,6 @@ import {
 } from "../data/mockData";
 import { compareNewest } from "../utils/sorting";
 import PageShell from "../components/PageShell";
-
-const STATUS_ACTION_HINT = {
-  Received: "Process or route",
-  "In Transit": "Receive document",
-  "For Signing": "Mark as signed",
-  "For Filing": "Ready for filing",
-};
 
 const AdminDashboard = ({
   dataStates = {},
@@ -64,10 +56,15 @@ const AdminDashboard = ({
   const acknowledged = documents.filter(
     (d) => getWorkflowStatus(d) === "Acknowledged",
   ).length;
+  const actionQueueSections = ['documents', 'transmissions', 'documentTypes'];
+  const actionQueueReady = actionQueueSections.every(key => dataStates[key]?.status === 'ready');
+  const actionQueueFailed = actionQueueSections.some(key => dataStates[key]?.status === 'error');
   const archived = archives.length;
   const urgentCount = documents.filter(
-    (d) => matchesQueue(d, 'Urgent active'),
+    (d) => matchesQueue(d, 'Urgent active', currentUser, transmissions, documentTypes),
   ).length;
+  const pendingReceiptCount = documents.filter(d => matchesQueue(d, 'Pending receipt', currentUser, transmissions, documentTypes)).length;
+  const readyToArchiveCount = documents.filter(d => matchesQueue(d, 'Ready to archive', currentUser, transmissions, documentTypes)).length;
 
   const statCards = [
     {
@@ -79,18 +76,17 @@ const AdminDashboard = ({
     },
     {
       label: "Urgent Items",
-      value: dataStates.documents?.status === 'ready' ? urgentCount : '—',
+      value: actionQueueReady ? urgentCount : '—',
       icon: <Flag size={22} />,
       color: "red",
-      page: "documents",
+      status: "Urgent active",
     },
     {
-      label: "Active Transmissions",
-      value: dataStates.transmissions?.status === 'ready' ? transmissions.filter((t) => !t.receivedBy).length : '—',
+      label: "Awaiting your receipt",
+      value: actionQueueReady ? pendingReceiptCount : '—',
       icon: <ArrowRightLeft size={22} />,
       color: "purple",
-      trend: dataStates.transmissions?.status === 'ready' ? `${transmissions.length} total` : 'Unavailable',
-      page: "transmissions",
+      status: "Pending receipt",
     },
     {
       label: "Archived",
@@ -129,7 +125,7 @@ const AdminDashboard = ({
   };
 
   const attentionDocuments = documents
-    .filter(doc => matchesQueue(doc, 'Needs your action', currentUser, transmissions))
+    .filter(doc => matchesQueue(doc, 'Needs your action', currentUser, transmissions, documentTypes))
     .sort((a, b) => {
       const pendingDiff =
         Number(b.intakeStatus === "Pending Review") -
@@ -150,10 +146,10 @@ const AdminDashboard = ({
     });
 
   const newlyReceivedCount = documents.filter(
-    (d) => matchesQueue(d, 'Newly received'),
+    (d) => matchesQueue(d, 'Newly received', currentUser, transmissions, documentTypes),
   ).length;
   const pendingReviewCount = documents.filter(
-    (d) => d.intakeStatus === "Pending Review",
+    (d) => matchesQueue(d, 'Pending review', currentUser, transmissions, documentTypes),
   ).length;
   const actionQueueCount = attentionDocuments.length;
 
@@ -268,43 +264,52 @@ const AdminDashboard = ({
           <div className="card-header dashboard-attention-header">
             <div>
               <div className="attention-title-row">
-                <h3 className="card-title">Needs your action</h3>
-                {actionQueueCount > 0 && (
+                <h2 className="card-title">Needs your action</h2>
+                {actionQueueReady && actionQueueCount > 0 && (
                   <span className="attention-count-pill">{actionQueueCount}</span>
                 )}
               </div>
               <p className="attention-header-meta">
-                Newly received and pending documents that need action — process these first.
+                Available next steps for your role. Other records remain available for tracking.
               </p>
               <div className="attention-summary-chips">
                 <button
                   type="button"
                   className="attention-chip attention-chip--received"
+                  disabled={!actionQueueReady}
                   onClick={() => openStatusInterface("Newly received")}
                 >
                   <Inbox size={13} />
-                  {newlyReceivedCount} newly received
+                  {actionQueueReady ? newlyReceivedCount : '—'} newly received
                 </button>
                 <button
                   type="button"
                   className="attention-chip attention-chip--review"
+                  disabled={!actionQueueReady}
                   onClick={() => openStatusInterface("Pending review")}
                 >
                   <AlertTriangle size={13} />
-                  {pendingReviewCount} pending review
+                  {actionQueueReady ? pendingReviewCount : '—'} pending review
                 </button>
                 <button
                   type="button"
                   className="attention-chip attention-chip--urgent"
+                  disabled={!actionQueueReady}
                   onClick={() => openStatusInterface("Urgent active")}
                 >
                   <Flag size={13} />
-                  {urgentCount} urgent
+                  {actionQueueReady ? urgentCount : '—'} urgent
                 </button>
+                {['Admin', 'Mayor'].includes(currentUser?.role) && (
+                  <button type="button" className="attention-chip" disabled={!actionQueueReady} onClick={() => openStatusInterface('Ready to archive')}>
+                    <Archive size={13} /> {actionQueueReady ? readyToArchiveCount : '—'} ready to archive
+                  </button>
+                )}
               </div>
             </div>
             <button
               className="btn btn-ghost btn-sm"
+              disabled={!actionQueueReady}
               onClick={() => openStatusInterface("Needs your action")}
             >
               View all <ArrowRight size={14} />
@@ -312,11 +317,17 @@ const AdminDashboard = ({
           </div>
 
           <div className="attention-list">
-            {attentionDocuments.length === 0 ? (
+            {!actionQueueReady ? (
+              <div className="attention-empty" role="status">
+                <Clock size={20} />
+                <p>{actionQueueFailed ? 'Action queue unavailable' : 'Loading action queue'}</p>
+                <span>Counts and next steps require documents, deliveries and document types. Use the section status to retry failed data.</span>
+              </div>
+            ) : attentionDocuments.length === 0 ? (
               <div className="attention-empty">
                 <CheckCircle2 size={20} strokeWidth={1.75} />
-                <p>You're all caught up</p>
-                <span>Newly received documents that need action will appear here.</span>
+                <p>No action waiting for you</p>
+                <span>Documents awaiting another office remain available in All Documents.</span>
               </div>
             ) : (
               attentionDocuments.slice(0, 12).map((doc) => {
@@ -324,12 +335,7 @@ const AdminDashboard = ({
                 const pInfo = getPriorityInfo(doc.priorityLevel);
                 const isNewReceived =
                   status === "Received" || doc.intakeStatus === "Pending Review";
-                const hint =
-                  doc.intakeStatus === "Pending Review"
-                    ? "Needs intake review"
-                    : doc.intakeStatus === "Rejected"
-                      ? "Needs correction"
-                      : STATUS_ACTION_HINT[status] || "Needs follow-up";
+                const hint = getDocumentNextAction(doc, currentUser, transmissions, documentTypes);
 
                 return (
                   <button
@@ -370,7 +376,7 @@ const AdminDashboard = ({
                           gap: "0.2rem",
                           padding: "0.12rem 0.45rem",
                           borderRadius: "9999px",
-                          fontSize: "0.65rem",
+                          fontSize: "0.75rem",
                           fontWeight: 600,
                           background: pInfo.bg,
                           color: pInfo.color,
@@ -398,7 +404,7 @@ const AdminDashboard = ({
         <div className="dashboard-side-stack">
           <div className="card dashboard-status-card dashboard-status-card--mini">
             <div className="card-header">
-              <h3 className="card-title">Status overview</h3>
+              <h2 className="card-title">Status overview</h2>
               <span className="status-mini-total">{statusTotal} docs</span>
             </div>
             <div className="status-mini-bars">
@@ -433,7 +439,7 @@ const AdminDashboard = ({
 
           <div className="card dashboard-activity-card">
             <div className="card-header">
-              <h3 className="card-title">Recent Activity</h3>
+              <h2 className="card-title">Recent Activity</h2>
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => onNavigate("logs")}
@@ -500,11 +506,6 @@ const AdminDashboard = ({
               <div className="stat-info">
                 <p className="stat-label">{stat.label}</p>
                 <p className="stat-value">{stat.value}</p>
-                {stat.trend && (
-                  <p className="stat-trend up">
-                    <TrendingUp size={12} /> {stat.trend}
-                  </p>
-                )}
               </div>
             </div>
           );
@@ -515,7 +516,7 @@ const AdminDashboard = ({
       <div className="card">
         <div className="card-header">
           <div>
-            <h3 className="card-title">Recent Documents</h3>
+            <h2 className="card-title">Recent Documents</h2>
             <p className="card-subtitle">
               Latest documents — sorted by priority
             </p>
@@ -555,7 +556,7 @@ const AdminDashboard = ({
                     title="Open document details"
                   >
                     <td>
-                      <span className="td-mono">{doc.trackingNumber}</span>
+                      <button type="button" className="row-open-control td-mono" aria-label={`Open document ${doc.subject}`} onClick={event => { event.stopPropagation(); openDocumentInterface(doc); }}>{doc.trackingNumber}</button>
                     </td>
                     <td className="td-primary">{doc.subject}</td>
                     <td>
@@ -566,7 +567,7 @@ const AdminDashboard = ({
                           gap: "0.25rem",
                           padding: "0.15rem 0.5rem",
                           borderRadius: "9999px",
-                          fontSize: "0.7rem",
+                          fontSize: "0.75rem",
                           fontWeight: 600,
                           background: pInfo.bg,
                           color: pInfo.color,

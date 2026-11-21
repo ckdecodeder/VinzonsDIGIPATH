@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
 import { Search, Plus, Edit2, Trash2, X, Shield, ArrowRight } from 'lucide-react';
@@ -16,6 +16,7 @@ const DocumentTypeList = ({
   onUpdateDocumentType,
   onDeleteDocumentType,
 }) => {
+  const formId = useId();
   const [search, setSearch] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editType, setEditType] = useState(null);
@@ -86,10 +87,10 @@ const DocumentTypeList = ({
         toolbar={
           <div className="page-toolbar-row">
             <div className="filter-dropdown filter-dropdown-search">
-              <label>Search</label>
+              <label htmlFor={`${formId}-search`}>Search</label>
               <div className="search-bar document-search-bar">
                 <Search size={16} color="var(--text-muted)" />
-                <input
+                <input id={`${formId}-search`}
                   type="text"
                   placeholder="Search document types..."
                   value={search}
@@ -159,7 +160,7 @@ const DocumentTypeList = ({
                       <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{docCount}</td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          <button className="btn btn-sm btn-secondary" onClick={() => openForm(type)}>
+                          <button className="btn btn-sm btn-secondary" aria-label={`Edit ${type.category}`} onClick={() => openForm(type)}>
                             <Edit2 size={14} />
                           </button>
                           <button
@@ -182,18 +183,18 @@ const DocumentTypeList = ({
       </PageShell>
 
       {showForm && (
-        <ModalOverlay onClose={() => setShowForm(false)}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>{editType ? 'Edit Document Type' : 'New Document Type'}</h2>
-              <button className="btn-icon" onClick={() => setShowForm(false)}><X size={18} /></button>
+              <h2 id={`${formId}-form-title`}>{editType ? 'Edit Document Type' : 'New Document Type'}</h2>
+              <button className="btn-icon" aria-label="Close document type form" onClick={() => setShowForm(false)}><X size={18} /></button>
             </div>
             <form onSubmit={handleSubmit}>
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', padding: '1.5rem' }}>
                 {/* Category */}
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Category Name <span className="required">*</span></label>
-                  <input
+                  <label htmlFor={`${formId}-category`} className="form-label">Category Name <span className="required">*</span></label>
+                  <input id={`${formId}-category`}
                     className="form-input"
                     type="text"
                     required
@@ -205,8 +206,8 @@ const DocumentTypeList = ({
 
                 {/* Routing Track */}
                 <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Routing Track</label>
-                  <select
+                  <label htmlFor={`${formId}-routing-track`} className="form-label">Routing Track</label>
+                  <select id={`${formId}-routing-track`}
                     className="form-input"
                     value={formData.routingTrack}
                     onChange={(e) => {
@@ -226,24 +227,24 @@ const DocumentTypeList = ({
 
                 <div className="form-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: '8px', padding: '1rem', marginBottom: 0 }}>
                   <div style={{ flex: 1, paddingRight: '1rem' }}>
-                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem', color: 'var(--text-main)' }}>Initial reception at Mayor’s Office</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>Route the document to the Mayor’s Office reception before other offices.</div>
+                    <label htmlFor={`${formId}-mayor-reception`} style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem', color: 'var(--text-main)' }}>Initial reception at Mayor’s Office</label>
+                    <div id={`${formId}-mayor-reception-hint`} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>Route the document to the Mayor’s Office reception before other offices.</div>
                   </div>
-                  <input type="checkbox" checked={formData.requiresMayorReception} onChange={(e) => setFormData((p) => ({ ...p, requiresMayorReception: e.target.checked }))} />
+                  <input id={`${formId}-mayor-reception`} aria-describedby={`${formId}-mayor-reception-hint`} type="checkbox" checked={formData.requiresMayorReception} onChange={(e) => setFormData((p) => ({ ...p, requiresMayorReception: e.target.checked }))} />
                 </div>
 
                 {/* Mayor Approval Toggle */}
                 <div className="form-group" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: '8px', padding: '1rem', marginBottom: 0 }}>
                   <div style={{ flex: 1, paddingRight: '1rem' }}>
-                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem', color: 'var(--text-main)' }}>Requires Mayor Approval</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                    <label htmlFor={`${formId}-mayor-approval`} style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem', color: 'var(--text-main)' }}>Requires Mayor Approval</label>
+                    <div id={`${formId}-mayor-approval-hint`} style={{ fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                       Document will be automatically routed to Mayor's Office before going to its destination
                     </div>
                   </div>
-                  <label style={{ position: 'relative', display: 'inline-block', width: '44px', height: '24px', flexShrink: 0, margin: 0 }}>
-                    <input
+                  <label className="toggle-switch" style={{ position: 'relative', display: 'inline-block', width: '44px', height: '24px', flexShrink: 0, margin: 0 }}>
+                    <input id={`${formId}-mayor-approval`} aria-describedby={`${formId}-mayor-approval-hint`}
                       type="checkbox"
-                      style={{ opacity: 0, width: 0, height: 0, margin: 0 }}
+                      style={{ position: 'absolute', opacity: 0, width: '100%', height: '100%', margin: 0 }}
                       checked={formData.requiresMayorApproval}
                       onChange={(e) => setFormData((p) => ({ ...p, requiresMayorApproval: e.target.checked }))}
                     />

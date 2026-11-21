@@ -117,6 +117,9 @@ function App() {
   const [documents, setDocuments] = useState([]);
   const [transmissions, setTransmissions] = useState([]);
   const transmissionUpdatesInFlight = useRef(new Set());
+  // shortcut: uncertainty survives navigation only, add server idempotency before supporting reload recovery.
+  const pendingSendAttempts = useRef(new Map());
+  useEffect(() => { pendingSendAttempts.current.clear(); }, [currentUser?.id]);
   const [archives, setArchives] = useState([]);
   const [device, setDevice] = useState(null);
   const [logs, setLogs] = useState([]);
@@ -186,10 +189,12 @@ function App() {
   };
 
   const runMutation = async (operation) => {
+    const userId = currentUser?.id;
     setSaveError('');
     try {
       return await operation();
     } catch (err) {
+      if (activeUserRef.current !== userId) throw err;
       const message = err.message || 'The requested action could not be saved.';
       setSaveError(message);
       notifyUser({
@@ -421,6 +426,7 @@ function App() {
   }, []);
 
   const handleOpenDocument = (documentId) => {
+    setPreviewDocumentId(null);
     if (!documentId) {
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
@@ -453,13 +459,17 @@ function App() {
   };
 
   const handleEditDocument = async (updated, initialTransmission = null) => {
+    const userId = currentUser?.id;
+    if (activeUserRef.current !== userId) return null;
     const savedDoc = await runMutation(() => documentService.update(updated));
+    if (activeUserRef.current !== userId) return savedDoc;
     upsertDocument(savedDoc);
     if (initialTransmission?.toOfficeIds?.length) {
       const savedTransmission = await runMutation(() => transmissionService.create({
         ...initialTransmission,
         documentId: savedDoc.id,
       }));
+      if (activeUserRef.current !== userId) return savedDoc;
       upsertTransmission(savedTransmission);
     }
     showActionToast('updated');
@@ -501,11 +511,23 @@ function App() {
     return handleSendDocument(documentId, transmission.toOfficeIds || [toOfficeId]);
   };
 
-  const handleSendDocument = async (documentId, toOfficeIds = []) => {
-    const savedDoc = await runMutation(() => documentService.send(documentId, toOfficeIds));
+  const handleSendReconciled = (savedDoc) => {
+    if (activeUserRef.current !== currentUser?.id) return;
     upsertDocument(savedDoc);
     showActionToast('saved', 'Document sent successfully');
     refreshAfterMutation();
+  };
+
+  const handleSendDocument = async (documentId, toOfficeIds = []) => {
+    setSaveError('');
+    let savedDoc;
+    try {
+      savedDoc = await documentService.send(documentId, toOfficeIds);
+    } catch (error) {
+      if (activeUserRef.current === currentUser?.id) refreshAfterMutation();
+      throw error;
+    }
+    handleSendReconciled(savedDoc);
     return savedDoc;
   };
 
@@ -612,6 +634,8 @@ function App() {
   };
 
   const handleScanCapture = async (imageData, text, newDoc) => {
+    const userId = currentUser?.id;
+    if (activeUserRef.current !== userId) return null;
     const attachment = imageData ? {
       name: `${Date.now()}-scan.jpg`,
       type: 'image/jpeg',
@@ -633,6 +657,7 @@ function App() {
       },
       attachment,
     }));
+    if (activeUserRef.current !== userId) return saved;
     if (saved?.document) {
       upsertDocument(saved.document);
     }
@@ -933,6 +958,7 @@ function App() {
           documentTypes={documentTypes}
           device={device}
           onEditDocument={handleEditDocument}
+          onOpenRecord={handleOpenDocument}
         />
       );
     }
@@ -1018,6 +1044,8 @@ function App() {
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
                 onSendDocument={handleSendDocument}
+                onSendReconciled={handleSendReconciled}
+                pendingSendAttempts={pendingSendAttempts.current}
                 onReturnToSender={handleReturnToSender}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
@@ -1049,6 +1077,8 @@ function App() {
                 onEdit={handleEditDocument}
                 onAdd={handleAddDocument}
                 onSendDocument={handleSendDocument}
+                onSendReconciled={handleSendReconciled}
+                pendingSendAttempts={pendingSendAttempts.current}
                 onReturnToSender={handleReturnToSender}
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
@@ -1159,6 +1189,8 @@ function App() {
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
                 onSendDocument={handleSendDocument}
+                onSendReconciled={handleSendReconciled}
+                pendingSendAttempts={pendingSendAttempts.current}
                 onReturnToSender={handleReturnToSender}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
@@ -1190,6 +1222,8 @@ function App() {
                 onEdit={handleEditDocument}
                 onAdd={handleAddDocument}
                 onSendDocument={handleSendDocument}
+                onSendReconciled={handleSendReconciled}
+                pendingSendAttempts={pendingSendAttempts.current}
                 onReturnToSender={handleReturnToSender}
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
@@ -1268,6 +1302,8 @@ function App() {
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
                 onSendDocument={handleSendDocument}
+                onSendReconciled={handleSendReconciled}
+                pendingSendAttempts={pendingSendAttempts.current}
                 onReturnToSender={handleReturnToSender}
                 onReceiveTransmission={handleUpdateTransmission}
                 onSetDocumentStatus={handleSetDocumentStatus}
@@ -1299,6 +1335,8 @@ function App() {
                 onEdit={handleEditDocument}
                 onAdd={handleAddDocument}
                 onSendDocument={handleSendDocument}
+                onSendReconciled={handleSendReconciled}
+                pendingSendAttempts={pendingSendAttempts.current}
                 onReturnToSender={handleReturnToSender}
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
@@ -1362,6 +1400,8 @@ function App() {
                 onEdit={handleEditDocument}
                 onDelete={handleDeleteDocument}
                 onSendDocument={handleSendDocument}
+                onSendReconciled={handleSendReconciled}
+                pendingSendAttempts={pendingSendAttempts.current}
                 onReceiveTransmission={handleUpdateTransmission}
                 onReturnToSender={handleReturnToSender}
                 onVerifyDocument={handleVerifyDocument}
@@ -1440,6 +1480,7 @@ function App() {
           transmissions={visibleTransmissions}
           currentUser={currentUser}
           onClose={closeDocumentPreview}
+          onOpenRecord={handleOpenDocument}
         />
       )}
       <AppModal

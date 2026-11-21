@@ -18,12 +18,15 @@ const load = async (id, { signal }) => {
 };
 function Harness() {
   const [id, setId] = useState('SYNTHETIC');
+  const [openedRecordId, setOpenedRecordId] = useState(null);
   const close = useCallback(() => setId(null), []);
   const preview = useDocumentPreview(id, 'SYNTHETIC-USER', 0, load, close);
   return <main className="page-content"><h1>Synthetic preview check</h1>
     <button className="btn btn-primary" onClick={() => setId('SYNTHETIC')}>Open document</button>
+    {openedRecordId && <p role="status">Opened record: {openedRecordId}</p>}
     {id && <DocumentPreviewModal doc={preview.document} loading={preview.loading} refreshError={preview.error}
       onRetry={() => { fail = false; preview.retry(); }} onClose={close}
+      onOpenRecord={recordId => { setOpenedRecordId(recordId); setId(null); }}
       offices={[{ id: 'SOURCE', name: 'Synthetic source office' }]} documentTypes={[{ id: 'TYPE', category: 'Synthetic' }]} />}
   </main>;
 }
