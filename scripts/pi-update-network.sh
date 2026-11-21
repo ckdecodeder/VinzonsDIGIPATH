@@ -5,8 +5,20 @@
 set -eu
 
 BACKEND_URL="https://zt0pntkq-5000.asse.devtunnels.ms/api"
-DEVICE_KEY="dev-device-key-change-me"
-DEVTUNNEL_TOKEN=""
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+source "$SCRIPT_DIR/pi-load-env.sh"
+PRIVATE_CONFIG=""
+for candidate in "$REPO_ROOT/.env" "$REPO_ROOT/pi_ws_scanner.env" "$REPO_ROOT/bridge.env" /etc/digipath-scanner.env; do
+  if [ -f "$candidate" ]; then PRIVATE_CONFIG="$candidate"; break; fi
+done
+[ -n "$PRIVATE_CONFIG" ] || { echo "Missing private scanner configuration." >&2; exit 1; }
+pi_load_env "$PRIVATE_CONFIG"
+DIGIPATH_DEVICE_API_KEY="${DIGIPATH_DEVICE_API_KEY:-}"
+case "${DIGIPATH_DEVICE_API_KEY:-}" in
+  dev-*|change_this*|replace_with*) echo "Configure a strong private scanner key first." >&2; exit 1 ;;
+esac
+[ "${#DIGIPATH_DEVICE_API_KEY}" -ge 32 ] || { echo "Configure a strong private scanner key first." >&2; exit 1; }
 
 update_env_file() {
   local file="$1"
@@ -17,20 +29,6 @@ update_env_file() {
     sed -i "s|^DIGIPATH_BACKEND_BASE_URL=.*|DIGIPATH_BACKEND_BASE_URL=${BACKEND_URL}|" "$file"
   else
     echo "DIGIPATH_BACKEND_BASE_URL=${BACKEND_URL}" >> "$file"
-  fi
-
-  if grep -q '^DIGIPATH_DEVICE_API_KEY=' "$file"; then
-    sed -i "s|^DIGIPATH_DEVICE_API_KEY=.*|DIGIPATH_DEVICE_API_KEY=${DEVICE_KEY}|" "$file"
-  else
-    echo "DIGIPATH_DEVICE_API_KEY=${DEVICE_KEY}" >> "$file"
-  fi
-
-  if [ -n "${DEVTUNNEL_TOKEN}" ]; then
-    if grep -q '^DIGIPATH_DEVTUNNEL_TOKEN=' "$file"; then
-      sed -i "s|^DIGIPATH_DEVTUNNEL_TOKEN=.*|DIGIPATH_DEVTUNNEL_TOKEN=${DEVTUNNEL_TOKEN}|" "$file"
-    else
-      echo "DIGIPATH_DEVTUNNEL_TOKEN=${DEVTUNNEL_TOKEN}" >> "$file"
-    fi
   fi
 
   if grep -q '^DIGIPATH_USE_WEBSOCKET=' "$file"; then
@@ -48,9 +46,6 @@ update_env_file() {
   echo "Updated $file"
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
 for candidate in \
   "/etc/digipath-scanner.env" \
   "$HOME/Desktop/VinzonsDIGIPATH-Pi/.env" \
@@ -61,16 +56,6 @@ for candidate in \
   "$REPO_ROOT/bridge.env"; do
   update_env_file "$candidate"
 done
-
-if [ -f "$REPO_ROOT/pi_scanner_bridge.py" ]; then
-  sudo cp "$REPO_ROOT/pi_scanner_bridge.py" /opt/digipath-scanner/pi_scanner_bridge.py 2>/dev/null || true
-  sudo cp "$REPO_ROOT/motor_controller.py" /opt/digipath-scanner/motor_controller.py 2>/dev/null || true
-  sudo cp "$REPO_ROOT/relay_controller.py" /opt/digipath-scanner/relay_controller.py 2>/dev/null || true
-  sudo cp "$REPO_ROOT/install-pi-deps.sh" /opt/digipath-scanner/install-pi-deps.sh 2>/dev/null || true
-  if [ -f "$REPO_ROOT/bridge.env" ]; then
-    sudo cp "$REPO_ROOT/bridge.env" /etc/digipath-scanner.env 2>/dev/null || true
-  fi
-fi
 
 chmod +x "$REPO_ROOT/scripts/pi-test-backend.sh" 2>/dev/null || true
 

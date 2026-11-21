@@ -32,3 +32,46 @@ test('network synchronization refuses a weak source key before rewriting any app
   assert.throws(() => vm.runInNewContext(fs.readFileSync(filename, 'utf8'), context), /refused/);
   assert.equal(writes, 0);
 });
+
+
+test('test workflow reset retains every scan file', async () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+  const filename = path.resolve(__dirname, '../scripts/wipe-workflow-data.js');
+  let ended = false;
+  const client = { connect: async () => {}, end: async () => { ended = true; },
+    query: async sql => ({ rows: sql.includes('COUNT') ? [{ n: 0 }] : [], rowCount: 0 }) };
+  vm.runInNewContext(fs.readFileSync(filename, 'utf8'), {
+    require: id => {
+      if (id === 'dotenv') return { config() {} };
+      if (id === '../utils/maintenanceGuard') return { requireTestWrite };
+      if (id === 'pg') return { Client: function () { return client; } };
+      throw new Error('Unexpected dependency or filesystem access: ' + id);
+    },
+    process: { env: { DATABASE_URL: 'postgres://localhost/synthetic_test' }, argv: ['node', 'reset', '--apply'] },
+    console: { log() {}, error(message) { throw Error(message); } },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ended, true);
+});
+
+test('network sync never exports synthetic credentials into tracked shell source', () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+  const filename = path.resolve(__dirname, '../../scripts/sync-network-config.js');
+  const realRequire = require('node:module').createRequire(filename);
+  const key = 'synthetic-private-scanner-key-0123456789', token = 'synthetic-private-tunnel-token';
+  for (const configuredToken of ['', token]) {
+    const writes = new Map();
+    const fakeFs = { existsSync: () => true,
+      readFileSync: file => file.endsWith('network.env')
+        ? `DIGIPATH_PUBLIC_BACKEND_URL=https://synthetic.invalid\nDIGIPATH_DEVICE_API_KEY=${key}\nDIGIPATH_DEVTUNNEL_TOKEN=${configuredToken}\n`
+        : file.endsWith('pi-update-network.sh') ? fs.readFileSync(file, 'utf8') : '',
+      writeFileSync: (file, content) => writes.set(file, content) };
+    vm.runInNewContext(fs.readFileSync(filename, 'utf8'), {
+      __dirname: path.dirname(filename), require: id => id === 'fs' ? fakeFs : realRequire(id),
+      console: { log() {}, error() {} }, process: { exit: () => { throw Error('Unexpected refusal'); } },
+    });
+    const shell = writes.get(path.resolve(__dirname, '../../scripts/pi-update-network.sh'));
+    assert.ok(shell); assert.ok(!shell.includes(key)); assert.ok(!shell.includes(token));
+    assert.ok(shell.includes('pi_load_env'));
+  }
+});

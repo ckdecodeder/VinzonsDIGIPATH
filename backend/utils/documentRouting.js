@@ -53,7 +53,7 @@ const buildInitialOfficeRoute = ({
     routePlan,
     routeStep: 0,
     firstDestinationOfficeId: firstDestination,
-    intakeOfficeId: requiresMayorReception && mayorsOfficeId ? mayorsOfficeId : originOfficeId,
+    intakeOfficeId: originOfficeId,
     queuedOfficeIds: routeDestinations.slice(1),
     sendHistory: [],
     sendQueue: [],

@@ -45,7 +45,7 @@ test('initial Mayor reception is a separate route decision from Mayor approval',
 
   assert.equal(route.firstDestinationOfficeId, 'OFF-001');
   assert.equal(route.status, 'Received');
-  assert.equal(route.intakeOfficeId, 'OFF-001');
+  assert.equal(route.intakeOfficeId, 'OFF-008');
 });
 
 test('Mayor approval still routes through the Mayor even when initial reception is not requested', () => {
@@ -68,7 +68,7 @@ test('initial reception and Mayor approval combine as separate workflow decision
   });
 
   assert.equal(route.firstDestinationOfficeId, 'OFF-001');
-  assert.equal(route.intakeOfficeId, 'OFF-001');
+  assert.equal(route.intakeOfficeId, 'OFF-008');
   assert.equal(route.status, 'For Signing');
   assert.deepEqual(route.routePlan, ['OFF-008', 'OFF-001', 'OFF-003']);
 });

@@ -4,8 +4,6 @@
  */
 require('dotenv').config({ quiet: true });
 require('../utils/maintenanceGuard').requireTestWrite(process.env.DATABASE_URL, process.argv);
-const fs = require('fs');
-const path = require('path');
 const { Client } = require('pg');
 
 async function main() {
@@ -72,21 +70,7 @@ async function main() {
   };
   console.log('After:', after);
 
-  // Best-effort: remove orphaned scan files under uploads/scans
-  const scansDir = path.join(__dirname, '..', 'uploads', 'scans');
-  if (fs.existsSync(scansDir)) {
-    const files = fs.readdirSync(scansDir);
-    let removed = 0;
-    for (const file of files) {
-      try {
-        fs.unlinkSync(path.join(scansDir, file));
-        removed += 1;
-      } catch {
-        // ignore individual file failures
-      }
-    }
-    console.log(`Removed ${removed} files from uploads/scans`);
-  }
+  // Scan files are deliberately retained; database isolation does not imply storage isolation.
 
   await client.end();
   console.log('Done. Documents, transmissions, and archives are empty.');

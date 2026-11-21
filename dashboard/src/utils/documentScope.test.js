@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isDocumentVisibleToUser, isTransmissionVisibleToUser } from './documentScope.js';
 import { isOfficeReadOnlyTracking } from './documentActionRules.js';
-import { buildReceiveTransition, buildSendTransition } from '../../../backend/utils/documentRouting.js';
+import { buildInitialOfficeRoute, buildReceiveTransition, buildSendTransition } from '../../../backend/utils/documentRouting.js';
 
 test('Receptionist can track an incoming document after it is forwarded', () => {
   const doc = { documentDirection: 'Incoming', intakeOfficeId: 'OFF-001', status: 'In Transit', destinationOfficeId: 'OFF-003' };
@@ -67,4 +67,12 @@ test('Office senders can track a legacy delivery with only a transmission record
   assert.equal(isTransmissionVisibleToUser(transmission, { role: 'Office', officeId: 'UNRELATED' }), false);
   assert.equal(isDocumentVisibleToUser(doc, sender, { sentDocumentIds: new Set([transmission.documentId]) }), true);
   assert.equal(isOfficeReadOnlyTracking(doc, sender, true), true);
+});
+
+
+test('Mayor reception retains original Reception tracking through onward forwarding', () => {
+  const route = buildInitialOfficeRoute({ originOfficeId: 'RECEPTION', destinationOfficeId: 'FINAL', mayorsOfficeId: 'MAYOR', requiresMayorReception: true, requiresMayorApproval: true });
+  const doc = { ...route, documentDirection: 'Incoming', status: 'Received', currentOfficeId: 'FINAL' };
+  assert.equal(isDocumentVisibleToUser(doc, { role: 'Receptionist', officeId: 'RECEPTION' }), true);
+  assert.equal(isDocumentVisibleToUser(doc, { role: 'Receptionist', officeId: 'UNRELATED' }), false);
 });

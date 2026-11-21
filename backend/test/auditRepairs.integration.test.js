@@ -9,7 +9,7 @@ const { randomUUID } = require('node:crypto');
 const { once } = require('node:events');
 const databaseUrl = process.env.WORKFLOW_TEST_DATABASE_URL;
 const integration = (name, fn) => test(name, { skip: !databaseUrl }, fn);
-let db, models, raw, base, server, tempRoot, failSave = false, failSend = false, failSaveTarget = 'FILES';
+let db, models, raw, base, server, tempRoot, failSave = false, failSend = false, failSaveTarget = 'FILES', failNotifications = false, invalidations = 0;
 const schema = 'audit_repair_test_' + randomUUID().replaceAll('-', '');
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=';
 const loadModule = async (filename, overrides) => {
@@ -41,11 +41,11 @@ before(async () => {
   const overrides = {
     '../models': models,
     '../middleware/auth': { ...require('../middleware/auth'), protect: (req, res, next) => req.user ? next() : res.sendStatus(401) },
-    '../utils/helpers': { ...helpers, createLogEntry: async () => {}, createNotification: async () => {}, notifyApprovalUsers: async () => {},
+    '../utils/helpers': { ...helpers, createLogEntry: async () => {}, createNotification: async () => { if (failNotifications) throw Error('Synthetic notification failure'); }, notifyApprovalUsers: async () => { if (failNotifications) throw Error('Synthetic notification failure'); },
       appendDocumentTimeline: (id, event, updates, opts = {}) => models.Document.findOneAndUpdate({ id }, { $set: updates, $push: { timeline: event } }, { new: true, ...opts }) },
     '../utils/documentHandoffs': { sendHandoffs: handoffs.send, receiveHandoff: handoffs.receive, cancelHandoff: handoffs.cancel },
     '../utils/archiveWorkflow': { archiveDocument: archive.create, restoreArchive: archive.remove },
-    '../utils/realtime': { broadcastDataInvalidate: () => {}, broadcastCommandUpdated: () => {}, pushCommandToDevice: () => false },
+    '../utils/realtime': { broadcastDataInvalidate: () => { invalidations++; }, broadcastDeviceUpdated: () => {}, broadcastCommandUpdated: () => {}, pushCommandToDevice: () => false },
     '../services/devicePresence': { getDeviceSnapshot: async () => ({ connected: true }), hardwarePresenceEvents: [] },
     '../utils/bridge': { ...require('../utils/bridge'), requireDeviceApiKey: (req, res, next) => next() },
     '../utils/transactionContext': { ...context, withDeviceCommandLock: (id, fn) => context.withDeviceCommandLock(id, fn, raw.CommandModel) },
@@ -217,7 +217,7 @@ integration('Audit repair: failed archive or restore saves roll back both linked
     assert.equal((await request('/archives/' + created.body.id, 'DELETE')).status, 500);
     assert.equal(await raw.ArchiveModel.count({ where: { documentId: 'ARC-FAIL' } }), 1);
     assert.equal((await raw.DocumentModel.findByPk('ARC-FAIL')).status, 'Archived');
-  } finally { failSave = false; failSaveTarget = 'FILES'; }
+  } finally { failSave = false; failSaveTarget = 'FILES', failNotifications = false, invalidations = 0; }
 });
 integration('Audit repair: concurrent metadata edits reject stale state under the document lock', async () => {
   await fixture('EDIT-RACE');
@@ -270,4 +270,59 @@ integration('Audit repair: deletion and archiving preserve cross-record integrit
   assert([200, 404, 409].includes(results[1].status));
   assert.equal(await raw.DocumentModel.count({ where: { id: 'DELETE-RACE' } }), 0);
   assert.equal(await raw.ArchiveModel.count({ where: { documentId: 'DELETE-RACE' } }), 0);
+});
+
+
+integration('Audit follow-up: registration visits Mayor before the requested final office', async () => {
+  await raw.DocumentTypeModel.create({ id: 'REQUIRES-APPROVAL', category: 'Synthetic approval', requiresMayorApproval: true, requiresMayorReception: true });
+  for (const [role, endpoint] of [['Office', '/documents'], ['Receptionist', '/documents'], ['Receptionist', '/documents/scanner']]) {
+    const result = await request(endpoint, 'POST', { subject: 'Synthetic approval route', senderName: 'Synthetic',
+      documentTypeId: 'REQUIRES-APPROVAL', destinationOfficeId: 'OTHER', scannedFiles: [{ name: 'test.png', dataUrl: png }] }, role);
+    assert.equal(result.status, 201, result.text);
+    const doc = endpoint.endsWith('scanner') ? result.body.document : result.body;
+    assert.deepEqual(doc.routePlan, ['SOURCE', 'MAYOR', 'OTHER']);
+    if (role === 'Receptionist') assert.equal(doc.intakeOfficeId, 'SOURCE');
+    let deliveries = await raw.TransmissionModel.findAll({ where: { documentId: doc.id } });
+    assert.deepEqual(deliveries.map(row => row.toOfficeId), ['MAYOR']);
+    assert.equal((await request(`/transmissions/${deliveries[0].id}`, 'PUT', { confirmReceipt: true }, 'Mayor', 'MAYOR')).status, 200);
+    assert.equal((await request(`/documents/${doc.id}/send`, 'POST', { toOfficeIds: ['OTHER'] }, 'Mayor', 'MAYOR')).status, 400);
+    assert.equal((await request(`/documents/${doc.id}/process-note`, 'POST', { action: 'sign_document' }, 'Mayor', 'MAYOR')).status, 200);
+    assert.equal((await request(`/documents/${doc.id}/send`, 'POST', { toOfficeIds: ['OTHER'] }, 'Mayor', 'MAYOR')).status, 200);
+    deliveries = await raw.TransmissionModel.findAll({ where: { documentId: doc.id, toOfficeId: 'OTHER' } });
+    assert.equal(deliveries.length, 1);
+  }
+});
+
+integration('Audit follow-up: physical scan registration retains the original intake office after receipt', async () => {
+  const capture = await request('/devices/scans', 'POST', { deviceId: 'SYNTHETIC-SCANNER', officeId: 'SOURCE', documentTypeId: 'TYPE', attachment: { name: 'capture.png', type: 'image/png', dataUrl: png } });
+  assert.equal(capture.status, 201, capture.text);
+  const doc = capture.body.document;
+  assert.equal(doc.intakeOfficeId, 'SOURCE');
+  const registration = await request(`/documents/${doc.id}`, 'PUT', { subject: 'Synthetic registered scan', intakeStatus: 'Approved', intakeOfficeId: 'OTHER' }, 'Receptionist');
+  assert.equal(registration.status, 200, registration.text);
+  assert.equal(registration.body.intakeOfficeId, 'SOURCE');
+  assert.equal((await request(`/documents/${doc.id}/send`, 'POST', { toOfficeIds: ['OTHER'] }, 'Office')).status, 200);
+  const delivery = await raw.TransmissionModel.findOne({ where: { documentId: doc.id } });
+  assert.equal((await request(`/transmissions/${delivery.id}`, 'PUT', { confirmReceipt: true }, 'Office', 'OTHER')).status, 200);
+  assert.equal((await request(`/documents/${doc.id}`, 'GET', null, 'Receptionist', 'SOURCE')).status, 200);
+  assert.equal((await request(`/documents/${doc.id}`, 'GET', null, 'Receptionist', 'UNRELATED')).status, 404);
+});
+
+integration('Audit follow-up: generic signing succeeds once and invalidates despite notification failure', async () => {
+  for (const [before, after] of [['For Signing', 'Signed'], ['For Filing', 'Acknowledged']]) {
+    const id = 'GENERIC-' + after;
+    await fixture(id, { status: before });
+    for (const failure of [false, true]) {
+      await raw.DocumentModel.update({ status: before, timeline: [] }, { where: { id } });
+      const previousInvalidations = invalidations;
+      failNotifications = failure;
+      try {
+        const result = await request(`/documents/${id}`, 'PUT', { status: after });
+        assert.equal(result.status, 200, result.text);
+        const saved = await raw.DocumentModel.findByPk(id);
+        assert.equal(saved.status, after); assert.equal(saved.timeline.length, 1);
+        assert.ok(invalidations > previousInvalidations);
+      } finally { failNotifications = false; }
+    }
+  }
 });

@@ -31,6 +31,9 @@ const formatDateTime = (value) => {
 
 const DocumentPreviewModal = ({
   doc,
+  loading = false,
+  refreshError = '',
+  onRetry,
   offices = [],
   users = [],
   documentTypes = [],
@@ -50,6 +53,22 @@ const DocumentPreviewModal = ({
       setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
     } catch (error) { popup.close(); setFileError(error.message || 'Unable to open this file.'); }
   };
+  if (loading || refreshError) return (
+    <ModalOverlay onClose={onClose}>
+      <div className="modal document-detail-modal" onClick={event => event.stopPropagation()}>
+        <div className="modal-header">
+          <h2>Document details</h2>
+          <button type="button" className="btn-icon" onClick={onClose} aria-label="Close document details"><X size={18} /></button>
+        </div>
+        <div className="modal-body" aria-busy={loading}>
+          {loading ? <p role="status">Refreshing document details…</p> : <>
+            <p role="alert">{refreshError}</p>
+            <button type="button" className="btn btn-secondary" onClick={onRetry}>Retry</button>
+          </>}
+        </div>
+      </div>
+    </ModalOverlay>
+  );
   if (!doc) return null;
 
   const getOfficeName = (officeId) =>

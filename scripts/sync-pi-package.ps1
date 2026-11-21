@@ -4,6 +4,26 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$Destination = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Destination)
+$Destination = [IO.Path]::GetFullPath($Destination).TrimEnd('\', '/')
+if (-not $Destination -or $Destination -eq [IO.Path]::GetPathRoot($Destination).TrimEnd('\', '/') -or $Destination -eq $repoRoot -or $repoRoot.StartsWith($Destination + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+  throw "Destination must be a dedicated package directory, not a filesystem or repository root."
+}
+function Assert-PackagePath {
+  param([string]$Path)
+  $resolved = [IO.Path]::GetFullPath($Path)
+  if (-not $resolved.StartsWith($Destination + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Cleanup target escapes the package directory."
+  }
+  if (Test-Path -LiteralPath $resolved) {
+    $item = Get-Item -LiteralPath $resolved -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Package links are not supported." }
+  }
+}
+if ((Test-Path -LiteralPath $Destination) -and ((Get-Item -LiteralPath $Destination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+  throw "Package destination cannot be a link."
+}
+
 
 function Convert-ToLf {
   param([string]$Path)
@@ -43,8 +63,9 @@ function Copy-PiFile {
 function Remove-UsbLegacy {
   param([string]$RelativePath)
   $target = Join-Path $Destination $RelativePath
-  if (Test-Path $target) {
-    Remove-Item $target -Recurse -Force
+  Assert-PackagePath $target
+  if (Test-Path -LiteralPath $target) {
+    Remove-Item -LiteralPath $target -Recurse -Force
     Write-Host "Removed legacy: $RelativePath"
   }
 }
@@ -52,6 +73,9 @@ function Remove-UsbLegacy {
 if (-not (Test-Path $Destination)) {
   New-Item -ItemType Directory -Path $Destination -Force | Out-Null
 }
+
+# Reject links before any recursive removal or file replacement.
+Get-ChildItem -LiteralPath $Destination -Force -Recurse | ForEach-Object { Assert-PackagePath $_.FullName }
 
 # Minimal USB package — JPEG preview over WebSocket only (no WebRTC)
 
@@ -143,15 +167,17 @@ $allowedRelative = [System.Collections.Generic.HashSet[string]]::new(
 function Remove-UsbStrays {
   if (-not (Test-Path $Destination)) { return }
   Get-ChildItem -Path $Destination -Recurse -File | ForEach-Object {
+    Assert-PackagePath $_.FullName
     $rel = $_.FullName.Substring($Destination.Length).TrimStart('\', '/').Replace('\', '/')
     if (-not $allowedRelative.Contains($rel)) {
-      Remove-Item $_.FullName -Force
+      Remove-Item -LiteralPath $_.FullName -Force
       Write-Host "Removed stray: $rel"
     }
   }
   Get-ChildItem -Path $Destination -Recurse -Directory | Sort-Object FullName -Descending | ForEach-Object {
-    if (-not (Get-ChildItem -Path $_.FullName -Force | Select-Object -First 1)) {
-      Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+    Assert-PackagePath $_.FullName
+    if (-not (Get-ChildItem -LiteralPath $_.FullName -Force | Select-Object -First 1)) {
+      Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
     }
   }
 }
@@ -180,7 +206,8 @@ if (Test-Path $wsEnvSrc) {
 
 $venvOnUsb = Join-Path $Destination ".venv"
 if (Test-Path $venvOnUsb) {
-  Remove-Item $venvOnUsb -Recurse -Force
+  Assert-PackagePath $venvOnUsb
+  Remove-Item -LiteralPath $venvOnUsb -Recurse -Force
   Write-Host "Removed .venv from USB package (Pi creates it locally)."
 }
 

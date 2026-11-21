@@ -250,6 +250,7 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       documentTypeId: req.body.documentTypeId || 'DT-001',
       documentTypeOther: req.body.documentTypeOther?.trim(),
       originOfficeId: officeId,
+      intakeOfficeId: (req.body.documentDirection || 'Incoming') === 'Incoming' ? officeId : '',
       originOfficeOther: req.body.originOfficeOther?.trim(),
       currentOfficeId: officeId,
       destinationOfficeOther: req.body.destinationOfficeOther?.trim(),

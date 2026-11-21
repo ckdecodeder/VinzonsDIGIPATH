@@ -294,20 +294,6 @@ if (fs.existsSync(piScriptPath)) {
     /^BACKEND_URL=".*"$/m,
     `BACKEND_URL="${apiBase}"`,
   );
-  piScript = piScript.replace(
-    /^DEVICE_KEY=".*"$/m,
-    `DEVICE_KEY="${deviceKey}"`,
-  );
-  if (devtunnelToken) {
-    if (/^DEVTUNNEL_TOKEN=".*"$/m.test(piScript)) {
-      piScript = piScript.replace(/^DEVTUNNEL_TOKEN=".*"$/m, `DEVTUNNEL_TOKEN="${devtunnelToken}"`);
-    } else {
-      piScript = piScript.replace(
-        /^DEVICE_KEY=".*"$/m,
-        `DEVICE_KEY="${deviceKey}"\nDEVTUNNEL_TOKEN="${devtunnelToken}"`,
-      );
-    }
-  }
   writeFile(piScriptPath, piScript);
 }
 

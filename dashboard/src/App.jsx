@@ -43,6 +43,7 @@ import { sortNewest } from './utils/sorting';
 import { receiveDocumentWithConfirmation } from './utils/receiveDocument';
 import { RealtimeProvider } from './context/RealtimeContext';
 import { realtimeClient } from './ws/realtimeClient';
+import { useDocumentPreview } from './hooks/useDocumentPreview';
 
 const DocumentList = lazy(() => import('./pages/DocumentList'));
 const ArchiveList = lazy(() => import('./pages/ArchiveList'));
@@ -146,7 +147,10 @@ function App() {
   const [documentFocusKey, setDocumentFocusKey] = useState(0);
   const [archiveFocus, setArchiveFocus] = useState('');
   const [documentStatusFocus, setDocumentStatusFocus] = useState('All');
-  const [previewDocument, setPreviewDocument] = useState(null);
+  const [previewDocumentId, setPreviewDocumentId] = useState(null);
+  const closeDocumentPreview = useCallback(() => setPreviewDocumentId(null), []);
+  const preview = useDocumentPreview(previewDocumentId, currentUser?.id, documents,
+    documentService.getById, closeDocumentPreview);
   const [dismissedNotifications, setDismissedNotifications] = useState(() => {
     const saved = localStorage.getItem('dp_dismissedNotifications');
     return saved ? JSON.parse(saved) : [];
@@ -229,6 +233,7 @@ function App() {
 
   const clearActionToast = useCallback(() => setActionToast(null), []);
   const refreshAfterMutation = (keys = ['documents', 'transmissions', 'archives', 'logs', 'notifications', 'senderNotifications']) => {
+    if (keys.includes('documents')) preview.retry();
     appDataService.invalidate(keys);
     keys.forEach((key) => refreshKeysRef.current.add(key));
     clearTimeout(refreshTimerRef.current);
@@ -296,7 +301,7 @@ function App() {
     setSectionStates({});
     setDocuments([]); setTransmissions([]); setArchives([]); setDevice(null); setLogs([]);
     setUsers([]); setOffices([]); setDocumentTypes([]); setDeviceEvents([]);
-    setServerNotifications([]); setSenderNotifications([]); setPreviewDocument(null);
+    setServerNotifications([]); setSenderNotifications([]); setPreviewDocumentId(null);
     return () => { clearTimeout(refreshTimerRef.current); refreshKeysRef.current.clear(); };
   }, [currentUser?.id]);
   useEffect(() => {
@@ -396,7 +401,7 @@ function App() {
   const handleNavigate = (page) => {
     setArchiveFocus('');
     const nextPage = resolvePageForRole(page, currentRole);
-    setPreviewDocument(null);
+    setPreviewDocumentId(null);
     if (nextPage !== 'documents') {
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
@@ -411,14 +416,8 @@ function App() {
   const handleFocusDocumentConsumed = useCallback(() => {
     setDocumentFocusId('');
   }, []);
-  const handlePreviewDocument = useCallback(async (doc) => {
-    if (!doc) return;
-    const owner = activeUserRef.current;
-    try {
-      const fullDocument = doc._summary ? await documentService.getById(doc.id) : doc;
-      if (activeUserRef.current === owner) setPreviewDocument(fullDocument);
-    }
-    catch (error) { notifyUser({ type: 'danger', title: 'Unable to open document', message: error.message }); }
+  const handlePreviewDocument = useCallback((doc) => {
+    if (doc) setPreviewDocumentId(doc.id);
   }, []);
 
   const handleOpenDocument = (documentId) => {
@@ -435,7 +434,7 @@ function App() {
   };
 
   const handleOpenDocumentsByStatus = (status = 'All') => {
-    setPreviewDocument(null);
+    setPreviewDocumentId(null);
     setDocumentFocusId('');
     setDocumentStatusFocus(status || 'All');
     setCurrentPage('documents');
@@ -1429,15 +1428,18 @@ function App() {
           </Suspense>
         </ErrorBoundary>
       </Layout>
-      {previewDocument && (
+      {previewDocumentId && (
         <DocumentPreviewModal
-          doc={previewDocument}
+          doc={preview.document}
+          loading={preview.loading}
+          refreshError={preview.error}
+          onRetry={preview.retry}
           offices={offices}
           users={users}
           documentTypes={documentTypes}
           transmissions={visibleTransmissions}
           currentUser={currentUser}
-          onClose={() => setPreviewDocument(null)}
+          onClose={closeDocumentPreview}
         />
       )}
       <AppModal

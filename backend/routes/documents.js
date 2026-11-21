@@ -455,7 +455,7 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
       },
     ],
   });
-  const initialDestinations = (documentPayload.routePlan || []).slice(1);
+  const initialDestinations = (documentPayload.routePlan || []).slice(1, 2);
   let savedDoc = doc;
   let transmission = null;
   const deferred = [];
@@ -579,7 +579,7 @@ router.post('/', documentCreateRoles, asyncHandler(async (req, res) => {
   await withModelTransaction(Document._Model, async () => {
     await doc.save();
     if (['Office', 'Receptionist'].includes(req.user?.role)) {
-      const initialDestinations = (documentPayload.routePlan || []).slice(1);
+      const initialDestinations = (documentPayload.routePlan || []).slice(1, 2);
       if (initialDestinations.length && !(await staysAtMayorForApproval(doc))) {
         const handoff = await startDocumentHandoff(req, doc, initialDestinations, 'Internal', deferred);
         savedDoc = handoff.document;
@@ -747,9 +747,9 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
     ...updateOptions, validate: current => { snapshotGuard(req, existingDoc)(current); assertValidDocumentUpdate(req, current, requestedUpdates); },
   });
   if (!doc) return res.status(404).json({ message: 'Document not found' });
-  await createLogEntry(req, 'document_updated', `Updated document: ${doc.subject}`, doc.id);
+  await runPostSaveSideEffects('update_log', () => createLogEntry(req, 'document_updated', `Updated document: ${doc.subject}`, doc.id));
   if (updates.status && updates.status !== existingDoc.status) {
-    await createNotification({
+    await runPostSaveSideEffects('update_office_notification', () => createNotification({
       officeId: doc.currentOfficeId,
       title: `Document ${doc.status.toLowerCase()}`,
       message: `${doc.trackingNumber} is now ${doc.status}.`,
@@ -757,16 +757,16 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
       referenceType: 'document',
       referenceId: doc.id,
       page: 'documents',
-    });
+    }));
     if (['Signed', 'Acknowledged'].includes(doc.status)) {
-      await notifyApprovalUsers({
-        title: labels[action],
-        message: `${doc.trackingNumber} is ${doc.status.toLowerCase()} and can be returned or archived.`,
+      await runPostSaveSideEffects('update_approval_notification', () => notifyApprovalUsers({
+        title: `Document ${doc.status.toLowerCase()}`,
+        message: `${doc.trackingNumber} is ${doc.status.toLowerCase()} and is ready for the next workflow step.`,
         type: 'success',
         referenceType: 'document',
         referenceId: doc.id,
-        page: 'archives',
-      });
+        page: 'documents',
+      }));
     }
   }
   broadcastDataInvalidate(['documents', 'logs', 'notifications']);
