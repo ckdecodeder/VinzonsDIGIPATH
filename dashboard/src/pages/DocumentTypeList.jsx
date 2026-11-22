@@ -1,6 +1,8 @@
-import React, { useId, useState } from 'react';
+import React, { useId, useRef, useState } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
+import { focusFormError } from '../utils/formAccessibility';
+import { createSubmissionGate } from '../utils/submissionGate';
 import { Search, Plus, Edit2, Trash2, X, Shield, ArrowRight } from 'lucide-react';
 
 const ROUTING_TRACKS = [
@@ -21,6 +23,9 @@ const DocumentTypeList = ({
   const [showForm, setShowForm] = useState(false);
   const [editType, setEditType] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+  const submitGate = useRef(null);
+  if (!submitGate.current) submitGate.current = createSubmissionGate(setIsSaving);
 
   const [formData, setFormData] = useState({
     category: '',
@@ -29,11 +34,16 @@ const DocumentTypeList = ({
     routingTrack: 'direct',
   });
 
+  const closeForm = () => {
+    if (!isSaving) setShowForm(false);
+  };
+
   const filtered = documentTypes.filter((t) =>
     t.category?.toLowerCase().includes(search.toLowerCase()),
   );
 
   const openForm = (type = null) => {
+    setFormError('');
     if (type) {
       setEditType(type);
       setFormData({
@@ -49,19 +59,23 @@ const DocumentTypeList = ({
     setShowForm(true);
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    setIsSaving(true);
-    try {
-      const saved = editType
-        ? await onUpdateDocumentType(editType.id, formData)
-        : await onAddDocumentType(formData);
-      if (!saved) return;
-      setShowForm(false);
-      setEditType(null);
-    } finally {
-      setIsSaving(false);
-    }
+    const form = e.currentTarget;
+    return submitGate.current(async () => {
+      setFormError('');
+      try {
+        const saved = editType
+          ? await onUpdateDocumentType(editType.id, formData)
+          : await onAddDocumentType(formData);
+        if (!saved) return;
+        setShowForm(false);
+        setEditType(null);
+      } catch (error) {
+        setFormError(error?.message || 'Unable to save this document type.');
+        focusFormError(form);
+      }
+    });
   };
 
   const getTrackInfo = (track) => ROUTING_TRACKS.find((t) => t.value === track) || ROUTING_TRACKS[0];
@@ -183,14 +197,15 @@ const DocumentTypeList = ({
       </PageShell>
 
       {showForm && (
-        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => setShowForm(false)}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={closeForm}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 id={`${formId}-form-title`}>{editType ? 'Edit Document Type' : 'New Document Type'}</h2>
-              <button className="btn-icon" aria-label="Close document type form" onClick={() => setShowForm(false)}><X size={18} /></button>
+              <button type="button" className="btn-icon" aria-label="Close document type form" disabled={isSaving} onClick={closeForm}><X size={18} /></button>
             </div>
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} aria-busy={isSaving} aria-describedby={formError ? `${formId}-form-error` : undefined}>
               <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', padding: '1.5rem' }}>
+                {formError && <div id={`${formId}-form-error`} className="form-error-summary" role="alert" data-form-error tabIndex={-1}>{formError}</div>}
                 {/* Category */}
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label htmlFor={`${formId}-category`} className="form-label">Category Name <span className="required">*</span></label>
@@ -265,7 +280,7 @@ const DocumentTypeList = ({
               </div>
 
               <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
+                <button type="button" className="btn btn-secondary" disabled={isSaving} onClick={closeForm}>Cancel</button>
                 <button type="submit" className="btn btn-primary" disabled={isSaving}>
                   {isSaving ? 'Saving...' : (editType ? 'Save Changes' : 'Create Type')}
                 </button>

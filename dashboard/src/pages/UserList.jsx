@@ -61,8 +61,8 @@ const UserList = ({
 
   const roleColors = {
     Admin: {
-      bg: "rgba(239, 68, 68, 0.1)",
-      color: "#ef4444",
+      bg: "var(--danger-bg)",
+      color: "var(--danger)",
       icon: <ShieldCheck size={10} />,
     },
     Mayor: {
@@ -76,8 +76,8 @@ const UserList = ({
       icon: <ScanLine size={10} />,
     },
     Office: {
-      bg: "rgba(245, 158, 11, 0.12)",
-      color: "#d97706",
+      bg: "var(--warning-bg)",
+      color: "var(--warning)",
       icon: <Briefcase size={10} />,
     },
   };

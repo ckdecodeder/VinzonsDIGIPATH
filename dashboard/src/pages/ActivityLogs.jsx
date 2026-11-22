@@ -400,7 +400,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
                   </tr>
                 );
               })
-            ) : (
+            ) : !loading && !error ? (
               <tr>
                 <td colSpan="5">
                   <div className="empty-state">
@@ -408,11 +408,11 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
                       <Clock size={24} />
                     </div>
                     <h3>No log entries found</h3>
-                    <p>Activity will appear here as the system is used</p>
+                    <p>{search || filterAction !== 'All' || filterUser || filterReference || dateFrom || dateTo ? 'Try different filters or clear them to see more activity.' : 'Activity will appear here as the system is used'}</p>
                   </div>
                 </td>
               </tr>
-            )}
+            ) : null}
           </tbody>
         </table>
       </div>

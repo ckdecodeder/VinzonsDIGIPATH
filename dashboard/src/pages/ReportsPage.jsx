@@ -62,9 +62,16 @@ const ReportsPage = ({
   currentRole,
   currentUser,
   onNotify,
+  dataStates = {},
 }) => {
   const titleId = useId();
   const [activeCategory, setActiveCategory] = useState('summary');
+  const requiredReportSections = ['documents', 'transmissions', 'archives', ...({
+    summary: ['offices', 'documentTypes'], documents: ['offices', 'documentTypes'],
+    transmissions: ['offices', 'users'], offices: ['offices'], activity: ['users', 'logs'],
+  }[activeCategory] || [])];
+  const reportDataReady = requiredReportSections.every(key => dataStates[key]?.status === 'ready');
+  const reportDataFailed = requiredReportSections.some(key => dataStates[key]?.status === 'error');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [documentFilters, setDocumentFilters] = useState({
@@ -389,6 +396,7 @@ const ReportsPage = ({
   };
 
   const runReportAction = async (action) => {
+    if (!reportDataReady) { setExportError('Report data is not ready. Wait for loading or retry the failed sections before generating a report.'); return; }
     if (jobRef.current) return;
     let printWindow = null;
     // Open during the click gesture, before asynchronous generation, so printing
@@ -461,15 +469,15 @@ const ReportsPage = ({
         type="button"
         className="btn-report-action btn-report-action--download"
         onClick={() => setDownloadMenuOpen((open) => !open)}
-        disabled={isExporting}
+        disabled={isExporting || !reportDataReady}
         aria-haspopup="menu"
-        aria-expanded={downloadMenuOpen}
+        aria-expanded={downloadMenuOpen && reportDataReady}
       >
         {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
         {isExporting ? 'Generating...' : 'Download'}
         {!isExporting && <ChevronDown size={14} className={`report-download-chevron${downloadMenuOpen ? ' is-open' : ''}`} />}
       </button>
-      {downloadMenuOpen && (
+      {downloadMenuOpen && reportDataReady && (
         <div className="report-download-menu-panel" role="menu" aria-label="Download format">
           <button type="button" role="menuitem" onClick={() => runReportAction('pdf')}>
             Download as PDF
@@ -593,11 +601,11 @@ const ReportsPage = ({
               <p>View categorized reports and analytics</p>
             </div>
             <div className="page-header-actions reports-header-actions">
-              <button type="button" className="btn-report-action btn-report-action--preview" onClick={() => runReportAction('preview')} disabled={isExporting}>
+              <button type="button" className="btn-report-action btn-report-action--preview" onClick={() => runReportAction('preview')} disabled={isExporting || !reportDataReady}>
                 <Eye size={16} />
                 Preview
               </button>
-              <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting}>
+              <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting || !reportDataReady}>
                 <Printer size={16} />
                 Print
               </button>
@@ -685,6 +693,10 @@ const ReportsPage = ({
       </div>
 
       {/* ==================== SUMMARY ==================== */}
+      {!reportDataReady && <div className="alert" role="status">
+        {reportDataFailed ? 'Report data is unavailable. Retry the failed sections above before generating a report.' : 'Loading report data. Results and report actions will be available when the required sections finish loading.'}
+      </div>}
+      {reportDataReady && <>
       {activeCategory === 'summary' && (
         <div>
           <div className="reports-stats-grid">
@@ -1117,15 +1129,15 @@ const ReportsPage = ({
         </div>
       )}
 
+      </>}
       </PageShell>
-
       {showPreview && (
         <ModalOverlay aria-labelledby={titleId} overlayClassName="report-preview-overlay" onClose={closePreview}>
           <div className="modal report-preview-modal" onClick={(event) => event.stopPropagation()}>
             <div className="report-preview-toolbar">
               <div><h2 id={titleId}>Report Preview</h2><p>{categoryLabel} - {coverageText}</p></div>
               <div className="report-preview-actions">
-                <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting}>
+                <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting || !reportDataReady}>
                   <Printer size={16} /> Print
                 </button>
                 {renderDownloadMenu(true)}

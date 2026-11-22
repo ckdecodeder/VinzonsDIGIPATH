@@ -5427,7 +5427,7 @@ body.modal-open .notification-dock {
 }
 
 .office-card-id {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5526,7 +5526,7 @@ body.modal-open .notification-dock {
 
 .office-staff-role {
   max-width: 5.5rem;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6605,7 +6605,7 @@ body.modal-open .notification-dock {
   width: 100%;
   border: none;
   background: transparent;
-  color: #047857;
+  color: var(--success);
   font-size: 0.8rem;
   font-weight: 600;
   font-family: inherit;
@@ -6651,7 +6651,7 @@ body.modal-open .notification-dock {
 
 .btn-report-action--preview {
   background: rgba(8, 145, 178, 0.1);
-  color: #0e7490;
+  color: var(--text-accent);
   border-color: rgba(8, 145, 178, 0.18);
 }
 
@@ -6675,12 +6675,12 @@ body.modal-open .notification-dock {
 
 .btn-report-action--download {
   background: rgba(5, 150, 105, 0.09);
-  color: #047857;
+  color: var(--success);
   border-color: rgba(5, 150, 105, 0.18);
 }
 
 .btn-report-action--download:hover:not(:disabled) {
-  background: rgba(5, 150, 105, 0.14);
+  background: rgba(5, 150, 105, 0.09);
   border-color: rgba(5, 150, 105, 0.28);
   box-shadow: 0 2px 8px rgba(5, 150, 105, 0.12);
 }
@@ -9667,4 +9667,33 @@ textarea:focus-visible, [role="button"]:focus-visible, [data-form-error]:focus {
   .notification-dock.panel-above .notification-dock-panel { top: auto; bottom: 0; }
   .notification-dock-panel { max-height: var(--notification-panel-height); }
   .notification-dock-list { max-height: min(540px, calc(var(--notification-panel-height) - 5.5rem)); }
+
+  :is(.page-body, .modal-body, .table-container, .notification-dock-list, .sidebar, .office-staff-list) {
+    scrollbar-width: thin;
+    scrollbar-color: var(--text-muted) transparent;
+  }
+  :is(.page-body, .modal-body, .table-container, .notification-dock-list, .sidebar, .office-staff-list)::-webkit-scrollbar {
+    display: block;
+    width: 8px;
+    height: 8px;
+  }
+  :is(.page-body, .modal-body, .table-container, .notification-dock-list, .sidebar, .office-staff-list)::-webkit-scrollbar-track {
+    display: block;
+    background: transparent;
+  }
+  :is(.page-body, .modal-body, .table-container, .notification-dock-list, .sidebar, .office-staff-list)::-webkit-scrollbar-thumb {
+    display: block;
+    background: var(--text-muted);
+    border-radius: var(--radius-sm);
+  }
+
+  .data-section-status {
+    margin: 1rem 2rem;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+  }
 }

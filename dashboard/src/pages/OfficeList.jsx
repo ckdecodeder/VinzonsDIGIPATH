@@ -1,6 +1,8 @@
-import React, { useId, useState } from "react";
+import React, { useId, useRef, useState } from "react";
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
+import { focusFormError } from '../utils/formAccessibility';
+import { createSubmissionGate } from '../utils/submissionGate';
 import {
   Building2,
   Users,
@@ -31,30 +33,39 @@ const OfficeList = ({
     name: "",
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [formError, setFormError] = useState('');
+  const submitGate = useRef(null);
+  if (!submitGate.current) submitGate.current = createSubmissionGate(setIsSaving);
 
   const filteredOffices = offices.filter((o) =>
     o.name.toLowerCase().includes(search.toLowerCase()),
   );
 
-  const handleSubmit = async (e) => {
+  const closeForm = () => {
+    if (!isSaving) setShowForm(false);
+  };
+
+  const handleSubmit = (e) => {
     e.preventDefault();
-    setIsSaving(true);
-
-    try {
-      const saved = editOffice
-        ? await onUpdateOffice(editOffice.id, formData)
-        : await onAddOffice(formData);
-
-      if (!saved) return;
-
-      setShowForm(false);
-      setEditOffice(null);
-    } finally {
-      setIsSaving(false);
-    }
+    const form = e.currentTarget;
+    return submitGate.current(async () => {
+      setFormError('');
+      try {
+        const saved = editOffice
+          ? await onUpdateOffice(editOffice.id, formData)
+          : await onAddOffice(formData);
+        if (!saved) return;
+        setShowForm(false);
+        setEditOffice(null);
+      } catch (error) {
+        setFormError(error?.message || 'Unable to save this office.');
+        focusFormError(form);
+      }
+    });
   };
 
   const openForm = (office = null) => {
+    setFormError('');
     if (office) {
       setEditOffice(office);
       setFormData({ name: office.name });
@@ -218,16 +229,17 @@ const OfficeList = ({
       </PageShell>
 
       {showForm && (
-        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => setShowForm(false)}>
+        <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={closeForm}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 id={`${formId}-form-title`}>{editOffice ? "Edit Office" : "New Office"}</h2>
-              <button className="btn-icon" aria-label="Close office form" onClick={() => setShowForm(false)}>
+              <button type="button" className="btn-icon" aria-label="Close office form" disabled={isSaving} onClick={closeForm}>
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} aria-busy={isSaving} aria-describedby={formError ? `${formId}-form-error` : undefined}>
               <div className="modal-body">
+                {formError && <div id={`${formId}-form-error`} className="form-error-summary" role="alert" data-form-error tabIndex={-1}>{formError}</div>}
                 <div className="form-group">
                   <label htmlFor={`${formId}-name`} className="form-label">Office Name *</label>
                   <input id={`${formId}-name`} aria-describedby={`${formId}-name-hint`}
@@ -249,7 +261,8 @@ const OfficeList = ({
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setShowForm(false)}
+                  disabled={isSaving}
+                  onClick={closeForm}
                 >
                   Cancel
                 </button>

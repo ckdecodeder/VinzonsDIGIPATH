@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-22T00:05:40Z",
+  "title": "Design System: Vinzons DigiPath",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Municipal navy"
+      },
+      "accent": {
+        "role": "secondary",
+        "displayName": "Supporting teal"
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Light surface"
+      },
+      "surface-dark": {
+        "role": "neutral",
+        "displayName": "Dark surface"
+      }
+    },
+    "typographyMeta": {
+      "page-heading": {
+        "displayName": "Page heading",
+        "purpose": "Shared desktop page title; local page exceptions remain.",
+        "fontSizeCss": "clamp(1.75rem, 2.2vw, 2.2rem)"
+      },
+      "control": {
+        "displayName": "Control text",
+        "purpose": "Common button/input/select text."
+      },
+      "metadata": {
+        "displayName": "Metadata",
+        "purpose": "Shared hint, tracking and status text baseline."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-sm",
+        "value": "0 1px 2px rgba(0, 0, 0, 0.05)",
+        "purpose": "Existing low elevation, including table containers."
+      },
+      {
+        "name": "shadow-md",
+        "value": "0 4px 12px rgba(0, 0, 0, 0.08)",
+        "purpose": "Existing floating-control elevation."
+      },
+      {
+        "name": "shadow-lg",
+        "value": "0 8px 32px rgba(0, 0, 0, 0.1)",
+        "purpose": "Existing raised panels."
+      },
+      {
+        "name": "shadow-sm-dark",
+        "value": "0 1px 2px rgba(0, 0, 0, 0.35)",
+        "purpose": "Dark-theme override."
+      },
+      {
+        "name": "shadow-md-dark",
+        "value": "0 4px 12px rgba(0, 0, 0, 0.42)",
+        "purpose": "Dark-theme override."
+      },
+      {
+        "name": "shadow-lg-dark",
+        "value": "0 8px 32px rgba(0, 0, 0, 0.48)",
+        "purpose": "Dark-theme override."
+      },
+      {
+        "name": "dialog-shadow",
+        "value": "0 24px 60px rgba(0, 0, 0, 0.25)",
+        "purpose": "General modal surface."
+      }
+    ],
+    "motion": [
+      {
+        "name": "navigation-colors",
+        "value": "background-color 0.2s, color 0.2s",
+        "purpose": "Current native sidebar navigation; inherited visibility must not be animated."
+      },
+      {
+        "name": "button-transition",
+        "value": "all 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Observed legacy general button transition."
+      },
+      {
+        "name": "modal-entry",
+        "value": "slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Observed general dialog entry; not a new animation prescription."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "desktop-registration-and-header",
+        "value": "901px"
+      },
+      {
+        "name": "sidebar-230",
+        "value": "1200px"
+      },
+      {
+        "name": "sidebar-250",
+        "value": "1366px"
+      }
+    ],
+    "focus": {
+      "source": "dashboard/src/index.css",
+      "outline": "2px solid var(--focus-ring)",
+      "offset": "3px",
+      "containedOffset": "-3px",
+      "darkColor": "#9bd6ff"
+    },
+    "scope": {
+      "platform": "desktop",
+      "reviewViewports": [
+        "1366x768",
+        "1920x1080"
+      ],
+      "excluded": [
+        "mobile development/testing",
+        "PDF-viewer changes"
+      ],
+      "sourceRevision": "d37da9dd68a3bc9640af68a31e2c9ab84f893604"
+    },
+    "scrollbars": {
+      "source": "dashboard/src/index.css",
+      "appliesAbove": "900px",
+      "width": "thin",
+      "webkitSize": "8px",
+      "thumb": "var(--text-muted)",
+      "track": "transparent",
+      "containers": [
+        "page-body",
+        "modal-body",
+        "table-container",
+        "notification-dock-list",
+        "sidebar",
+        "office-staff-list"
+      ]
+    },
+    "taskStates": {
+      "forms": "Inline focused error summaries preserve values; busy forms gate duplicate submission and dismissal.",
+      "collections": "Unconfirmed empty collections wait for their first successful load; cached rows stay usable. Once hasLoaded is true, an empty page remains mounted through refresh/loading failure to preserve first-record drafts, with section status visible.",
+      "reports": "Results and Preview/Print/Download require ready documents/transmissions/archives, plus category dependencies: Summary/Documents offices+documentTypes; Transmissions offices+users; Offices offices; Activity users+logs. Unrelated sections do not block the selected category. Category/scope/date controls remain visible."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Existing desktop button variant; source: dashboard/src/index.css.",
+      "html": "<button class=\"ds-primary\" type=\"button\">Save changes</button>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;gap:.5rem;border:1px solid transparent;border-radius:var(--radius-md,.5rem);padding:.75rem 1.5rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;font-weight:600;background:#14547d;color:#ffffff;cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1)}.ds-primary:hover{box-shadow:0 4px 16px rgba(8,145,178,.34);transform:translateY(-2px)}.ds-primary:focus-visible,.ds-primary-dark:focus-visible,.ds-secondary:focus-visible,.ds-ghost:focus-visible,.ds-success:focus-visible,.ds-danger:focus-visible,.ds-input:focus-visible,.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:3px}"
+    },
+    {
+      "name": "Primary action in dark theme",
+      "kind": "button",
+      "refersTo": "button-primary-dark",
+      "description": "Existing desktop button variant; source: dashboard/src/index.css.",
+      "html": "<button class=\"ds-primary-dark\" type=\"button\">Save changes</button>",
+      "css": ".ds-primary-dark{display:inline-flex;align-items:center;gap:.5rem;border:1px solid transparent;border-radius:var(--radius-md,.5rem);padding:.75rem 1.5rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;font-weight:600;background:#8accf2;color:#102332;cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1)}.ds-primary-dark:hover{box-shadow:0 4px 16px rgba(8,145,178,.34);transform:translateY(-2px)}.ds-primary:focus-visible,.ds-primary-dark:focus-visible,.ds-secondary:focus-visible,.ds-ghost:focus-visible,.ds-success:focus-visible,.ds-danger:focus-visible,.ds-input:focus-visible,.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:3px}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Existing desktop button variant; source: dashboard/src/index.css.",
+      "html": "<button class=\"ds-secondary\" type=\"button\">Cancel</button>",
+      "css": ".ds-secondary{display:inline-flex;align-items:center;gap:.5rem;border:1px solid var(--border);border-radius:var(--radius-md,.5rem);padding:.75rem 1.5rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;font-weight:600;background:var(--bg-elevated,#e7eef4);color:var(--text-main,#172b3a);cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1)}.ds-secondary:hover{background:var(--btn-secondary-hover-bg,#cbd5e1);border-color:rgba(148,163,184,.4)}.ds-primary:focus-visible,.ds-primary-dark:focus-visible,.ds-secondary:focus-visible,.ds-ghost:focus-visible,.ds-success:focus-visible,.ds-danger:focus-visible,.ds-input:focus-visible,.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:3px}"
+    },
+    {
+      "name": "Ghost action",
+      "kind": "button",
+      "description": "Existing desktop button variant; source: dashboard/src/index.css.",
+      "html": "<button class=\"ds-ghost\" type=\"button\">View all</button>",
+      "css": ".ds-ghost{display:inline-flex;align-items:center;gap:.5rem;border:0;border-radius:var(--radius-md,.5rem);padding:.5rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;font-weight:600;background:transparent;color:var(--text-secondary,#475569);cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1)}.ds-ghost:hover{color:var(--text-main,#172b3a);background:rgba(8,145,178,.08)}.ds-primary:focus-visible,.ds-primary-dark:focus-visible,.ds-secondary:focus-visible,.ds-ghost:focus-visible,.ds-success:focus-visible,.ds-danger:focus-visible,.ds-input:focus-visible,.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:3px}"
+    },
+    {
+      "name": "Success action",
+      "kind": "button",
+      "refersTo": "button-success",
+      "description": "Existing desktop button variant; source: dashboard/src/index.css.",
+      "html": "<button class=\"ds-success\" type=\"button\">Confirm receipt</button>",
+      "css": ".ds-success{display:inline-flex;align-items:center;gap:.5rem;border:1px solid transparent;border-radius:var(--radius-md,.5rem);padding:.75rem 1.5rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;font-weight:600;background:#047857;color:#ffffff;cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1)}.ds-primary:focus-visible,.ds-primary-dark:focus-visible,.ds-secondary:focus-visible,.ds-ghost:focus-visible,.ds-success:focus-visible,.ds-danger:focus-visible,.ds-input:focus-visible,.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:3px}"
+    },
+    {
+      "name": "Danger action",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Existing desktop button variant; source: dashboard/src/index.css.",
+      "html": "<button class=\"ds-danger\" type=\"button\">Delete document</button>",
+      "css": ".ds-danger{display:inline-flex;align-items:center;gap:.5rem;border:1px solid transparent;border-radius:var(--radius-md,.5rem);padding:.75rem 1.5rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;font-weight:600;background:#b91c1c;color:#ffffff;cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1)}.ds-primary:focus-visible,.ds-primary-dark:focus-visible,.ds-secondary:focus-visible,.ds-ghost:focus-visible,.ds-success:focus-visible,.ds-danger:focus-visible,.ds-input:focus-visible,.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:3px}"
+    },
+    {
+      "name": "Labeled text field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Existing field, hint and semantic focus treatment.",
+      "html": "<label class=\"ds-label\" for=\"ds-source\">Source organization (optional)</label><input class=\"ds-input\" id=\"ds-source\" aria-describedby=\"ds-source-hint\" placeholder=\"School, agency or organization\"><p class=\"ds-hint\" id=\"ds-source-hint\">The external sender’s organization, separate from municipal offices.</p>",
+      "css": ".ds-label{display:block;margin-bottom:.5rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.8125rem;font-weight:600;color:var(--text-secondary,#475569)}.ds-input{width:100%;padding:.65rem 1rem;border-radius:var(--radius-md,.5rem);border:1px solid var(--border,rgba(148,163,184,.34));background:var(--input-bg,#fff);color:var(--text-main,#172b3a);font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;transition:all .2s}.ds-input::placeholder{color:var(--text-muted,#586b7e)}.ds-input:focus{border-color:var(--primary,#0f4c75);box-shadow:0 0 0 3px var(--primary-glow,rgba(15,76,117,.1))}.ds-hint{margin:.35rem 0 0;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.75rem;line-height:1.35;color:var(--text-muted,#586b7e)}.ds-primary:focus-visible,.ds-primary-dark:focus-visible,.ds-secondary:focus-visible,.ds-ghost:focus-visible,.ds-success:focus-visible,.ds-danger:focus-visible,.ds-input:focus-visible,.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:3px}"
+    },
+    {
+      "name": "Active sidebar destination",
+      "kind": "nav",
+      "description": "Native state-based navigation button with current-page semantics.",
+      "html": "<nav aria-label=\"Main navigation\"><button type=\"button\" class=\"ds-nav active\" aria-current=\"page\">All Documents</button></nav>",
+      "css": ".ds-nav{position:relative;display:flex;width:calc(100% - 1.5rem);padding:.7rem 1.5rem;margin:.125rem .75rem;border:0;border-radius:var(--radius-sm,.375rem);background:transparent;color:var(--text-secondary,#475569);font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.875rem;font-weight:500;text-align:left;cursor:pointer;transition:background-color .2s,color .2s}.ds-nav:hover{color:var(--text-main,#172b3a);background:rgba(8,145,178,.08)}.ds-nav.active{background:var(--sidebar-active,rgba(8,145,178,.1));color:var(--primary-light,#1d5f99)}.ds-nav.active::before{content:\"\";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:60%;background:var(--gradient-primary,linear-gradient(135deg,#0f4c75,#087f8f));border-radius:0 4px 4px 0}.ds-nav:focus-visible{outline:2px solid var(--focus-ring,#14547d);outline-offset:-3px}"
+    },
+    {
+      "name": "Completed status",
+      "kind": "chip",
+      "description": "Named status; the word communicates state independently of color.",
+      "html": "<span class=\"ds-completed\">Completed</span>",
+      "css": ".ds-completed{display:inline-flex;align-items:center;gap:.25rem;border-radius:9999px;padding:.15rem .45rem;background:#dbf5e6;color:#155337;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.75rem;font-weight:600;white-space:nowrap}:host-context([data-theme=\"dark\"]) .ds-completed{background:#193e30;color:#a8e7c4}"
+    },
+    {
+      "name": "Section card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Existing card surface and title; no new nested-card pattern.",
+      "html": "<section class=\"ds-card\"><h2 class=\"ds-card-title\">Recent activity</h2><p class=\"ds-card-text\">Document movements and confirmations.</p></section>",
+      "css": ".ds-card{padding:1.5rem;border:1.5px solid var(--border,rgba(148,163,184,.34));border-radius:var(--radius-md,.5rem);background:var(--bg-card,rgba(255,255,255,.94));backdrop-filter:blur(10px);transition:all .3s cubic-bezier(.4,0,.2,1)}.ds-card:hover{border-color:rgba(8,145,178,.2)}.ds-card-title{margin:0 0 1.25rem;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:1rem;font-weight:700;color:var(--text-main,#172b3a)}.ds-card-text{margin:0;font-family:Inter,-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;font-size:.9rem;line-height:1.6;color:var(--text-secondary,#475569)}"
+    }
+  ],
+  "narrative": {
+    "overview": "This document records the existing desktop interface rather than proposing a new identity. DigiPath is an operational municipal records workspace: staff register documents, inspect custody, confirm deliveries and continue role-permitted work. Preserve the Vinzons identity, blue/teal palette, grouped sidebar, dense tables and light/dark themes.",
+    "keyCharacteristics": [
+      "Clear office, role and document context before an action.",
+      "Familiar labeled controls and compact, readable records.",
+      "Distinct custody, copy receipt and workflow states.",
+      "Visible keyboard focus and recoverable forms."
+    ],
+    "rules": [],
+    "dos": [
+      "Do reuse the existing semantic tokens, shared components and current stylesheet cascade.",
+      "Do check light/dark desktop views, keyboard focus and long record names before calling a change finished.",
+      "Do preserve typed data, selected destinations and the distinction between confirmed and uncertain outcomes.",
+      "Do keep role permissions, custody, receipt, approval and FIFO rules in the existing workflow layer."
+    ],
+    "donts": [
+      "Don't create another external-source field for the same saved value.",
+      "Don't use a color or a missing count as proof of workflow state or permission.",
+      "Don't change mobile behavior or the PDF viewer as part of this desktop consistency scope.",
+      "Don't treat a local build, synthetic screenshot or design document as deployed or live staff acceptance."
+    ]
+  }
+}

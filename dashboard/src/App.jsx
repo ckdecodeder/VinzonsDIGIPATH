@@ -39,6 +39,7 @@ import {
 import { toDocumentSummary } from './api/pagination.mjs';
 import { bootstrapApiBase } from './api/apiBase';
 import DataSectionStatus from './components/DataSectionStatus';
+import PageShell from './components/PageShell';
 import { sortNewest } from './utils/sorting';
 import { receiveDocumentWithConfirmation } from './utils/receiveDocument';
 import { RealtimeProvider } from './context/RealtimeContext';
@@ -178,7 +179,9 @@ function App() {
         setHasLoadedData(true);
       },
       onState: (key, state) => {
-        if (activeUserRef.current === userId) setSectionStates((prev) => ({ ...prev, [key]: state }));
+        if (activeUserRef.current === userId) setSectionStates((prev) => ({ ...prev,
+          [key]: { ...state, hasLoaded: state.status === 'ready' || prev[key]?.hasLoaded === true },
+        }));
       },
     });
   };
@@ -814,6 +817,16 @@ function App() {
     ? logs
     : logs.filter((log) => log.userId === currentUser?.id || visibleDocuments.some((doc) => doc.id === log.referenceId));
 
+  const primaryPageCollection = {
+    documents: [visibleDocuments, 'documents', 'Documents'],
+    archives: [visibleArchives, 'archives', 'Archives'],
+    offices: [offices, 'offices', 'Offices'],
+    users: [users, 'users', 'User Management'],
+    'document-types': [documentTypes, 'documentTypes', 'Document Types'],
+  }[currentPage];
+  const showCollectionPage = !primaryPageCollection || primaryPageCollection[0].length > 0
+    || sectionStates[primaryPageCollection[1]]?.status === 'ready' || sectionStates[primaryPageCollection[1]]?.hasLoaded === true;
+
   const getOfficeName = (officeId) => offices.find((office) => office.id === officeId)?.name || 'Unknown Office';
   const getDocument = (documentId) => visibleDocuments.find((doc) => doc.id === documentId);
 
@@ -982,7 +995,7 @@ function App() {
 
     if (currentPage === 'reports') {
       return (
-        <ReportsPage
+        <ReportsPage dataStates={sectionStates}
           documents={visibleDocuments}
           transmissions={visibleTransmissions}
           archives={visibleArchives}
@@ -1453,7 +1466,7 @@ function App() {
         dataError={dataError}
         saveError={saveError}
         isLoadingContent={false}
-        isRefreshingContent={pageSections.some((key) => sectionStates[key]?.status === 'loading')}
+        isRefreshingContent={false}
         notifications={notifications}
         onDismissNotification={handleDismissNotification}
         onNotificationSelect={handleNotificationSelect}
@@ -1464,7 +1477,11 @@ function App() {
             loadData({ keys: [key], force: true });
           }} />
           <Suspense fallback={<div role="status" className="page-content-loading">Loading page…</div>}>
-            {renderPage()}
+            {showCollectionPage ? renderPage() : (
+              <PageShell header={<div className="page-header"><div className="page-header-left"><h1>{primaryPageCollection[2]}</h1></div></div>}>
+                <p role="status">Results will appear when this section is available.</p>
+              </PageShell>
+            )}
           </Suspense>
         </ErrorBoundary>
       </Layout>
