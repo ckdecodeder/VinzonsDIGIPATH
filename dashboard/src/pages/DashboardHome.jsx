@@ -212,7 +212,9 @@ const AdminDashboard = ({
       }
     >
       {/* Action queue (primary) + compact status / activity */}
-      <div className="dashboard-priority-grid">
+      <div className={actionQueueReady && attentionDocuments.length >= 8
+        ? 'dashboard-priority-grid dashboard-priority-grid--busy'
+        : 'dashboard-priority-grid'}>
         <div className="card dashboard-attention-card">
           <div className="card-header dashboard-attention-header">
             <div>

@@ -37,6 +37,13 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-23] - Use the space beneath the dashboard action queue
+
+- FIX / LOCAL. Planned from clean `main` at `6584934` to adapt the Dashboard Home grid to queue volume and measure populated, sparse and empty states.
+- **Implementation.** Above 1440 CSS pixels, a ready queue with eight or more actionable documents uses the height of Status overview and Recent transfers combined. Shorter queues use their content height, with transfers below in two columns. Wide status labels have more room. Changes are in `dashboard/src/pages/DashboardHome.jsx` and `dashboard/src/index.css`.
+- **Validation.** Reproduced a 274 CSS pixel gap with the previous queue sizing. The repaired busy queue aligned with the bottom of Recent transfers and displayed eight complete rows, up from four, in the synthetic workload. Passed nine size/volume cases at widths 1366, 1652 and 1920, plus actual Chrome 100% and 80% zoom in the same window. Both zooms measured zero gap and no horizontal overflow. Keyboard focus reached the last preview row. All 123 dashboard tests and the production build passed. Evidence is in the ignored `backend/pgdata/dashboard-spacing-20261123/` directory.
+- **Publication and recovery.** Local working tree only. No commit, push, deployment, data or configuration change. Revert the dashboard class selection and its wide-screen CSS block together to restore the previous layout. Live staff acceptance is pending.
+
 ## [2026-11-23] - Implement the desktop re-audit repairs (started 22 November)
 
 - FIX / LOCAL. User authorized implementing the [seven-batch repair plan](docs/UI_UX_REAUDIT_AND_FIX_PLAN_2026-11-22.md) on existing `main` at `4dac99c`. Initial changes were the audit report and its changelog entry.
