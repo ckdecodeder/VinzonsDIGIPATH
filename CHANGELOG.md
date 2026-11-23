@@ -37,6 +37,13 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-23] - Restore the dashboard header and ease row density
+
+- FIX / LOCAL. Planned from clean main at `ebf0dda` to restore the earlier staff dashboard header and ease row density while preserving the current arrangement.
+- **Changes.** DashboardHome and its stylesheet again use the shared header sizing, personalized greeting, role-specific introduction and bottom-aligned actions. Each summary label sits above its count. Added spacing around queue filters, status bars, the activity view selector, transfer entries and table cells. Removed the repeated New markers and row tint that were based on workflow status. Records still show status and urgent indicators.
+- **Validation.** All 123 dashboard tests and the production build passed. Synthetic Chrome checks covered busy, quiet and empty dashboards, light and dark themes, transfer switching and opening records. Busy vertical scroll measured 185 CSS px at 1366 × 768 and 231 at 1280 × 720. Quiet and empty cases fit at 1366 × 768. Long-record checks passed at actual 100% and 80% zoom, with no horizontal overflow. Local evidence is in `backend/pgdata/dashboard-comfort-20261123/`.
+- **Publication and recovery.** Local on main. No commit, push, deployment, data or configuration change. Revert this batch's DashboardHome and dashboard CSS edits to restore the prior compact version. Physical laptop acceptance is pending.
+
 ## [2026-11-23] - Compact the staff dashboard for laptop use
 
 - FIX / LOCAL. Planned from clean main at `d945f69` to measure the existing page at laptop sizes, bring counts forward, shorten the queue and combine the lower panels.

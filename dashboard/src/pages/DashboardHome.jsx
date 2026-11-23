@@ -167,9 +167,15 @@ const AdminDashboard = ({
   return (
     <PageShell className="staff-dashboard"
       header={
-        <div className="page-header">
+        <div className="page-header page-header--align-bottom">
           <div className="page-header-left">
             <h1>Dashboard</h1>
+            <p>
+              Welcome back{currentUser?.fname ? `, ${currentUser.fname}` : ""}.{" "}
+              {currentUser?.role === "Office"
+                ? "Send documents to reception or other offices and track their progress."
+                : "Focus on newly received documents that need action first."}
+            </p>
           </div>
           <div className="page-header-actions">
             {canScan && (
@@ -199,8 +205,8 @@ const AdminDashboard = ({
             onClick={() => stat.status ? openStatusInterface(stat.status) : onNavigate(stat.page)}>
             <span className={`stat-icon ${stat.color}`} aria-hidden="true">{stat.icon}</span>
             <span className="stat-info">
-              <span className="stat-value">{stat.value}</span>
               <span className="stat-label">{stat.label}</span>
+              <span className="stat-value">{stat.value}</span>
             </span>
           </button>
         ))}
@@ -277,19 +283,13 @@ const AdminDashboard = ({
               attentionDocuments.slice(0, 4).map((doc) => {
                 const status = getWorkflowStatus(doc);
                 const pInfo = getPriorityInfo(doc.priorityLevel);
-                const isNewReceived =
-                  status === "Received" || doc.intakeStatus === "Pending Review";
                 const hint = getDocumentNextAction(doc, currentUser, transmissions, documentTypes);
 
                 return (
                   <button
                     key={doc.id}
                     type="button"
-                    className={[
-                      "attention-item",
-                      doc.priorityLevel === "urgent" ? "attention-item--urgent" : "",
-                      isNewReceived ? "attention-item--new" : "",
-                    ].filter(Boolean).join(" ")}
+                    className={doc.priorityLevel === "urgent" ? "attention-item attention-item--urgent" : "attention-item"}
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();
@@ -298,12 +298,7 @@ const AdminDashboard = ({
                     title={`Open ${doc.trackingNumber}`}
                   >
                     <div className="attention-item-main">
-                      <div className="attention-item-topline">
-                        {isNewReceived && (
-                          <span className="attention-new-badge">New</span>
-                        )}
-                        <p className="attention-item-subject">{doc.subject}</p>
-                      </div>
+                      <p className="attention-item-subject">{doc.subject}</p>
                       <p className="attention-item-sub">
                         {doc.trackingNumber}
                         <span aria-hidden="true">·</span>
