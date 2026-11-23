@@ -1,3 +1,5 @@
+import { countWorkflowStatuses, getWorkflowStatus, workflowStatusColors } from '../utils/documentWorkflow.js';
+import { manilaDate } from '../utils/philippinesDateTime.js';
 import { getDocumentNextAction, matchesQueue } from '../utils/documentQueue';
 import React from "react";
 import {
@@ -25,41 +27,19 @@ const AdminDashboard = ({
   transmissions,
   archives,
   offices,
-  users: userList = [],
   documentTypes = defaultDocumentTypes,
   onNavigate,
   onPreviewDocument,
   onStatusSelect,
   currentUser,
 }) => {
-  const getWorkflowStatus = (doc) => {
-    if (doc.status === "For Signature") return "For Signing";
-    if (doc.status === "Acknoweledged") return "Acknowledged";
-    return doc.status || "Received";
-  };
+  const statusCounts = countWorkflowStatuses(documents);
   const totalDocs = documents.length;
-  const inTransit = documents.filter(
-    (d) => getWorkflowStatus(d) === "In Transit",
-  ).length;
-  const received = documents.filter(
-    (d) => getWorkflowStatus(d) === "Received",
-  ).length;
-  const forSigning = documents.filter(
-    (d) => getWorkflowStatus(d) === "For Signing",
-  ).length;
-  const forFiling = documents.filter(
-    (d) => getWorkflowStatus(d) === "For Filing",
-  ).length;
-  const signed = documents.filter(
-    (d) => getWorkflowStatus(d) === "Signed",
-  ).length;
-  const acknowledged = documents.filter(
-    (d) => getWorkflowStatus(d) === "Acknowledged",
-  ).length;
+  const documentsReady = dataStates.documents?.status === 'ready';
+  const visibleArchiveRegister = ['Admin', 'Mayor'].includes(currentUser?.role);
   const actionQueueSections = ['documents', 'transmissions', 'documentTypes'];
   const actionQueueReady = actionQueueSections.every(key => dataStates[key]?.status === 'ready');
   const actionQueueFailed = actionQueueSections.some(key => dataStates[key]?.status === 'error');
-  const archived = archives.length;
   const urgentCount = documents.filter(
     (d) => matchesQueue(d, 'Urgent active', currentUser, transmissions, documentTypes),
   ).length;
@@ -90,31 +70,13 @@ const AdminDashboard = ({
     },
     {
       label: "Archived",
-      value: dataStates.archives?.status === 'ready' ? archived : '—',
+      value: documentsReady && (!visibleArchiveRegister || dataStates.archives?.status === 'ready')
+        ? (visibleArchiveRegister ? archives.length : statusCounts.Archived) : '—',
       icon: <Archive size={22} />,
       color: "green",
-      page: "archives",
+      ...(visibleArchiveRegister ? { page: "archives" } : { status: "Archived" }),
     },
   ];
-
-  // Status distribution
-  const statusCounts = [
-    { label: "Received", count: received, color: "#3b82f6" },
-    { label: "In Transit", count: inTransit, color: "#f59e0b" },
-    { label: "For Signing", count: forSigning, color: "#8b5cf6" },
-    { label: "For Filing", count: forFiling, color: "#087f8f" },
-    { label: "Signed", count: signed, color: "#059669" },
-    { label: "Acknowledged", count: acknowledged, color: "#0f766e" },
-    {
-      label: "Archived",
-      count: documents.filter((d) => getWorkflowStatus(d) === "Archived")
-        .length,
-      color: "#10b981",
-    },
-  ];
-
-  const statusTotal = statusCounts.reduce((s, c) => s + c.count, 0);
-  const total = statusTotal || 1;
 
   const priorityRank = { urgent: 0, high: 1, normal: 2, low: 3 };
   const actionStatusRank = {
@@ -167,8 +129,8 @@ const AdminDashboard = ({
   const recentDocs = [...documents]
     .sort((a, b) => {
       const pDiff =
-        (priorityRank[a.priorityLevel] || 2) -
-        (priorityRank[b.priorityLevel] || 2);
+        (priorityRank[a.priorityLevel] ?? 2) -
+        (priorityRank[b.priorityLevel] ?? 2);
       if (pDiff !== 0) return pDiff;
       return compareNewest(a, b, ["createdAt", "updatedAt", "dateReceived"]);
     })
@@ -183,15 +145,6 @@ const AdminDashboard = ({
   const getOfficeName = (officeId) => {
     const office = offices.find((o) => o.id === officeId);
     return office ? office.name : "Unknown Office";
-  };
-
-  const getUserFullName = (userId) => {
-    const user = userList.find((u) => u.id === userId);
-    return user
-      ? `${user.fname} ${user.mname || ""} ${user.lname}`
-          .replace(/\s+/g, " ")
-          .trim()
-      : "Unknown";
   };
 
   const getDocTypeName = (typeId) => {
@@ -391,7 +344,7 @@ const AdminDashboard = ({
                         {doc.intakeStatus === "Pending Review" ? "Pending Review" : status}
                       </span>
                       <span className="attention-item-date">
-                        {doc.dateReceived || doc.updatedAt?.slice?.(0, 10) || "—"}
+                        {manilaDate(doc.dateReceived || doc.updatedAt || "") || "—"}
                       </span>
                     </div>
                   </button>
@@ -405,33 +358,34 @@ const AdminDashboard = ({
           <div className="card dashboard-status-card dashboard-status-card--mini">
             <div className="card-header">
               <h2 className="card-title">Status overview</h2>
-              <span className="status-mini-total">{statusTotal} docs</span>
+              <span className="status-mini-total">{documentsReady ? totalDocs : '—'} docs</span>
             </div>
             <div className="status-mini-bars">
-              {statusCounts
-                .filter((seg) => seg.count > 0)
-                .map((seg) => {
-                  const pct = Math.max((seg.count / total) * 100, 4);
+              {!documentsReady && <p className="attention-empty-inline" role="status">{dataStates.documents?.status === 'error' ? 'Document totals unavailable.' : 'Loading document totals…'}</p>}
+              {Object.entries(statusCounts)
+                .filter(([, count]) => count > 0)
+                .map(([label, count]) => {
+                  const pct = (count / totalDocs) * 100;
                   return (
                     <button
-                      key={seg.label}
+                      key={label}
                       type="button"
                       className="status-mini-row"
-                      onClick={() => openStatusInterface(seg.label)}
-                      title={`Show ${seg.label} documents`}
+                      onClick={() => openStatusInterface(label)}
+                      title={`Show ${label} documents`}
                     >
-                      <span className="status-mini-label">{seg.label}</span>
+                      <span className="status-mini-label">{label}</span>
                       <span className="status-mini-track">
                         <span
                           className="status-mini-fill"
-                          style={{ width: `${pct}%`, background: seg.color }}
+                          style={{ width: `${pct}%`, background: Object.hasOwn(workflowStatusColors, label) ? workflowStatusColors[label] : 'var(--text-muted)' }}
                         />
                       </span>
-                      <span className="status-mini-count">{seg.count}</span>
+                      <span className="status-mini-count">{count}</span>
                     </button>
                   );
                 })}
-              {statusTotal === 0 && (
+              {documentsReady && totalDocs === 0 && (
                 <p className="attention-empty-inline">No documents yet.</p>
               )}
             </div>
@@ -439,46 +393,39 @@ const AdminDashboard = ({
 
           <div className="card dashboard-activity-card">
             <div className="card-header">
-              <h2 className="card-title">Recent Activity</h2>
+              <h2 className="card-title">Recent transfers</h2>
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => onNavigate("logs")}
               >
-                View all <ArrowRight size={14} />
+                Activity log <ArrowRight size={14} />
               </button>
             </div>
             <div className="activity-list">
               {recentTransmissions.length === 0 ? (
-                <p className="attention-empty-inline">No recent activity.</p>
+                <p className="attention-empty-inline" role="status">
+                  {dataStates.transmissions?.status === 'ready' ? 'No recent transfers.'
+                    : dataStates.transmissions?.status === 'error' ? 'Recent transfers unavailable.' : 'Loading recent transfers…'}
+                </p>
               ) : (
-                recentTransmissions.map((t, i) => (
-                  <div
-                    key={t.id}
-                    className="activity-item clickable-row"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onNavigate("logs")}
-                    onKeyDown={(event) =>
-                      handleKeyboardOpen(event, () => onNavigate("logs"))
-                    }
-                    title="Open activity logs"
-                  >
-                    <div
-                      className={`activity-dot ${["blue", "green", "purple", "amber"][i % 4]}`}
-                    ></div>
-                    <div className="activity-item-body">
-                      <p className="activity-text">
-                        <strong>{getUserFullName(t.sentBy)}</strong> sent a document
-                        from <strong>{getOfficeName(t.fromOfficeId)}</strong> to{" "}
-                        <strong>{getOfficeName(t.toOfficeId)}</strong>
-                      </p>
-                      <p className="activity-time">
-                        <Clock size={10} />
-                        {t.transmissionDate}
-                      </p>
+                recentTransmissions.map(t => {
+                  const doc = documents.find(item => item.id === t.documentId);
+                  return (
+                    <div key={t.id} className="activity-item">
+                      <div className="activity-item-body">
+                        {doc ? (
+                          <button className="row-open-control transfer-document" type="button" onClick={() => openDocumentInterface(doc)}>
+                            {doc.trackingNumber || doc.id} · {doc.subject || 'Open document'}
+                          </button>
+                        ) : <strong>{t.documentId || 'Document'}</strong>}
+                        <p className="activity-text">{getOfficeName(t.fromOfficeId)} → <strong>{getOfficeName(t.toOfficeId)}</strong></p>
+                        <p className="activity-time">
+                          <Clock size={12} /> {manilaDate(t.transmissionDate || '') || 'Date unrecorded'} · {t.receivedBy ? 'Received' : 'Awaiting receipt'}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -601,7 +548,7 @@ const AdminDashboard = ({
                       </span>
                     </td>
                     <td style={{ color: "var(--text-muted)" }}>
-                      {doc.dateReceived}
+                      {manilaDate(doc.dateReceived || "") || "—"}
                     </td>
                   </tr>
                 );

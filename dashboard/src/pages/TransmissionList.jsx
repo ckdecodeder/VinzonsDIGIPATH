@@ -1,3 +1,4 @@
+import { manilaDate, formatPhilippinesDateTime as formatDateTime, formatPhilippinesDateParts } from '../utils/philippinesDateTime.js';
 import React, { useEffect, useState, useId } from "react";
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
@@ -45,7 +46,7 @@ const TransmissionList = ({
     documentId: "",
     fromOfficeId: currentUser?.officeId || "OFF-001",
     toOfficeId: "OFF-002",
-    transmissionDate: new Date().toISOString().split("T")[0],
+    transmissionDate: manilaDate(),
     transmissionType: "Internal",
   });
 
@@ -69,18 +70,6 @@ const TransmissionList = ({
           .replace(/\s+/g, " ")
           .trim()
       : "Unknown";
-  };
-
-  const getTransmissionDateKey = (transmission) => {
-    const raw = transmission?.receivedAt || transmission?.transmissionDate;
-    if (!raw) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) return String(raw);
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) return String(raw).slice(0, 10);
-    const year = parsed.getFullYear();
-    const month = String(parsed.getMonth() + 1).padStart(2, "0");
-    const day = String(parsed.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
   };
 
   const getDocument = (documentId) =>
@@ -138,26 +127,6 @@ const TransmissionList = ({
     return `Pending because ${getOfficeName(transmission.toOfficeId)} must receive ${doc?.trackingNumber || "the document"} before the workflow can continue.`;
   };
 
-  const formatDateTime = (value) => {
-    if (!value) return "Not recorded";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
-  };
-
-  const formatTransmissionDateParts = (value) => {
-    if (!value) return { date: "Not recorded", time: "" };
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      const [rawDate = value, rawTime = ""] = String(value).split("T");
-      return { date: rawDate, time: rawTime.replace("Z", "") };
-    }
-    return {
-      date: parsed.toLocaleDateString(),
-      time: parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-  };
-
   const getTransmissionTimeline = (transmission) => {
     const timeline = [
       {
@@ -201,7 +170,7 @@ const TransmissionList = ({
       const matchType =
         filterType === "All" || t.transmissionType === filterType;
       const matchDate =
-        !filterDate || getTransmissionDateKey(t) === filterDate;
+        !filterDate || manilaDate(t.receivedAt || t.transmissionDate || "") === filterDate;
       return matchSearch && matchType && matchDate;
     })
     .sort((a, b) =>
@@ -274,7 +243,7 @@ const TransmissionList = ({
       documentId: firstDocument?.id || "",
       fromOfficeId,
       toOfficeId: getNextOfficeId(fromOfficeId),
-      transmissionDate: new Date().toISOString().split("T")[0],
+      transmissionDate: manilaDate(),
       transmissionType: "Internal",
     });
     setShowForm(true);
@@ -411,7 +380,7 @@ const TransmissionList = ({
               paginatedTransmissions.map((t) => {
                 const doc = documents.find((d) => d.id === t.documentId);
                 const displayTimestamp = t.receivedAt || t.transmissionDate;
-                const timestampParts = formatTransmissionDateParts(displayTimestamp);
+                const timestampParts = formatPhilippinesDateParts(displayTimestamp);
                 return (
                   <tr
                     key={t.id}

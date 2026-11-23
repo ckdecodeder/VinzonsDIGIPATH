@@ -1,0 +1,53 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { watchTrackingNumber } from './publicTracking.js';
+
+test('the active public lookup owns its result and last verified status', async t => {
+  const page = new EventTarget();
+  t.mock.method(globalThis, 'setInterval', () => 1);
+  t.mock.method(globalThis, 'clearInterval', () => {});
+  const originalDocument = globalThis.document;
+  globalThis.document = page;
+  t.after(() => {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  });
+  const requests = [];
+  const track = (number, { signal }) => new Promise((resolve, reject) => {
+    requests.push({ number, signal, resolve, reject });
+  });
+  let state = null;
+  const update = value => { state = typeof value === 'function' ? value(state) : value; };
+  const refresh = () => page.dispatchEvent(new Event('visibilitychange'));
+  const closeA = watchTrackingNumber('A', track, update);
+  refresh();
+  assert.equal(requests.length, 1);
+  closeA();
+  assert.equal(requests[0].signal.aborted, true);
+  const closeB = watchTrackingNumber('B', track, update);
+  requests[1].resolve({ trackingNumber: 'B' });
+  await Promise.resolve();
+  const verified = state;
+  requests[0].resolve({ trackingNumber: 'A' });
+  await Promise.resolve();
+  assert.equal(state, verified);
+  assert.equal(state.result.trackingNumber, 'B');
+  page.hidden = true;
+  refresh();
+  assert.equal(requests.length, 2);
+  page.hidden = false;
+  refresh();
+  requests[2].reject(new Error('Offline'));
+  await Promise.resolve();
+  assert.equal(state.checked, verified.checked);
+  assert.equal(state.result, verified.result);
+  assert.equal(state.error, 'Offline');
+  refresh();
+  requests[3].reject(Object.assign(new Error('No record'), { status: 404 }));
+  await Promise.resolve();
+  assert.equal(state.result, undefined);
+  assert.equal(state.checked, undefined);
+  closeB();
+  refresh();
+  assert.equal(requests.length, 4);
+});

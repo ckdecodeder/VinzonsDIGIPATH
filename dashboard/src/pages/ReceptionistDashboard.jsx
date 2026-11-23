@@ -1,3 +1,4 @@
+import { getDocumentHandoff } from '../utils/documentHandoff';
 import { focusFormError } from '../utils/formAccessibility';
 import { createSubmissionGate } from '../utils/submissionGate';
 import React, { useId, useRef, useState } from 'react';
@@ -150,30 +151,14 @@ const ReceptionistDashboard = ({
     const docType = documentTypes.find(d => d.id === typeId);
     return docType?.category?.toLowerCase().includes('other');
   };
-  const isApprovedForWorkflow = (doc) => (doc?.intakeStatus || 'Approved') === 'Approved';
   const getDocumentPendingReason = (doc) => {
-    if (doc.intakeStatus === 'Returned to Sender') {
-      return 'Returned to the external sender.';
-    }
-    if (doc.intakeStatus === 'Rejected') {
-      return doc.rejectionReason
-        ? `Rejected by Mayor — return to sender: ${doc.rejectionReason}`
-        : 'Rejected by Mayor — return to sender.';
-    }
-    const status = getWorkflowStatus(doc);
-    if (status === 'Received' && isApprovedForWorkflow(doc)) {
-      return "At Mayor's Office (FIFO queue).";
-    }
-    if (status === 'For Signing') {
-      return 'Waiting for Mayor signing action.';
-    }
-    if (status === 'For Filing') {
-      return 'Waiting for Mayor acknowledgement.';
-    }
-    if (status === 'Completed' || status === 'Signed' || status === 'Acknowledged' || status === 'Archived') {
-      return 'Completed workflow.';
-    }
-    return '';
+    const lookupOffice = id => offices.find(office => office.id === id)?.name || 'Unknown Office';
+    const { holder, heading, note, waiting } = getDocumentHandoff(doc, transmissions, currentUser?.officeId, lookupOffice);
+    const facts = [heading];
+    if (heading !== `Held by ${holder}`) facts.push(`Recorded holder: ${holder}`);
+    if (waiting.length) facts.push(`Awaiting receipt: ${waiting.join(', ')}`);
+    if (note) facts.push(note);
+    return facts.join(' · ');
   };
 
   const fileToAttachment = (file) => new Promise((resolve, reject) => {
@@ -451,7 +436,7 @@ const ReceptionistDashboard = ({
                       </span>
                     </td>
                     <td>{offices.find((office) => office.id === doc.currentOfficeId)?.name || 'Location pending'}</td>
-                    <td style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{manilaDate(doc.dateReceived || '') || '—'}</td>
                     <td><span className="workflow-explanation">{getDocumentPendingReason(doc)}</span></td>
                   </tr>
                 );
@@ -497,7 +482,7 @@ const ReceptionistDashboard = ({
                       )}
                     </td>
                     <td><span className="workflow-explanation">{getDocumentPendingReason(doc)}</span></td>
-                    <td style={{ color: 'var(--text-muted)' }}>{doc.dateReceived}</td>
+                    <td style={{ color: 'var(--text-muted)' }}>{manilaDate(doc.dateReceived || '') || '—'}</td>
                     <td onClick={(e) => e.stopPropagation()}>
                       {doc.intakeStatus === 'Rejected' && onReturnToSender && (
                         <button

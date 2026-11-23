@@ -1,3 +1,4 @@
+import { formatPhilippinesDateTime as formatTimestamp } from '../utils/philippinesDateTime.js';
 import React, { useEffect, useState } from "react";
 import PageShell from "../components/PageShell";
 import {
@@ -137,13 +138,14 @@ const actionConfig = {
   },
 };
 
-const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
+const ActivityLogs = ({ logs = [], users = defaultUsers, scoped = false }) => {
   const [search, setSearch] = useState("");
   const [filterAction, setFilterAction] = useState("All");
   const [filterUser, setFilterUser] = useState("");
   const [filterReference, setFilterReference] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const invalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [result, setResult] = useState({ items: [], total: 0 });
@@ -178,6 +180,11 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
   };
 
   useEffect(() => {
+    if (invalidDateRange) {
+      setLoading(false);
+      setError('');
+      return;
+    }
     const controller = new AbortController();
     setLoading(true); setError('');
     const timer = setTimeout(() => {
@@ -186,11 +193,11 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
         dateFrom, dateTo, page, limit: pageSize, searchActions }, { signal: controller.signal }).then((value) => {
         if (!controller.signal.aborted) setResult(value);
       }).catch((failure) => {
-        if (failure.code !== 'ABORTED') setError(failure.message);
+        if (!controller.signal.aborted && failure.code !== 'ABORTED') setError(failure.message);
       }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     }, 200);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [search, filterAction, filterUser, filterReference, dateFrom, dateTo, page, pageSize, revision]);
+  }, [search, filterAction, filterUser, filterReference, dateFrom, dateTo, page, pageSize, revision, invalidDateRange]);
 
   useEffect(() => {
     const off = realtimeClient.on('data:invalidate', (message) => {
@@ -219,18 +226,6 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
     setPage(1);
   }, [search, filterAction, filterUser, filterReference, dateFrom, dateTo]);
 
-  const formatTimestamp = (ts) => {
-    const d = new Date(ts);
-    return d.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  };
-
   const getRelativeTime = (ts) => {
     const now = new Date();
     const d = new Date(ts);
@@ -249,8 +244,8 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
       header={
         <div className="page-header">
           <div className="page-header-left">
-            <h1>Activity Logs</h1>
-            <p>Complete audit trail of all system activities</p>
+            <h1>{scoped ? 'My Activity' : 'Activity Logs'}</h1>
+            <p>{scoped ? 'Actions and record updates visible to your account.' : 'Audit trail of system activities.'}</p>
           </div>
         </div>
       }
@@ -289,7 +284,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
               <input
                 type="date"
                 className="form-input"
-                value={dateFrom}
+                value={dateFrom} max={dateTo || undefined} aria-invalid={invalidDateRange} aria-describedby={invalidDateRange ? "log-date-error" : undefined}
                 onChange={(e) => setDateFrom(e.target.value)}
                 aria-label="Activity start date"
               />
@@ -299,7 +294,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
               <input
                 type="date"
                 className="form-input"
-                value={dateTo}
+                value={dateTo} min={dateFrom || undefined} aria-invalid={invalidDateRange} aria-describedby={invalidDateRange ? "log-date-error" : undefined}
                 onChange={(e) => setDateTo(e.target.value)}
                 aria-label="Activity end date"
               />
@@ -333,17 +328,18 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
 
           <div className="activity-entries-count ml-auto self-center whitespace-nowrap text-right">
             <span className="activity-entries-text">
-              {loading || error ? "—" : result.total} entries
+              {invalidDateRange || loading || error ? "—" : result.total} entries
             </span>
           </div>
         </div>
       }
     >
-      {(loading || error) && <div role="status" className="page-content-alert">
+      {invalidDateRange && <p id="log-date-error" role="alert" className="field-error">Choose an end date on or after the start date.</p>}
+      {!invalidDateRange && (loading || error) && <div role="status" className="page-content-alert">
         {loading ? 'Loading activity logs…' : error}
         {error && <button className="btn btn-secondary btn-sm" onClick={() => setRevision((value) => value + 1)}>Retry</button>}
       </div>}
-      <div className="table-container" aria-busy={loading}>
+      {!invalidDateRange && <><div className="table-container" aria-busy={loading}>
         <table className="activity-logs-table">
           <thead>
             <tr>
@@ -419,7 +415,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
 
       <div className="pagination-toolbar">
         <div className="pagination-summary">
-          Showing {showFrom}-{showTo} of {loading || error ? "—" : result.total} matching logs
+          Showing {showFrom}-{showTo} of {invalidDateRange || loading || error ? "—" : result.total} matching logs
         </div>
         <div className="pagination-controls">
           <label>
@@ -459,6 +455,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers }) => {
           </button>
         </div>
       </div>
+      </>}
     </PageShell>
   );
 };

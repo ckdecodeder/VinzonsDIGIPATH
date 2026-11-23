@@ -1,3 +1,4 @@
+const { manilaDate } = require('./municipalDate');
 const { randomUUID } = require('node:crypto');
 
 const normalizePriorityLevel = (value) => {
@@ -102,7 +103,7 @@ const buildSendTransition = ({
     sentBy,
     receivedBy: null,
     receivedAt: null,
-    transmissionDate: transmissionDate || sentAt.split('T')[0],
+    transmissionDate: transmissionDate || manilaDate(sentAt),
     transmissionType,
     acknowledgementRemarks,
     createdAt: sentAt,

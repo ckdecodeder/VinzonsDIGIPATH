@@ -7,7 +7,6 @@ const ProfileSettings = ({
   currentUser,
   offices,
   onUpdateProfile,
-  onNotify,
 }) => {
   const formId = useId();
   const [fieldErrors, setFieldErrors] = useState({});
@@ -89,11 +88,6 @@ const ProfileSettings = ({
         confirmPassword: "",
       }));
 
-      onNotify?.({
-        type: "success",
-        title: "Profile updated",
-        message: "Your account details were saved successfully.",
-      });
     } catch (error) {
       setFormError(error.message || "Unable to save profile changes.");
       focusFormError(formElement);

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   filterActivityLogs,
+  filterByDateRange,
   filterDocuments,
   filterOfficeStats,
   filterTransmissions,
@@ -15,7 +16,7 @@ test('activity filters combine action, user, reference, search, and inclusive da
       userId: 'user-1',
       referenceId: 'DOC-1042',
       details: 'Received invoice packet',
-      timestamp: '2026-04-02T23:59:00.000Z',
+      timestamp: '2026-04-02T15:59:00.000Z',
     },
     {
       id: 'log-2',
@@ -39,7 +40,7 @@ test('activity filters combine action, user, reference, search, and inclusive da
       userId: 'user-1',
       referenceId: 'DOC-1042',
       details: 'Received invoice packet',
-      timestamp: '2026-04-03T00:00:00.000Z',
+      timestamp: '2026-04-02T16:00:00.000Z',
     },
   ];
 
@@ -128,7 +129,7 @@ test('transmission report filters distinguish pending and completed and match th
       toOfficeId: 'OFF-3',
       sentBy: 'user-2',
       receivedBy: 'user-3',
-      transmissionDate: '2026-04-02T18:00:00.000Z',
+      transmissionDate: '2026-04-01T18:00:00.000Z',
     },
     {
       id: 'trans-pending',
@@ -172,4 +173,13 @@ test('office report selector returns only the selected office while blank keeps 
 
   assert.deepEqual(filterOfficeStats(offices, 'OFF-2'), [{ id: 'OFF-2', total: 3 }]);
   assert.deepEqual(filterOfficeStats(offices, ''), offices);
+});
+
+test('Manila midnight, calendar-only records and open-ended coverage agree across filters', () => {
+  const records = ['2026-11-21T15:59:59.999Z', '2026-11-21T16:00:00.000Z', '2026-11-21T16:30:00.000Z',
+    '2026-11-22T00:00:00.000Z', '2026-11-22', '2026-11-22T16:00:00.000Z'].map((timestamp, id) => ({ timestamp, id }));
+  const ids = (from, to) => filterByDateRange(records, 'timestamp', from, to).map(item => item.id);
+  assert.deepEqual(ids('2026-11-22', '2026-11-22'), [1, 2, 3, 4]);
+  assert.deepEqual(ids('2026-11-22', ''), [1, 2, 3, 4, 5]);
+  assert.deepEqual(ids('', '2026-11-21'), [0]);
 });

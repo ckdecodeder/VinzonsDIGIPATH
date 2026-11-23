@@ -1,3 +1,4 @@
+const { manilaDate, validDate, municipalTimestampRange } = require('../utils/municipalDate');
 const express = require('express');
 const router = express.Router();
 const { Document, Transmission, Archive, DeviceEvent, Command, Notification, Office, User, DocumentType } = require('../models');
@@ -20,7 +21,7 @@ const {
 } = require('../utils/helpers');
 const { broadcastDataInvalidate } = require('../utils/realtime');
 const { getScopedDocumentQueryWithTransmissions, getScopedDocumentReadQuery } = require('../utils/documentScope');
-const { persistAttachments } = require('../utils/attachments');
+const { persistAttachments, getScannerPages, maxAttachmentsPerDocument } = require('../utils/attachments');
 const { validateSmsPreferences } = require('../utils/sms');
 const { parsePagination, contains, andFilters, documentSummaryAttributes } = require('../utils/listing');
 const {
@@ -32,6 +33,7 @@ const {
 const { sendHandoffs } = require('../utils/documentHandoffs');
 const { withModelTransaction } = require('../utils/transactionContext');
 const { snapshotGuard, assertCurrentCustody } = require('../utils/workflowGuard');
+const { workflowOperation } = require('../utils/workflowOperation');
 
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
@@ -378,7 +380,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     status: finalStatus,
     intakeStatus: requestedIntakeStatus,
     priorityLevel: normalizePriorityLevel(body.priorityLevel),
-    dateReceived: body.dateReceived || now.split('T')[0],
+    dateReceived: body.dateReceived || manilaDate(now),
     createdAt: now,
     updatedAt: now,
     documentTypeId,
@@ -494,6 +496,68 @@ router.post('/scanner', scannerRoles, asyncHandler(async (req, res) => {
   res.status(201).json({ document: savedDoc, transmission, deviceEvent });
 }));
 
+// Finalize one already-captured physical intake and its first delivery together.
+router.post('/:id/register-scan', scannerRoles, asyncHandler(async (req, res) => {
+  const { scannerRegistration, ...fields } = req.body;
+  requireFields(fields, ['subject', 'senderName', 'destinationOfficeId']);
+  const { commandIds, originalPageIds, retake } = scannerRegistration || {};
+  if (!Array.isArray(commandIds) || !commandIds.length || commandIds.length > maxAttachmentsPerDocument
+      || !commandIds.every(id => typeof id === 'string' && id.length && id.length < 150)
+      || new Set(commandIds).size !== commandIds.length || !Array.isArray(originalPageIds)
+      || fields.scannedFiles?.length !== 1 || fields.scannedFiles[0].type !== 'application/pdf') {
+    throw createHttpError('Complete and review the scan pages before registering.', 400);
+  }
+  const key = commandIds.at(-1);
+  const deferred = [];
+  const saved = await withModelTransaction(Document._Model, async () => {
+    const doc = await Document.findOne({ id: req.params.id, ...(await getScopedDocumentQueryWithTransmissions(req)) }).forUpdate();
+    if (!doc) throw createHttpError('Scan record not found.', 404);
+    if ((doc.timeline || []).some(event => event.action === 'scanner_intake' && event.referenceId === key && event.userId === req.user.id)) {
+      return doc;
+    }
+    if (doc.intakeStatus !== 'Pending Review') throw createHttpError('This intake has already been registered.', 409);
+    if (req.user.role !== 'Admin' && doc.currentOfficeId !== getUserOfficeId(req)) throw createHttpError('Only the intake office can register this scan.', 403);
+    const originals = getScannerPages(doc.scannedFiles);
+    if (originals.length !== originalPageIds.length || originals.some((page, index) => page.id !== originalPageIds[index])) {
+      throw createHttpError('The saved pages changed. Reopen the intake before replacing them.', 409);
+    }
+    const commands = await Command.find({ id: { $in: commandIds }, command: 'SCAN', status: 'Executed', resultDocumentId: doc.id,
+      requestedBy: req.user.id }).lean();
+    if (commands.length !== commandIds.length || commands.some(command => !!command.payload?.retake !== !!retake)) {
+      throw createHttpError('A capture in this batch has not been confirmed for this intake.', 409);
+    }
+    const byId = new Map(commands.map(command => [command.id, command]));
+    const pages = retake ? commandIds.map(id => byId.get(id).payload.retakePage) : originals;
+    if (pages.length !== commandIds.length || pages.some((page, i) => !page?.storagePath || page.id !== `SCANPAGE_${commandIds[i]}`)) throw createHttpError('The batch has an incomplete page.', 409);
+
+    const registration = await normalizeDocumentPayload(req, { ...fields, originOfficeId: doc.currentOfficeId,
+      currentOfficeId: doc.currentOfficeId, intakeStatus: 'Approved', trackingNumber: doc.trackingNumber }, { scanner: true });
+    const pdf = { ...registration.scannedFiles[0], pages };
+    const otherFiles = (doc.scannedFiles || []).filter(file => !getScannerPages([file]).length);
+    for (const field of ['subject', 'senderName', 'senderContact', 'senderEmail', 'documentTypeId', 'documentTypeOther',
+      'documentDirection', 'originOfficeOther', 'destinationOfficeId', 'status', 'priorityLevel', 'dateReceived',
+      'notifySender', 'senderNotificationConsent', 'senderNotificationChannels', 'remarks', 'scannedText', 'routePlan', 'routeStep']) {
+      if (registration[field] !== undefined) doc[field] = registration[field];
+    }
+    doc.scannedFiles = [pdf, ...otherFiles];
+    doc.scannedImageUrl = pdf.url;
+    doc.intakeStatus = 'Approved';
+    doc.verifiedBy = req.user.id;
+    doc.updatedAt = doc.verifiedAt = new Date().toISOString();
+    doc.timeline = [...(doc.timeline || []), createTimelineEvent(req, 'scanner_intake', 'Registered',
+      'Confirmed the scanned pages and intake details.', doc.currentOfficeId, key)];
+    await doc.save();
+    const firstDestination = doc.routePlan?.[1];
+    if (firstDestination && !(await staysAtMayorForApproval(doc))) {
+      return (await startDocumentHandoff(req, doc, [firstDestination], 'External', deferred)).document;
+    }
+    return doc;
+  });
+  for (const effect of deferred) await effect();
+  broadcastDataInvalidate(['documents', 'transmissions', 'notifications', 'logs']);
+  res.json(saved);
+}));
+
 // ================= DOCUMENTS =================
 router.get('/', allRoles, asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
@@ -501,6 +565,7 @@ router.get('/', allRoles, asyncHandler(async (req, res) => {
   for (const field of ['status', 'documentDirection', 'priorityLevel', 'documentTypeId', 'dateReceived']) {
     if (req.query[field] && req.query[field] !== 'All') filters[field] = String(req.query[field]);
   }
+  if (validDate(req.query.dateReceived)) filters.dateReceived = municipalTimestampRange(req.query.dateReceived, req.query.dateReceived);
   if (req.query.search) filters.$or = ['subject', 'trackingNumber', 'senderName', 'originOfficeOther', 'destinationOfficeOther'].map((field) => ({ [field]: contains(req.query.search) }));
   const query = andFilters(getScopedDocumentReadQuery(req, Document._Model), filters);
   const [items, total] = await Promise.all([
@@ -783,6 +848,8 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
   }
 
   const doc = await assertCanAccessDocument(req, req.params.id);
+  const operation = workflowOperation(req, doc, intakeStatus === 'Approved' ? 'document_approved' : 'document_rejected');
+  if (operation.recorded) return res.json(doc);
   assertCurrentCustody(req, doc);
   const currentStatus = normalizeWorkflowStatus(doc.status, doc.status);
   const canReviewPending = doc.intakeStatus === 'Pending Review';
@@ -815,14 +882,14 @@ router.post('/:id/verify', approvalRoles, asyncHandler(async (req, res) => {
     doc.id,
   );
 
-  const savedDoc = await appendDocumentTimeline(doc.id, event, {
+  const savedDoc = await appendDocumentTimeline(doc.id, operation.event(event), {
     intakeStatus,
     verifiedBy: req.user.id,
     verifiedAt: now,
     rejectionReason: intakeStatus === 'Rejected' ? String(rejectionReason).trim() : '',
     ...(intakeStatus === 'Rejected' ? { mayorApprovalCleared: false } : {}),
     ...(intakeStatus === 'Rejected' ? { currentOfficeId: nextOfficeId, destinationOfficeId: nextOfficeId } : {}),
-  }, { validate: snapshotGuard(req, doc, { custody: true }) });
+  }, { validate: operation.validate });
 
   await runPostSaveSideEffects('verify_log', () => createLogEntry(
     req,
@@ -941,6 +1008,8 @@ router.post('/:id/process-note', allRoles, asyncHandler(async (req, res) => {
   }
 
   const doc = await assertCanAccessDocument(req, req.params.id);
+  const operation = workflowOperation(req, doc, action);
+  if (operation.recorded) return res.json(doc);
   assertCurrentCustody(req, doc);
   const currentStatus = normalizeWorkflowStatus(doc.status, doc.status);
   if (currentStatus === 'Archived') {
@@ -979,16 +1048,16 @@ router.post('/:id/process-note', allRoles, asyncHandler(async (req, res) => {
 
   const savedDoc = await appendDocumentTimeline(
     doc.id,
-    createTimelineEvent(
+    operation.event(createTimelineEvent(
       req,
       action,
       labels[action],
       note || `${doc.subject} ${labels[action].toLowerCase()}`,
       doc.currentOfficeId,
       doc.id,
-    ),
+    )),
     updates,
-    { validate: snapshotGuard(req, doc, { custody: true }) },
+    { validate: operation.validate },
   );
 
   await runPostSaveSideEffects('process_log', () => createLogEntry(req, action, `${labels[action]}: ${doc.subject}`, doc.id));

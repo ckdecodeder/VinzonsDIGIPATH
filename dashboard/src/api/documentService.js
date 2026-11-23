@@ -187,13 +187,16 @@ export const documentService = {
 
   update(updatedDoc) {
     const { _summary, attachmentCount, ...record } = updatedDoc;
+    if (record.scannerRegistration) {
+      return apiRequest(`/documents/${encodeURIComponent(record.id)}/register-scan`, { method: 'POST', body: JSON.stringify(record) });
+    }
     return documents.update(record.id, record);
   },
 
-  verify(id, intakeStatus, rejectionReason = '') {
+  verify(id, intakeStatus, rejectionReason = '', operationId) {
     return apiRequest(`/documents/${id}/verify`, {
       method: 'POST',
-      body: JSON.stringify({ intakeStatus, rejectionReason }),
+      body: JSON.stringify({ intakeStatus, rejectionReason, operationId }),
     });
   },
 
@@ -203,10 +206,10 @@ export const documentService = {
     });
   },
 
-  processNote(id, action, note = '') {
+  processNote(id, action, note = '', operationId) {
     return apiRequest(`/documents/${id}/process-note`, {
       method: 'POST',
-      body: JSON.stringify({ action, note }),
+      body: JSON.stringify({ action, note, operationId }),
     });
   },
 
@@ -244,7 +247,10 @@ export const scannerService = {
   },
 };
 
-export const transmissionService = transmissions;
+export const transmissionService = {
+  ...transmissions,
+  getById(id, options = {}) { return apiRequest(`/transmissions/${encodeURIComponent(id)}`, options); },
+};
 export const archiveService = archives;
 export const logService = {
   ...logs,
@@ -300,8 +306,8 @@ export const senderNotificationService = {
 };
 
 export const trackingService = {
-  track(trackingNumber) {
-    return apiRequest(`/public/track/${encodeURIComponent(trackingNumber)}`);
+  track(trackingNumber, options = {}) {
+    return apiRequest(`/public/track/${encodeURIComponent(trackingNumber)}`, options);
   },
 };
 
@@ -351,17 +357,17 @@ export const bridgeService = {
 };
 
 export const commandService = {
-  sendScan(deviceId = 'DEV-001', payload = {}) {
+  sendScan(deviceId, payload = {}, id) {
     return apiRequest('/commands', {
       method: 'POST',
-      body: JSON.stringify({ deviceId, command: 'SCAN', payload }),
+      body: JSON.stringify({ id, deviceId, command: 'SCAN', payload }),
     });
   },
 
-  sendSort(deviceId = 'DEV-001', payload = {}) {
+  sendSort(deviceId, payload = {}, id) {
     return apiRequest('/commands', {
       method: 'POST',
-      body: JSON.stringify({ deviceId, command: 'SORT', payload }),
+      body: JSON.stringify({ id, deviceId, command: 'SORT', payload }),
     });
   },
 
@@ -379,10 +385,10 @@ export const commandService = {
     });
   },
 
-  cancelPending(deviceId = 'DEV-001', reason = 'Cancelled by dashboard user.') {
+  cancelPending(deviceId, commandId) {
     return apiRequest('/commands/cancel', {
       method: 'POST',
-      body: JSON.stringify({ deviceId, reason }),
+      body: JSON.stringify({ deviceId, commandId }),
     });
   },
 

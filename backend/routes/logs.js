@@ -6,6 +6,8 @@ const { protect, allowRoles } = require('../middleware/auth');
 const { asyncHandler, requireFields, generateId } = require('../utils/helpers');
 const { getScopedLogQuery } = require('../utils/logScope');
 
+const { dateRangeError, municipalTimestampRange } = require('../utils/municipalDate');
+
 const adminOnly = allowRoles('Admin');
 const allRoles = allowRoles('Admin', 'Mayor', 'Receptionist', 'Office');
 
@@ -13,16 +15,15 @@ router.use(protect);
 
 router.get('/', allRoles, asyncHandler(async (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
+  const { dateFrom, dateTo } = req.query;
+  const rangeError = dateRangeError(dateFrom, dateTo);
+  if (rangeError) return res.status(400).json({ message: rangeError });
   const scope = await getScopedLogQuery(req);
   const filter = {};
   if (req.query.action && req.query.action !== 'All') filter.action = String(req.query.action);
   if (req.query.userId) filter.userId = String(req.query.userId);
   if (req.query.reference) filter.referenceId = contains(req.query.reference);
-  if (req.query.dateFrom || req.query.dateTo) {
-    filter.timestamp = {};
-    if (req.query.dateFrom) filter.timestamp.$gte = String(req.query.dateFrom);
-    if (req.query.dateTo) filter.timestamp.$lt = `${String(req.query.dateTo)}\uffff`;
-  }
+  if (dateFrom || dateTo) filter.timestamp = municipalTimestampRange(dateFrom, dateTo);
   if (req.query.search) {
     const term = String(req.query.search);
     const users = await User.find({ $or: ['fname', 'mname', 'lname'].map((field) => ({ [field]: contains(term) })) }).select('id').lean();

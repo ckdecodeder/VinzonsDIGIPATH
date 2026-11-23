@@ -72,6 +72,96 @@ const request = async (url, method = 'GET', body, role = 'Admin', office = 'SOUR
 };
 const fixture = (id, extra = {}) => raw.DocumentModel.create({ id, subject: 'Synthetic ' + id, trackingNumber: 'SYNTHETIC-' + id, status: 'Received', intakeStatus: 'Approved', documentDirection: 'Outgoing', currentOfficeId: 'SOURCE', originOfficeId: 'SOURCE', documentTypeId: 'TYPE', scannedFiles: [], timeline: [], createdAt: new Date().toISOString(), ...extra });
 
+integration('Physical retakes preserve originals through abandonment and failed registration, then commit once in order', async () => {
+  const deviceId = 'RETAKE-TEST';
+  const capture = async (id, documentId, retake = false, failUpload = false) => {
+    const payload = { officeId: 'SOURCE', documentId, retake };
+    const queue = () => request('/commands', 'POST', { id, deviceId, command: 'SCAN', payload });
+    const queued = await queue();
+    assert.equal(queued.status, 201, queued.text);
+    assert.equal((await queue()).body.id, id);
+    const upload = () => request('/devices/scans', 'POST', { deviceId, commandId: id, documentId,
+      attachment: { name: id + '.png', type: 'image/png', dataUrl: failUpload ? 'invalid' : png } });
+    const response = await upload();
+    if (failUpload) {
+      assert.equal(response.status, 400, response.text);
+      assert.equal((await request('/commands/cancel', 'POST', { deviceId, commandId: id })).status, 200);
+      return;
+    }
+    assert.equal(response.status, 201, response.text);
+    const replay = await upload();
+    assert.equal(replay.status, 201, replay.text);
+    assert.equal(replay.body.documentId, response.body.documentId);
+    if (retake) {
+      const status = await request('/commands/' + id + '/status');
+      assert.equal(status.body.retakePage.dataUrl, png, status.text);
+      assert.equal(status.body.retakePage.id, 'SCANPAGE_' + id);
+    }
+    return response.body.document;
+  };
+  for (const count of [1, 3]) {
+    const original = await capture('ORIGINAL-' + count);
+    const oldFiles = original.scannedFiles;
+    const oldIds = oldFiles.map(page => page.id);
+    const fresh = () => raw.DocumentModel.findByPk(original.id);
+    await capture('ABANDON-' + count, original.id, true);
+    await capture('FAIL-' + count, original.id, true, true);
+    assert.deepEqual((await fresh()).scannedFiles, oldFiles);
+    const commandIds = [];
+    for (let page = 1; page <= count; page++) {
+      const id = 'REPLACEMENT-' + count + '-' + page;
+      commandIds.push(id);
+      await capture(id, original.id, true);
+      assert.deepEqual((await fresh()).scannedFiles, oldFiles);
+    }
+    const body = { subject: 'Reviewed paperwork', senderName: 'Synthetic', destinationOfficeId: 'OTHER',
+      documentTypeId: 'TYPE', scannedFiles: [{ name: 'reviewed.pdf', type: 'application/pdf',
+        dataUrl: 'data:application/pdf;base64,JVBERi0xLjQKJSVFT0YK' }],
+      scannerRegistration: { originalPageIds: oldIds, commandIds, retake: true } };
+    const register = () => request('/documents/' + original.id + '/register-scan', 'POST', body);
+    failSend = true;
+    try {
+      const failed = await register();
+      assert.equal(failed.status, 500, failed.text);
+      assert.deepEqual((await fresh()).scannedFiles, oldFiles);
+      assert.equal((await fresh()).intakeStatus, 'Pending Review');
+    } finally { failSend = false; }
+    const results = await Promise.all([register(), register()]);
+    for (const response of results) {
+      assert.equal(response.status, 200, response.text);
+      assert.equal(response.body.id, original.id);
+      assert.equal(response.body.trackingNumber, original.trackingNumber);
+      assert.deepEqual(response.body.scannedFiles[0].pages.map(page => page.id), commandIds.map(id => 'SCANPAGE_' + id));
+    }
+    assert.equal(await raw.TransmissionModel.count({ where: { documentId: original.id } }), 1);
+    assert.equal(await raw.DocumentModel.count({ where: { trackingNumber: original.trackingNumber } }), 1);
+    assert.equal((await fresh()).timeline.filter(event => event.action === 'scanner_intake').length, 1);
+  }
+});
+
+integration('Cancelling a pending scan leaves executing and unrelated commands intact', async () => {
+  const deviceId = 'CANCEL-TEST';
+  const issue = (id, command) => request('/commands', 'POST', { id, deviceId, command });
+  const pending = await issue('ONLY-THIS-SCAN', 'SCAN');
+  const light = await issue('SYNTHETIC-LIGHT', 'CAMERA_LIGHT');
+  assert.equal(pending.status, 201, pending.text);
+  assert.equal(light.status, 201, light.text);
+  const cancel = commandId => request('/commands/cancel', 'POST', { deviceId, commandId });
+  assert.equal((await cancel()).status, 400);
+  assert.equal((await cancel(light.body.id)).status, 404);
+  assert.equal((await request('/commands/cancel', 'POST', { deviceId: 'WRONG', commandId: pending.body.id })).status, 404);
+  assert.equal((await request('/commands/cancel', 'POST', { deviceId, commandId: pending.body.id }, 'Receptionist', 'SOURCE', 'OTHER-USER')).status, 404);
+  assert.equal((await cancel(pending.body.id)).body.status, 'Cancelled');
+  assert.equal((await cancel(pending.body.id)).body.status, 'Cancelled');
+  assert.equal((await raw.CommandModel.findByPk(light.body.id)).status, 'Pending');
+  assert.equal((await request('/devices/scans', 'POST', { deviceId, commandId: pending.body.id,
+    attachment: { name: 'late.png', type: 'image/png', dataUrl: png } })).status, 409);
+  const active = await issue('EXECUTING-SCAN', 'SCAN');
+  assert.equal((await request('/devices/commands/' + active.body.id, 'PUT', { status: 'Executing' })).status, 200);
+  assert.equal((await cancel(active.body.id)).status, 409);
+  assert.equal((await request('/commands/' + active.body.id + '/status')).body.status, 'Executing');
+});
+
 integration('Office handoff monitoring keeps completed sends visible and the sender cannot edit or receive in transit', async () => {
   const documentId = 'OFFICE-HANDOFF';
   await fixture(documentId);
@@ -82,15 +172,36 @@ integration('Office handoff monitoring keeps completed sends visible and the sen
   assert.equal((await request(`/documents/${documentId}`, 'PUT', { subject: 'Changed' }, 'Office', 'SOURCE')).status, 403);
 
   const endpoint = `/transmissions/${pending.id}`;
+  assert.equal((await request(endpoint, 'GET', null, 'Receptionist', 'OTHER')).body.id, pending.id);
+  assert.equal((await request(endpoint, 'GET', null, 'Office', 'OUTSIDE')).status, 404);
   assert.equal((await request(endpoint, 'PUT', { confirmReceipt: true }, 'Office', 'SOURCE')).status, 403);
   const receipt = await request(endpoint, 'PUT', { confirmReceipt: true }, 'Office', 'OTHER', 'OTHER-USER');
   assert.equal(receipt.status, 200, receipt.text);
   const completed = (await request('/transmissions', 'GET', null, 'Office', 'SOURCE')).body.find(row => row.id === pending.id);
   assert.equal(completed.receivedBy, 'OTHER-USER');
+  assert.equal((await request(endpoint, 'GET', null, 'Office', 'OTHER')).body.receivedBy, 'OTHER-USER');
   assert.ok(completed.receivedAt);
   assert.equal((await request(endpoint, 'PUT', { confirmReceipt: true }, 'Office', 'SOURCE')).status, 404);
   assert.equal((await request('/transmissions', 'GET', null, 'Office', 'OUTSIDE')).body.some(row => row.id === pending.id), false);
   assert.equal((await request('/transmissions', 'GET', null, 'Receptionist', 'SOURCE')).body.some(row => row.id === pending.id), false);
+});
+
+integration('repeated workflow operations append one event under the document lock', async () => {
+  for (const action of ['action_note', 'sign_document', 'acknowledge_document', 'document_rejected']) {
+    const id = 'WORKFLOW-' + action;
+    await fixture(id);
+    const rejection = action === 'document_rejected';
+    const endpoint = `/documents/${id}/${rejection ? 'verify' : 'process-note'}`;
+    const operationId = randomUUID();
+    const payload = rejection ? { intakeStatus: 'Rejected', rejectionReason: 'Fixture reason', operationId }
+      : { action, note: 'Fixture note', operationId };
+    const replies = await Promise.all([request(endpoint, 'POST', payload), request(endpoint, 'POST', payload)]);
+    assert.ok(replies.some(reply => reply.status === 200));
+    assert.ok(replies.every(reply => [200, 409].includes(reply.status)));
+    assert.equal((await request(endpoint, 'POST', payload)).status, 200);
+    const saved = await request('/documents/' + id);
+    assert.equal(saved.body.timeline.filter(entry => entry.action === action && entry.operationId === operationId).length, 1);
+  }
 });
 
 integration('Office tracking reads legacy outbound documents and attachments without expanding mutation scope', async () => {

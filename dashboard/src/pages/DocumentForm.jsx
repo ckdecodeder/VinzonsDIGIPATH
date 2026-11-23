@@ -1,10 +1,11 @@
+import { manilaDate } from '../utils/philippinesDateTime.js';
 import React, { useState } from 'react';
 
 const DocumentForm = ({ onCancel, onSubmit, editDoc }) => {
   const [formData, setFormData] = useState(editDoc || {
     title: '',
     category: 'Memorandum',
-    date: new Date().toISOString().split('T')[0],
+    date: manilaDate(),
     status: 'Draft',
     author: 'Admin'
   });

@@ -1,3 +1,4 @@
+const { manilaDate, dateRangeError } = require('../utils/municipalDate');
 const express = require('express');
 const router = express.Router();
 const path = require('path');
@@ -46,7 +47,7 @@ const formatReportDate = (value, withTime = false) => {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  if (withTime) {
+  if (withTime && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return date.toLocaleString('en-PH', {
       timeZone: 'Asia/Manila',
       year: 'numeric',
@@ -66,16 +67,10 @@ const formatReportDate = (value, withTime = false) => {
   });
 };
 
-const dateKey = (value) => {
-  if (!value) return '';
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
-};
-
 const inReportRange = (item, field, dateFrom, dateTo) => {
-  const key = dateKey(item?.[field]);
-  if (!key) return true;
+  if (!dateFrom && !dateTo) return true;
+  const key = manilaDate(item?.[field] || '');
+  if (!key) return false;
   if (dateFrom && key < dateFrom) return false;
   if (dateTo && key > dateTo) return false;
   return true;
@@ -155,21 +150,18 @@ const buildReportData = async (req, category, dateFrom, dateTo) => {
     if (doc.documentTypeOther) return doc.documentTypeOther;
     return documentTypeMap[doc.documentTypeId] || doc.documentTypeId || 'Unknown';
   };
-  const statusCounts = workflowStatuses.reduce((map, status) => {
-    map[status] = filteredDocs.filter((doc) => reportStatus(doc) === status).length;
-    return map;
-  }, {});
+  const statusCounts = new Map([...workflowStatuses, 'Returned to Sender', 'Processing'].map(status => [status, 0]));
+  for (const doc of filteredDocs) {
+    const status = reportStatus(doc);
+    statusCounts.set(status, (statusCounts.get(status) || 0) + 1);
+  }
   const pendingTransmissions = filteredTransmissions.filter((item) => !item.receivedBy).length;
   const completedTransmissions = filteredTransmissions.length - pendingTransmissions;
   const incomingCount = filteredDocs.filter((doc) => doc.documentDirection === 'Incoming').length;
   const outgoingCount = filteredDocs.filter((doc) => doc.documentDirection === 'Outgoing').length;
   const summaryRows = [
     ['Documents', 'Total Documents', String(filteredDocs.length), `${incomingCount} incoming / ${outgoingCount} outgoing`],
-    ['Documents', 'Received', String(statusCounts.Received || 0), percentText(statusCounts.Received || 0, filteredDocs.length)],
-    ['Documents', 'For Signing', String(statusCounts['For Signing'] || 0), percentText(statusCounts['For Signing'] || 0, filteredDocs.length)],
-    ['Documents', 'For Filing', String(statusCounts['For Filing'] || 0), percentText(statusCounts['For Filing'] || 0, filteredDocs.length)],
-    ['Documents', 'Signed', String(statusCounts.Signed || 0), percentText(statusCounts.Signed || 0, filteredDocs.length)],
-    ['Documents', 'Acknowledged', String(statusCounts.Acknowledged || 0), percentText(statusCounts.Acknowledged || 0, filteredDocs.length)],
+    ...Array.from(statusCounts, ([status, count]) => ['Documents', status, String(count), percentText(count, filteredDocs.length)]),
     ['Routing', 'Total Transmissions', String(filteredTransmissions.length), `${pendingTransmissions} pending / ${completedTransmissions} completed`],
     ['Archives', 'Archived Records', String(filteredArchives.length), 'Visible archived records in coverage'],
   ];
@@ -206,7 +198,7 @@ const buildReportData = async (req, category, dateFrom, dateTo) => {
     return {
       summaryRows,
       tableTitle: 'Office Movement Report',
-      headers: ['Office', 'Sent From', 'Received To', 'Total', 'Share', 'Notes'],
+      headers: ['Office', 'Sent From', 'Sent To', 'Total', 'Share', 'Notes'],
       rows: officeStats.map((item) => [
         item.office.name,
         String(item.sentFrom),
@@ -268,6 +260,8 @@ router.get('/export', asyncHandler(async (req, res) => {
   const category = normalizeText(req.query.category || 'summary');
   const dateFrom = normalizeText(req.query.dateFrom || '');
   const dateTo = normalizeText(req.query.dateTo || '');
+  const rangeError = dateRangeError(dateFrom, dateTo);
+  if (rangeError) throw createHttpError(rangeError);
   const categoryLabel = reportCategories[category];
   const userOffice = req.user.officeId ? await Office.findOne({ id: req.user.officeId }).lean() : null;
   const generatedDate = new Date();

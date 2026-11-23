@@ -431,6 +431,7 @@ def html_page() -> bytes:
       overflow: auto;
     }}
     .network-item {{
+      color: var(--text);
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 0.75rem 0.85rem;
@@ -445,6 +446,7 @@ def html_page() -> bytes:
       border-color: var(--accent);
       background: #edf8f6;
     }}
+    .network-item:focus-visible {{ outline: 3px solid var(--accent-dark); outline-offset: -3px; }}
     .network-meta {{ font-size: 0.78rem; color: var(--muted); }}
     .status {{
       min-height: 1.2rem;
@@ -537,7 +539,7 @@ def html_page() -> bytes:
       <div class="network-list" id="network-list"></div>
 
       <button id="connect-btn" type="button">Connect scanner to WiFi</button>
-      <div class="status" id="status"></div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
     </div>
   </div>
 
@@ -590,12 +592,17 @@ def html_page() -> bytes:
         const item = document.createElement('button');
         item.type = 'button';
         item.className = 'network-item';
-        item.innerHTML = '<div><strong>' + network.ssid + '</strong><div class="network-meta">' +
-          (network.secured ? 'Secured' : 'Open') + ' · ' + network.signal + '% signal</div></div>';
+        const label = document.createElement('strong');
+        label.textContent = network.ssid;
+        const details = document.createElement('span');
+        details.className = 'network-meta';
+        details.textContent = (network.secured ? 'Secured' : 'Open') + ' · ' + network.signal + '% signal';
+        item.append(label, details);
+        item.setAttribute('aria-pressed', String(ssidInput.value === network.ssid));
+        item.classList.toggle('active', ssidInput.value === network.ssid);
         item.addEventListener('click', () => {{
-          [...networkList.querySelectorAll('.network-item')].forEach((el) => el.classList.remove('active'));
-          item.classList.add('active');
           ssidInput.value = network.ssid;
+          updateSelection();
           if (!network.secured) passwordInput.value = '';
         }});
         networkList.appendChild(item);
@@ -646,6 +653,14 @@ def html_page() -> bytes:
       }}
     }}
 
+    function updateSelection() {{
+      for (const item of networkList.querySelectorAll('.network-item')) {{
+        const selected = item.querySelector('strong').textContent === ssidInput.value;
+        item.classList.toggle('active', selected);
+        item.setAttribute('aria-pressed', String(selected));
+      }}
+    }}
+    ssidInput.addEventListener('input', updateSelection);
     scanBtn.addEventListener('click', scanNetworks);
     connectBtn.addEventListener('click', connectWifi);
     refreshSystemStatus();

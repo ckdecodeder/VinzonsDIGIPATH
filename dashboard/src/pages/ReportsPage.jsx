@@ -1,3 +1,4 @@
+import { countWorkflowStatuses, getWorkflowStatus, workflowStatusColors } from '../utils/documentWorkflow.js';
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useId } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
@@ -74,6 +75,8 @@ const ReportsPage = ({
   const reportDataFailed = requiredReportSections.some(key => dataStates[key]?.status === 'error');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const invalidDateRange = Boolean(dateFrom && dateTo && dateFrom > dateTo);
+  const reportAvailable = reportDataReady && !invalidDateRange;
   const [documentFilters, setDocumentFilters] = useState({
     status: '', typeId: '', priority: '', direction: '', officeId: '',
   });
@@ -199,12 +202,6 @@ const ReportsPage = ({
     return user ? `${user.fname} ${user.mname || ''} ${user.lname}`.replace(/\s+/g, ' ').trim() : 'Unknown';
   };
 
-  const getWorkflowStatus = (doc) => {
-    if (doc.status === 'For Signature') return 'For Signing';
-    if (doc.status === 'Acknoweledged') return 'Acknowledged';
-    return doc.status || 'Received';
-  };
-
   const updateDocumentFilter = (key, value) => {
     setDocumentFilters((current) => ({ ...current, [key]: value }));
   };
@@ -239,10 +236,7 @@ const ReportsPage = ({
     label: getUserFullName(user.id),
   }));
   const documentTypeOptions = documentTypes.map((type) => ({ value: type.id, label: type.category }));
-  const documentStatusOptions = getFilterValues(documents, 'status').map((value) => ({
-    value,
-    label: getWorkflowStatus({ status: value }),
-  }));
+  const documentStatusOptions = [...new Set(documents.map(getWorkflowStatus))].sort().map(value => ({ value, label: value }));
   const priorityOptions = getFilterValues(documents, 'priorityLevel').map((value) => ({
     value,
     label: getPriorityInfo(value).label || value,
@@ -314,15 +308,7 @@ const ReportsPage = ({
   };
 
   // ====== SUMMARY ======
-  const statusCounts = {
-    'Received': filteredDocs.filter(d => getWorkflowStatus(d) === 'Received').length,
-    'In Transit': filteredDocs.filter(d => getWorkflowStatus(d) === 'In Transit').length,
-    'For Signing': filteredDocs.filter(d => getWorkflowStatus(d) === 'For Signing').length,
-    'For Filing': filteredDocs.filter(d => getWorkflowStatus(d) === 'For Filing').length,
-    'Signed': filteredDocs.filter(d => getWorkflowStatus(d) === 'Signed').length,
-    'Acknowledged': filteredDocs.filter(d => getWorkflowStatus(d) === 'Acknowledged').length,
-    'Archived': filteredDocs.filter(d => getWorkflowStatus(d) === 'Archived').length,
-  };
+  const statusCounts = countWorkflowStatuses(filteredDocs);
 
   const priorityCounts = {
     urgent: filteredDocs.filter(d => d.priorityLevel === 'urgent').length,
@@ -397,6 +383,7 @@ const ReportsPage = ({
 
   const runReportAction = async (action) => {
     if (!reportDataReady) { setExportError('Report data is not ready. Wait for loading or retry the failed sections before generating a report.'); return; }
+    if (invalidDateRange) { setExportError('Choose an end date on or after the start date.'); return; }
     if (jobRef.current) return;
     let printWindow = null;
     // Open during the click gesture, before asynchronous generation, so printing
@@ -469,15 +456,15 @@ const ReportsPage = ({
         type="button"
         className="btn-report-action btn-report-action--download"
         onClick={() => setDownloadMenuOpen((open) => !open)}
-        disabled={isExporting || !reportDataReady}
+        disabled={isExporting || !reportAvailable}
         aria-haspopup="menu"
-        aria-expanded={downloadMenuOpen && reportDataReady}
+        aria-expanded={downloadMenuOpen && reportAvailable}
       >
         {isExporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
         {isExporting ? 'Generating...' : 'Download'}
         {!isExporting && <ChevronDown size={14} className={`report-download-chevron${downloadMenuOpen ? ' is-open' : ''}`} />}
       </button>
-      {downloadMenuOpen && reportDataReady && (
+      {downloadMenuOpen && reportAvailable && (
         <div className="report-download-menu-panel" role="menu" aria-label="Download format">
           <button type="button" role="menuitem" onClick={() => runReportAction('pdf')}>
             Download as PDF
@@ -497,16 +484,12 @@ const ReportsPage = ({
     if (!value) return 'Not recorded';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return (withTime ? reportDateTime : reportDate).format(date);
+    return (withTime && !/^\d{4}-\d{2}-\d{2}$/.test(value) ? reportDateTime : reportDate).format(date);
   };
   const percent = (value, total) => (!total ? '0%' : `${Math.round((value / total) * 100)}%`);
   const summaryRows = [
     ['Documents', 'Total Documents', filteredDocs.length, `${directionCounts.Incoming} incoming / ${directionCounts.Outgoing} outgoing`],
-    ['Documents', 'Received', statusCounts.Received, percent(statusCounts.Received, filteredDocs.length)],
-    ['Documents', 'For Signing', statusCounts['For Signing'], percent(statusCounts['For Signing'], filteredDocs.length)],
-    ['Documents', 'For Filing', statusCounts['For Filing'], percent(statusCounts['For Filing'], filteredDocs.length)],
-    ['Documents', 'Signed', statusCounts.Signed, percent(statusCounts.Signed, filteredDocs.length)],
-    ['Documents', 'Acknowledged', statusCounts.Acknowledged, percent(statusCounts.Acknowledged, filteredDocs.length)],
+    ...Object.entries(statusCounts).map(([status, count]) => ['Documents', status, count, percent(count, filteredDocs.length)]),
     ['Routing', 'Total Transmissions', dateFilteredTransmissions.length, `${dateFilteredTransmissions.filter(t => !t.receivedBy).length} pending / ${dateFilteredTransmissions.filter(t => t.receivedBy).length} completed`],
     ['Archives', 'Archived Records', filteredArchives.length, 'Visible archived records in coverage'],
   ];
@@ -535,7 +518,7 @@ const ReportsPage = ({
       const totalOfficeMovement = filteredOfficeStats.reduce((sum, item) => sum + item.total, 0);
       return {
         title: 'Office Movement Report',
-        headers: ['Office', 'Sent From', 'Received To', 'Total', 'Share', 'Notes'],
+        headers: ['Office', 'Sent From', 'Sent To', 'Total', 'Share', 'Notes'],
         columnWidths: ['18%', '14%', '14%', '10%', '10%', '34%'],
         rows: filteredOfficeStats.map(item => [
           item.name,
@@ -601,11 +584,11 @@ const ReportsPage = ({
               <p>View categorized reports and analytics</p>
             </div>
             <div className="page-header-actions reports-header-actions">
-              <button type="button" className="btn-report-action btn-report-action--preview" onClick={() => runReportAction('preview')} disabled={isExporting || !reportDataReady}>
+              <button type="button" className="btn-report-action btn-report-action--preview" onClick={() => runReportAction('preview')} disabled={isExporting || !reportAvailable}>
                 <Eye size={16} />
                 Preview
               </button>
-              <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting || !reportDataReady}>
+              <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting || !reportAvailable}>
                 <Printer size={16} />
                 Print
               </button>
@@ -641,13 +624,12 @@ const ReportsPage = ({
       {/* Category Tabs + Date Filter */}
       <div className="card reports-controls">
         <div className="reports-controls-toolbar">
-          <div className="reports-category-tabs" role="tablist" aria-label="Report categories">
+          <div className="reports-category-tabs" role="group" aria-label="Report categories">
             {categories.map(cat => (
               <button
                 key={cat.id}
                 type="button"
-                role="tab"
-                aria-selected={activeCategory === cat.id}
+                aria-pressed={activeCategory === cat.id}
                 className={`reports-category-tab ${activeCategory === cat.id ? 'active' : ''}`}
                 onClick={() => setActiveCategory(cat.id)}
               >
@@ -665,7 +647,7 @@ const ReportsPage = ({
             <input
               type="date"
               className="form-input reports-date-input"
-              value={dateFrom}
+              value={dateFrom} max={dateTo || undefined} aria-invalid={invalidDateRange} aria-describedby={invalidDateRange ? "report-date-error" : undefined}
               onChange={e => setDateFrom(e.target.value)}
               aria-label="Report start date"
             />
@@ -673,7 +655,7 @@ const ReportsPage = ({
             <input
               type="date"
               className="form-input reports-date-input"
-              value={dateTo}
+              value={dateTo} min={dateFrom || undefined} aria-invalid={invalidDateRange} aria-describedby={invalidDateRange ? "report-date-error" : undefined}
               onChange={e => setDateTo(e.target.value)}
               aria-label="Report end date"
             />
@@ -688,6 +670,7 @@ const ReportsPage = ({
               </button>
             )}
           </div>
+          {invalidDateRange && <p id="report-date-error" className="field-error" role="alert">Choose an end date on or after the start date.</p>}
           {renderCategoryFilters()}
         </div>
       </div>
@@ -696,7 +679,7 @@ const ReportsPage = ({
       {!reportDataReady && <div className="alert" role="status">
         {reportDataFailed ? 'Report data is unavailable. Retry the failed sections above before generating a report.' : 'Loading report data. Results and report actions will be available when the required sections finish loading.'}
       </div>}
-      {reportDataReady && <>
+      {reportAvailable && <>
       {activeCategory === 'summary' && (
         <div>
           <div className="reports-stats-grid">
@@ -715,8 +698,7 @@ const ReportsPage = ({
                 <h3 className="card-title">Status Distribution</h3>
               </div>
               {Object.entries(statusCounts).map(([status, count]) => {
-                const colors = { 'Received': '#2563eb', 'In Transit': '#f59e0b', 'For Signing': '#8b5cf6', 'For Filing': '#087f8f', 'Signed': '#059669', 'Acknowledged': '#0f766e', 'Archived': '#10b981' };
-                return <HorizontalBar key={status} label={status} value={count} max={filteredDocs.length} color={colors[status]} />;
+                return <HorizontalBar key={status} label={status} value={count} max={filteredDocs.length} color={Object.hasOwn(workflowStatusColors, status) ? workflowStatusColors[status] : 'var(--text-muted)'} />;
               })}
             </div>
 
@@ -1024,7 +1006,7 @@ const ReportsPage = ({
                   <tr>
                     <th>Office</th>
                     <th style={{ textAlign: 'center' }}>Sent From</th>
-                    <th style={{ textAlign: 'center' }}>Received To</th>
+                    <th style={{ textAlign: 'center' }}>Sent To</th>
                     <th style={{ textAlign: 'center' }}>Total</th>
                   </tr>
                 </thead>
@@ -1119,7 +1101,7 @@ const ReportsPage = ({
                     </p>
                     <p className="activity-time">
                       <Clock size={10} style={{ marginRight: '0.25rem' }} />
-                      {new Date(log.timestamp).toLocaleString()}
+                      {formatReportDate(log.timestamp, true)}
                     </p>
                   </div>
                 </div>
@@ -1137,7 +1119,7 @@ const ReportsPage = ({
             <div className="report-preview-toolbar">
               <div><h2 id={titleId}>Report Preview</h2><p>{categoryLabel} - {coverageText}</p></div>
               <div className="report-preview-actions">
-                <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting || !reportDataReady}>
+                <button type="button" className="btn-report-action btn-report-action--print" onClick={() => runReportAction('print')} disabled={isExporting || !reportAvailable}>
                   <Printer size={16} /> Print
                 </button>
                 {renderDownloadMenu(true)}

@@ -14,6 +14,7 @@ const attachmentSchema = new mongoose.Schema({
 }, { _id: false });
 
 const timelineEventSchema = new mongoose.Schema({
+  operationId: { type: String },
   id: { type: String, required: true },
   action: { type: String, required: true },
   label: { type: String, required: true },

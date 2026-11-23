@@ -5,6 +5,28 @@ export const getWorkflowStatus = (value) => {
   return status || 'Received';
 };
 
+export const workflowStatusColors = {
+  Received: '#2563eb',
+  'In Transit': '#b45309',
+  'For Signing': '#8b5cf6',
+  'For Filing': '#087f8f',
+  Signed: '#059669',
+  Acknowledged: '#0f766e',
+  Completed: '#256b53',
+  Archived: '#10b981',
+  'Returned to Sender': '#a33a32',
+  Processing: '#586cb0',
+};
+
+export function countWorkflowStatuses(documents) {
+  const counts = new Map(Object.keys(workflowStatusColors).map(status => [status, 0]));
+  for (const document of documents) {
+    const status = getWorkflowStatus(document);
+    counts.set(status, (counts.get(status) || 0) + 1);
+  }
+  return Object.fromEntries(counts);
+}
+
 const ROUTING_STEP = { id: 'routed', label: 'Sent to Office' };
 
 export const hasUsedOfficeRouting = (doc) => {

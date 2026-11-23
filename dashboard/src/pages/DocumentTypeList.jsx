@@ -14,6 +14,7 @@ const ROUTING_TRACKS = [
 const DocumentTypeList = ({
   documentTypes = [],
   documents = [],
+  documentsReady,
   onAddDocumentType,
   onUpdateDocumentType,
   onDeleteDocumentType,
@@ -171,7 +172,7 @@ const DocumentTypeList = ({
                         )}
                       </td>
                       <td style={{ textAlign: 'center' }}>{type.requiresMayorReception ? 'Required' : '—'}</td>
-                      <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{docCount}</td>
+                      <td style={{ textAlign: 'center', color: 'var(--text-muted)' }}>{documentsReady ? docCount : '—'}</td>
                       <td style={{ textAlign: 'right' }}>
                         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                           <button className="btn btn-sm btn-secondary" aria-label={`Edit ${type.category}`} onClick={() => openForm(type)}>
@@ -180,8 +181,9 @@ const DocumentTypeList = ({
                           <button
                             className="btn btn-sm btn-danger"
                             onClick={() => onDeleteDocumentType(type.id)}
-                            disabled={docCount > 0}
-                            title={docCount > 0 ? 'Cannot delete: type is in use by documents' : 'Delete'}
+                            disabled={!documentsReady || docCount > 0}
+                            aria-label={'Delete ' + type.category}
+                            title={!documentsReady ? 'Waiting for document usage' : docCount > 0 ? 'This type is used by documents' : 'Delete'}
                           >
                             <Trash2 size={14} />
                           </button>

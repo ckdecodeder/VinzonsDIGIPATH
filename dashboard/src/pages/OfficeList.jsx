@@ -18,7 +18,8 @@ import {
 const OfficeList = ({
   offices,
   users,
-  documents,
+  staffReady,
+  transfersReady,
   transmissions,
   onAddOffice,
   onUpdateOffice,
@@ -142,7 +143,8 @@ const OfficeList = ({
                 ).length;
                 const incoming = transmissions.filter(
                   (t) => t.toOfficeId === office.id,
-                ).length;
+                );
+                const received = incoming.filter(t => t.receivedBy).length;
                 const visibleStaff = officeUsers.slice(0, 4);
                 const hiddenStaffCount = Math.max(
                   officeUsers.length - visibleStaff.length,
@@ -163,6 +165,7 @@ const OfficeList = ({
                           type="button"
                           className="btn-icon"
                           title="Edit office"
+                          aria-label={`Edit ${office.name}`}
                           onClick={() => openForm(office)}
                         >
                           <Edit2 size={14} />
@@ -171,6 +174,7 @@ const OfficeList = ({
                           type="button"
                           className="btn-icon office-card-delete"
                           title="Delete office"
+                          aria-label={`Delete ${office.name}`}
                           onClick={() => onDeleteOffice(office.id)}
                         >
                           <Trash2 size={14} />
@@ -183,15 +187,19 @@ const OfficeList = ({
                     <div className="office-card-stats">
                       <div className="office-stat">
                         <Users size={13} />
-                        <span>{officeUsers.length} staff</span>
+                        <span>{staffReady ? officeUsers.length : '—'} staff</span>
                       </div>
                       <div className="office-stat">
                         <ArrowUpRight size={13} />
-                        <span>{outgoing} sent</span>
+                        <span>{transfersReady ? outgoing : '—'} sent</span>
                       </div>
                       <div className="office-stat">
                         <ArrowDownLeft size={13} />
-                        <span>{incoming} received</span>
+                        <span>{transfersReady ? received : '—'} received</span>
+                      </div>
+                      <div className="office-stat">
+                        <ArrowDownLeft size={13} />
+                        <span>{transfersReady ? incoming.length - received : '—'} awaiting receipt</span>
                       </div>
                     </div>
 

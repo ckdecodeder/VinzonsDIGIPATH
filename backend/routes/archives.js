@@ -32,7 +32,7 @@ router.get('/', allRoles, asyncHandler(async (req, res) => {
 
 const { archiveDocument, restoreArchive } = require('../utils/archiveWorkflow');
 const sideEffect = async (work) => { try { await work(); } catch (error) { console.error('Archive side effect failed:', error.name); } };
-const validDate = value => typeof value === 'string' && !Number.isNaN(Date.parse(value)) && /^\d{4}-\d{2}-\d{2}$/.test(value) && new Date(value).toISOString().slice(0, 10) === value;
+const { validDate } = require('../utils/municipalDate');
 
 router.post('/', approvalRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['documentId']);

@@ -15,7 +15,7 @@ function harness({ hardware = false, saved, error } = {}) {
     setFormErrors() {}, setFormErrorSummary: value => { message = value; },
     setRegisteredDoc: value => { registered = value; }, setStep: value => { step = value; },
     createScannedDocumentPdf: async () => ({ dataUrl: 'synthetic-pdf', type: 'application/pdf' }),
-    capturedImages: [{}], selectedPaperGuide: {}, capturedImagesRef: { current: [] },
+    retakeOriginal: null, scannerReady: false, capturedImages: [{ id: 'SCANPAGE_C1', commandId: 'C1' }], selectedPaperGuide: {}, capturedImagesRef: { current: [] },
     setCapturedImages() {}, setCapturedImage() {}, setCapturedFileType() {},
     hardwareScannedDoc: hardware ? { id: 'SCAN', trackingNumber: 'OLD', currentOfficeId: 'SOURCE' } : null,
     formData: { subject: 'Synthetic', documentTypeId: 'TYPE', documentTypeOther: '', originOfficeOther: '', toOfficeId: 'DEST', senderContact: '', remarks: '' },

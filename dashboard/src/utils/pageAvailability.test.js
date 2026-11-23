@@ -13,15 +13,22 @@ test('collection pages distinguish unavailable data from a confirmed empty resul
     const context = vm.createContext({ currentPage: page, visibleDocuments: [], visibleArchives: [], offices: [], users: [], documentTypes: [], sectionStates: {} });
     const code = appSource.slice(start, appSource.indexOf('  const getOfficeName =', start)) + '\nglobalThis.canShow = showCollectionPage;';
     for (const status of [undefined, 'loading', 'error', 'ready']) {
-      const ctx = vm.createContext({ ...context, sectionStates: { [key]: { status }, logs: { status: 'error' } } });
+      const ctx = vm.createContext({ ...context, sectionStates: { documents: { status: 'ready' }, [key]: { status }, logs: { status: 'error' } } });
       vm.runInContext(code, ctx);
       assert.equal(ctx.canShow, status === 'ready', `${page}/${status}`);
+    }
+    if (page === 'archives') {
+      for (const documentStatus of ['loading', 'error']) {
+        const joined = vm.createContext({ ...context, sectionStates: { archives: { status: 'ready' }, documents: { status: documentStatus } } });
+        vm.runInContext(code, joined);
+        assert.equal(joined.canShow, false);
+      }
     }
     const arrayKey = { documents: 'visibleDocuments', archives: 'visibleArchives' }[key] || key;
     const cached = vm.createContext({ ...context, [arrayKey]: [{ id: 'CACHED' }], sectionStates: { [key]: { status: 'error' } } });
     vm.runInContext(code, cached); assert.equal(cached.canShow, true, page+' cached rows');
     for (const status of ['loading', 'error']) {
-      const previouslyEmpty = vm.createContext({ ...context, sectionStates: { [key]: { status, hasLoaded: true } } });
+      const previouslyEmpty = vm.createContext({ ...context, sectionStates: { documents: { status: 'ready' }, [key]: { status, hasLoaded: true } } });
       vm.runInContext(code, previouslyEmpty); assert.equal(previouslyEmpty.canShow, true, page+' preserves first-record draft during refresh');
     }
   }
@@ -55,4 +62,14 @@ test('an unavailable report cannot open a print tab or start generation even if 
   vm.runInContext(reportSource.slice(reportSource.indexOf('  const runReportAction ='), reportSource.indexOf('  const renderDownloadMenu =')) + '\nglobalThis.run = runReportAction;', context);
   for (const action of ['print','preview','pdf','jpeg']) { await context.run(action); assert.equal(opens, 0); }
   assert.equal(opens, 0); assert.match(message, /data|load/i);
+});
+
+test('a reversed range blocks every report action before opening windows or starting work', async () => {
+  let message = '';
+  const context = vm.createContext({ reportDataReady: true, invalidDateRange: true, setExportError: value => { message = value; } });
+  vm.runInContext(reportSource.slice(reportSource.indexOf('  const runReportAction ='), reportSource.indexOf('  const renderDownloadMenu =')) + '\nglobalThis.run = runReportAction;', context);
+  for (const action of ['print', 'preview', 'pdf', 'jpeg']) {
+    await context.run(action);
+    assert.match(message, /end date on or after the start/i);
+  }
 });

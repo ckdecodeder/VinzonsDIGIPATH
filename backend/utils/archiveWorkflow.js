@@ -1,3 +1,4 @@
+const { manilaDate } = require('./municipalDate');
 const fs = require('node:fs/promises');
 const { resolveScanPath } = require('../config/storage');
 
@@ -39,7 +40,7 @@ const createArchiveService = ({ DocumentModel, TransmissionModel, ArchiveModel }
     if (!await hasReadableCopy(doc)) throw createHttpError('Attach a readable final document copy before archiving.', 409);
     if (await ArchiveModel.findOne({ where: { documentId }, transaction: tx })) throw createHttpError('This document is already archived.', 409);
     const now = new Date().toISOString();
-    const archive = await ArchiveModel.create({ id: generateId('ARC'), documentId, userId, date: date || now.slice(0, 10), statusBeforeArchive: doc.status, createdAt: now, updatedAt: now }, { transaction: tx });
+    const archive = await ArchiveModel.create({ id: generateId('ARC'), documentId, userId, date: date || manilaDate(now), statusBeforeArchive: doc.status, createdAt: now, updatedAt: now }, { transaction: tx });
     await row.update({ status: 'Archived', archivedAt: now, updatedAt: now, timeline: [...(doc.timeline || []), eventFor(archive.get({ plain: true }), doc)] }, { transaction: tx });
     return { archive: archive.get({ plain: true }), document: row.get({ plain: true }) };
   });

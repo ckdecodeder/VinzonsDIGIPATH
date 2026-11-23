@@ -1,10 +1,15 @@
+import { countWorkflowStatuses, getWorkflowStatus } from '../utils/documentWorkflow.js';
+import { manilaDate, formatPhilippinesDateTime as formatDateTime } from '../utils/philippinesDateTime.js';
 import { focusFormError } from '../utils/formAccessibility';
 import { matchesQueue, queueFilters } from '../utils/documentQueue';
 import { createSubmissionGate } from '../utils/submissionGate';
+import { workflowOperationId } from '../utils/workflowAction';
+import { pendingOfficeReceipt } from '../utils/notificationTarget';
 import { getSendRecipients, confirmsDocumentSend, sendDocumentWithRecovery } from '../utils/documentSend';
 import React, { useId, useEffect, useRef, useState } from 'react';
 import { documentService, senderNotificationService } from '../api/documentService';
 import PageShell from '../components/PageShell';
+import { getDocumentHandoff } from '../utils/documentHandoff';
 import DocumentHandoffSummary from '../components/DocumentHandoffSummary';
 import ModalOverlay from '../components/ModalOverlay';
 import ScannedPreviewModal from '../components/ScannedPreviewModal';
@@ -12,7 +17,7 @@ import {
   Search, Trash2, Edit2, Inbox, Send, Eye, FileText, Plus, X,
   User, Phone, MessageSquare, ChevronDown, ChevronUp,
   Paperclip, Upload, Download, MapPin, History,
-  CheckCircle2, Archive, Clock, CalendarDays, AlertTriangle,
+  CheckCircle2, Archive, Clock, CalendarDays,
 } from 'lucide-react';
 import {
   documentTypes as defaultDocumentTypes,
@@ -55,10 +60,13 @@ const DocumentList = ({
   onResubmitDocument,
   onReturnToSender,
   onProcessDocument,
+  onWorkflowAction,
+  workflowDrafts,
   onArchiveDocument,
   senderNotifications = [],
   onResendSenderNotification,
   focusDocumentId = '',
+  focusedDelivery = null,
   initialStatusFilter = 'All',
   autoOpenCreate = false,
   onFocusDocumentConsumed,
@@ -83,7 +91,7 @@ const DocumentList = ({
       documentDirection: isOffice ? 'Outgoing' : 'Incoming',
       status: 'Received',
       priorityLevel: 'normal',
-      dateReceived: new Date().toISOString().split('T')[0],
+      dateReceived: manilaDate(),
       documentTypeId: documentTypes[0]?.id || 'DT-001',
       documentTypeOther: '',
       originOfficeId: myOfficeId,
@@ -129,6 +137,8 @@ const DocumentList = ({
   const [downloadFormats, setDownloadFormats] = useState({});
   const [routeDoc, setRouteDoc] = useState(null);
   const [detailDoc, setDetailDoc] = useState(null);
+  const [alertDelivery, setAlertDelivery] = useState(null);
+  const detailHeading = useRef(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [detailRetry, setDetailRetry] = useState(0);
@@ -140,11 +150,11 @@ const DocumentList = ({
   const [smsSending, setSmsSending] = useState('');
   const [previewFile, setPreviewFile] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
-  const [rejectDoc, setRejectDoc] = useState(null);
-  const [rejectReason, setRejectReason] = useState('');
-  const [rejectError, setRejectError] = useState('');
   const [processingAction, setProcessingAction] = useState(null);
   const [processingNote, setProcessingNote] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const processingGate = useRef(null);
+  if (!processingGate.current) processingGate.current = createSubmissionGate(setIsProcessing);
   const [processingError, setProcessingError] = useState('');
   const [documentFormErrors, setDocumentFormErrors] = useState({});
   const [documentFormErrorSummary, setDocumentFormErrorSummary] = useState('');
@@ -215,9 +225,15 @@ const DocumentList = ({
     setFilterPriority('All');
     setSearch('');
     setPage(1);
+    setAlertDelivery(focusedDelivery);
     setDetailDoc(focusedDoc);
     onFocusDocumentConsumed?.();
-  }, [focusDocumentId, documents, onFocusDocumentConsumed]);
+  }, [focusDocumentId, focusedDelivery, documents, onFocusDocumentConsumed]);
+
+  useEffect(() => {
+    if (alertDelivery) detailHeading.current?.focus();
+  }, [alertDelivery]);
+  const closeDetail = () => { setDetailDoc(null); setAlertDelivery(null); };
 
   useEffect(() => {
     setPage(1);
@@ -226,20 +242,13 @@ const DocumentList = ({
   const registrationStatuses = ['Received', 'For Signing', 'For Filing'];
   const finalWorkflowStatuses = ['Signed', 'Acknowledged'];
   const transmittableStatuses = [...registrationStatuses, ...finalWorkflowStatuses];
-  const statuses = ['All', ...queueFilters, 'In Transit', 'Received', 'For Signing', 'For Filing', 'Signed', 'Acknowledged', 'Completed', 'Archived', 'Returned to Sender'];
+  const statuses = ['All', ...queueFilters, ...Object.keys(countWorkflowStatuses(documents))];
   const directions = currentRole === 'receptionist'
     ? ['All', 'Incoming']
     : currentRole === 'office'
       ? ['All', 'Outgoing']
       : ['All', 'Incoming', 'Outgoing'];
   const priorities = priorityLevels;
-
-  const getWorkflowStatus = (value) => {
-    const status = typeof value === 'string' ? value : value?.status;
-    if (status === 'For Signature') return 'For Signing';
-    if (status === 'Acknoweledged') return 'Acknowledged';
-    return status || 'Received';
-  };
 
   const getStatusClass = (status) => getWorkflowStatus(status).toLowerCase().replace(/\s+/g, '-');
 
@@ -352,12 +361,6 @@ const DocumentList = ({
     });
   };
 
-  const getLatestTransmission = (documentId) => {
-    return [...transmissions]
-      .filter(t => t.documentId === documentId)
-      .sort((a, b) => new Date(b.receivedAt || b.transmissionDate || 0) - new Date(a.receivedAt || a.transmissionDate || 0))[0];
-  };
-
   const getPendingTransmission = (documentId) => {
     return [...transmissions]
       .filter(t => t.documentId === documentId && !t.receivedBy)
@@ -366,24 +369,10 @@ const DocumentList = ({
   };
 
   const getCurrentLocation = (doc, summarizeDeliveries = false) => {
-    const pending = getPendingTransmission(doc.id);
-    const latest = getLatestTransmission(doc.id);
-
-    const pendingOffices = getDeliveryRecipients(doc).filter((event) => event.active).map((event) => getOfficeName(event.toOfficeId));
-    if (summarizeDeliveries && pendingOffices.length > 1) return `At ${getOfficeName(doc.currentOfficeId)} — ${pendingOffices.length} offices awaiting receipt`;
-    if (pendingOffices.length) return `At ${getOfficeName(doc.currentOfficeId)} — awaiting receipt: ${pendingOffices.join(', ')}`;
-    if (doc.status === 'In Transit' && pending) {
-      const detected = doc.lastDetectedOfficeId
-        ? ` (last detected at ${getOfficeName(doc.lastDetectedOfficeId)})`
-        : '';
-      return `At ${getOfficeName(doc.currentOfficeId)} — in transit to ${getOfficeName(pending.toOfficeId)}${detected}`;
-    }
-
-    return getOfficeName(
-      doc.currentOfficeId ||
-      (latest?.receivedBy ? latest.toOfficeId : latest?.fromOfficeId) ||
-      doc.originOfficeId
-    );
+    const { holder, waiting } = getDocumentHandoff(doc, transmissions, currentUser?.officeId, getOfficeName);
+    if (!waiting.length) return holder;
+    if (summarizeDeliveries && waiting.length > 1) return `At ${holder} — ${waiting.length} offices awaiting receipt`;
+    return `At ${holder} — awaiting receipt: ${waiting.join(', ')}`;
   };
 
   const getTimeline = (doc) => {
@@ -455,7 +444,7 @@ const DocumentList = ({
       const matchDir = filterDirection === 'All' || d.documentDirection === filterDirection;
       const priority = (d.priorityLevel || 'normal').toLowerCase();
       const matchPriority = filterPriority === 'All' || priority === filterPriority.toLowerCase();
-      const receivedDate = d.dateReceived || '';
+      const receivedDate = manilaDate(d.dateReceived || '');
       const matchDate = !filterDate || receivedDate === filterDate;
       return matchSearch && matchStatus && matchDir && matchPriority && matchDate;
     })
@@ -525,7 +514,7 @@ const DocumentList = ({
         documentDirection: doc.documentDirection,
         status: getWorkflowStatus(doc),
         priorityLevel: doc.priorityLevel || 'normal',
-        dateReceived: doc.dateReceived,
+        dateReceived: manilaDate(doc.dateReceived || ''),
         documentTypeId: doc.documentTypeId,
         documentTypeOther: doc.documentTypeOther || '',
         originOfficeId: doc.originOfficeId || doc.currentOfficeId || currentUser?.officeId || offices[0]?.id,
@@ -777,7 +766,7 @@ const DocumentList = ({
   };
 
   const handleReceive = async (doc) => {
-    const pending = transmissions.find((item) => item.documentId === doc.id && !item.receivedBy && item.toOfficeId === currentUser?.officeId);
+    const pending = pendingOfficeReceipt(doc, transmissions, currentUser?.officeId, alertDelivery);
     if (!pending || !onReceiveTransmission || receivingDocumentId) return;
     setReceivingDocumentId(doc.id);
     try {
@@ -791,28 +780,14 @@ const DocumentList = ({
     }
   };
 
-  const handleRejectDocument = (doc) => {
-    setRejectDoc(doc);
-    setRejectReason(doc.rejectionReason || '');
-    setRejectError('');
-  };
-
-  const handleRejectSubmit = async (e) => {
-    e.preventDefault();
-    const form = e.currentTarget;
-    if (!rejectDoc) return;
-    if (!rejectReason.trim()) {
-      setRejectError('Rejection reason is required.');
-      focusFormError(form);
-      return;
-    }
-    setRejectError('');
-    await onVerifyDocument?.(rejectDoc.id, 'Rejected', rejectReason.trim());
-    setRejectDoc(null);
-    setRejectReason('');
-  };
-
   const processingActionLabels = {
+    document_rejected: {
+      title: 'Reject Document',
+      helper: 'The receptionist will see this reason before correcting and resubmitting the document.',
+      field: 'Rejection Reason',
+      button: 'Reject Document',
+      required: true,
+    },
     action_note: {
       title: 'Record Document Action',
       helper: 'Add a decision, instruction, or handoff note without changing the document status.',
@@ -834,27 +809,48 @@ const DocumentList = ({
   };
 
   const openProcessingAction = (doc, action) => {
-    setProcessingAction({ doc, action });
-    setProcessingNote('');
-    setProcessingError('');
+    const key = JSON.stringify([currentUser.id, doc.id, action]);
+    const draft = workflowDrafts?.get(key);
+    setProcessingAction({ doc, action, key, attempt: draft });
+    setProcessingNote(draft?.note ?? (action === 'document_rejected' ? doc.rejectionReason || '' : ''));
+    setProcessingError(draft?.message || '');
   };
 
-  const handleProcessingSubmit = async (e) => {
+  const handleProcessingSubmit = e => {
     e.preventDefault();
     const form = e.currentTarget;
     if (!processingAction) return;
-    const config = processingActionLabels[processingAction.action];
-    if (config?.required && !processingNote.trim()) {
-      setProcessingError('Action note is required.');
+    const { doc, action, key } = processingAction;
+    if (processingActionLabels[action].required && !processingNote.trim()) {
+      setProcessingError(action === 'document_rejected' ? 'Rejection reason is required.' : 'Action note is required.');
       focusFormError(form);
       return;
     }
-    setProcessingError('');
-    const { doc, action } = processingAction;
-    const note = processingNote.trim();
-    setProcessingAction(null);
-    setProcessingNote('');
-    await onProcessDocument?.(doc.id, action, note);
+    return processingGate.current(async () => {
+      const attempt = processingAction.attempt || {
+        operationId: workflowOperationId(), userId: currentUser.id, documentId: doc.id, action, note: processingNote,
+      };
+      workflowDrafts?.set(key, { ...attempt, state: 'check', message: 'Check the status of the previous save.' });
+      setProcessingError('');
+      try {
+        const result = await onWorkflowAction(attempt);
+        if (result.state === 'saved') {
+          workflowDrafts?.delete(key);
+          setDetailDoc(current => current?.id === doc.id ? result.document : current);
+          setProcessingAction(null);
+          setProcessingNote('');
+          return;
+        }
+        const unresolved = { ...attempt, state: result.state, message: result.message };
+        workflowDrafts?.set(key, unresolved);
+        setProcessingAction(current => current && { ...current, attempt: unresolved });
+        setProcessingError(result.message);
+      } catch (error) {
+        if (!attempt.state) workflowDrafts?.delete(key);
+        setProcessingError(error.message || 'The action could not be saved. Your draft is still here.');
+      }
+      focusFormError(form);
+    });
   };
 
   const escapeSlipText = (value) => String(value || '-').replace(/[&<>"']/g, (char) => ({
@@ -898,13 +894,13 @@ const DocumentList = ({
                 <h1>Vinzons DigiPath Claim Slip</h1>
                 <p>Keep this tracking number to check document status.</p>
               </div>
-              <p>${escapeSlipText(new Date().toLocaleString())}</p>
+              <p>${escapeSlipText(formatDateTime())}</p>
             </div>
             <div class="tracking">${escapeSlipText(doc.trackingNumber)}</div>
             <div class="grid">
               <div class="label">Subject</div><div class="value">${escapeSlipText(doc.subject)}</div>
               <div class="label">Type</div><div class="value">${escapeSlipText(getDocumentTypeLabel(doc))}</div>
-              <div class="label">Date received</div><div class="value">${escapeSlipText(doc.dateReceived)}</div>
+              <div class="label">Date received</div><div class="value">${escapeSlipText(manilaDate(doc.dateReceived || ''))}</div>
               <div class="label">Current office</div><div class="value">${escapeSlipText(getCurrentLocation(doc))}</div>
               <div class="label">Status</div><div class="value">${escapeSlipText(getWorkflowStatus(doc))}</div>
             </div>
@@ -931,13 +927,6 @@ const DocumentList = ({
   const SortIcon = ({ field }) => {
     if (sortBy !== field) return null;
     return sortAsc ? <ChevronUp size={12} /> : <ChevronDown size={12} />;
-  };
-
-  const formatDateTime = (value) => {
-    if (!value) return 'Not recorded';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
   };
 
   const handleAttachmentDownload = async (file) => {
@@ -1044,9 +1033,8 @@ const DocumentList = ({
       isApprovalUser || (!finalStatus && doc.currentOfficeId === currentUser?.officeId)
     );
   };
-  const canReceiveTransmission = (doc) => Boolean(onReceiveTransmission && transmissions.some((item) => (
-    item.documentId === doc.id && !item.receivedBy && item.toOfficeId === currentUser?.officeId
-  )));
+  const canReceiveTransmission = (doc) => Boolean(onReceiveTransmission
+    && pendingOfficeReceipt(doc, transmissions, currentUser?.officeId, alertDelivery));
   const approvalActor = {
     role: currentRole === 'admin' ? 'Admin' : currentRole === 'mayor' ? 'Mayor' : currentUser?.role,
     officeId: currentUser?.officeId,
@@ -1077,7 +1065,7 @@ const DocumentList = ({
           </button>
         )}
         {canRejectDocument(doc) && (
-          <button className="btn btn-sm btn-danger" onClick={() => handleRejectDocument(doc)}>
+          <button className="btn btn-sm btn-danger" onClick={() => openProcessingAction(doc, 'document_rejected')}>
             <X size={14} /> Reject
           </button>
         )}
@@ -1124,13 +1112,10 @@ const DocumentList = ({
   const renderHandoffSummary = (doc) => (
     <DocumentHandoffSummary
       doc={doc}
-      status={getWorkflowStatus(doc)}
       badge={getTableStatusDisplay(doc)}
       officeId={currentUser?.officeId}
       getOfficeName={getOfficeName}
-      recipients={getDeliveryRecipients(doc)}
-      pending={transmissions.filter(item => item.documentId === doc.id && !item.receivedBy)}
-      ownReceipt={canReceiveTransmission(doc)}
+      transmissions={transmissions}
       trackingOnly={isOfficeReadOnlyTracking(doc, currentUser, transmissions.some(item =>
         item.documentId === doc.id && item.fromOfficeId === currentUser?.officeId))}
     >
@@ -1245,7 +1230,7 @@ const DocumentList = ({
                     <td data-label="Last updated">{formatDateTime(doc.updatedAt || doc.createdAt || doc.dateReceived)}</td>
                     <td className="documents-col-actions">
                       <div className="documents-actions-wrap">
-                        <button className="btn-icon" title="Open details" onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
+                        <button className="btn-icon" title="Open details" aria-label={`Open details for ${doc.subject} (${doc.trackingNumber || doc.id})`} onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
                           <Eye size={14} />
                         </button>
                         {canReceiveTransmission(doc) && (
@@ -1254,7 +1239,7 @@ const DocumentList = ({
                           </button>
                         )}
                         {(canEdit || canResubmitDocument(doc)) && (
-                          <button className="btn-icon" title="Edit" onClick={(e) => { e.stopPropagation(); handleOpenForm(doc); }}>
+                          <button className="btn-icon" title="Edit" aria-label={`Edit ${doc.subject} (${doc.trackingNumber || doc.id})`} onClick={(e) => { e.stopPropagation(); handleOpenForm(doc); }}>
                             <Edit2 size={14} />
                           </button>
                         )}
@@ -1480,16 +1465,16 @@ const DocumentList = ({
         const senderOutbox = getSenderNotifications(doc.id);
 
         return (
-          <ModalOverlay aria-labelledby={`${formId}-detail-title`} onClose={() => setDetailDoc(null)}>
+          <ModalOverlay aria-labelledby={`${formId}-detail-title`} onClose={closeDetail}>
             <div className="modal document-detail-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
-                  <h2 id={`${formId}-detail-title`}>{doc.subject}</h2>
+                  <h2 ref={detailHeading} tabIndex={-1} id={`${formId}-detail-title`}>{doc.subject}</h2>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
                     {doc.trackingNumber} - {getDocumentTypeLabel(doc)}
                   </p>
                 </div>
-                <button className="btn-icon" aria-label="Close document details" onClick={() => setDetailDoc(null)}><X size={18} /></button>
+                <button className="btn-icon" aria-label="Close document details" onClick={closeDetail}><X size={18} /></button>
               </div>
               <div className="modal-body">
                 {(detailLoading || detailError) && <div role="status" className="page-content-alert">
@@ -1498,6 +1483,10 @@ const DocumentList = ({
                 </div>}
 
                 {renderHandoffSummary(doc)}
+                {alertDelivery && (() => {
+                  const delivery = transmissions.find(item => item.id === alertDelivery.id) || alertDelivery;
+                  return <p className="field-hint" role="status">{getOfficeName(delivery.toOfficeId)} · {delivery.receivedBy ? 'Receipt confirmed' : 'Receipt pending'}</p>;
+                })()}
                 <div className="document-detail-grid">
                   {renderDeliveryStatus(doc)}
                   <div className="document-detail-section">
@@ -1951,63 +1940,16 @@ const DocumentList = ({
         </ModalOverlay>
       )}
 
-      {rejectDoc && (
-        <ModalOverlay aria-labelledby={`${formId}-reject-title`} onClose={() => setRejectDoc(null)}>
-          <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <div>
-                <h2 id={`${formId}-reject-title`}>Reject Document</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.2rem' }}>
-                  {rejectDoc.trackingNumber} - {rejectDoc.subject}
-                </p>
-              </div>
-              <button className="btn-icon" aria-label="Close rejection form" onClick={() => setRejectDoc(null)}><X size={18} /></button>
-            </div>
-            <form onSubmit={handleRejectSubmit} noValidate>
-              <div className="modal-body">
-                {rejectError && (
-                  <div id={`${formId}-reject-error`} data-form-error tabIndex={-1} className="form-error-summary" role="alert">{rejectError}</div>
-                )}
-                <div className="reject-warning">
-                  <AlertTriangle size={18} />
-                  <div>
-                    <strong>Reason is required</strong>
-                    <span>The receptionist will see this reason before correcting and resubmitting the document.</span>
-                  </div>
-                </div>
-                <div className="form-group">
-                  <label htmlFor={`${formId}-reject-reason`} className="form-label">Rejection Reason</label>
-                  <textarea id={`${formId}-reject-reason`} aria-describedby={`${formId}-reject-reason-hint${rejectError ? ` ${formId}-reject-error` : ''}`} aria-invalid={Boolean(rejectError)} required
-                    className={`form-input${rejectError ? ' is-invalid' : ''}`}
-                    value={rejectReason}
-                    onChange={e => {
-                      setRejectReason(e.target.value);
-                      if (rejectError) setRejectError('');
-                    }}
-                    placeholder="Explain what needs to be corrected before approval"
-                    rows={5}
-                    autoFocus
-                    style={{ resize: 'vertical' }}
-                  />
-                  <p id={`${formId}-reject-reason-hint`} className="field-hint">This is shown to the office that must correct and resubmit the document.</p>
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button type="button" className="btn btn-secondary" onClick={() => setRejectDoc(null)}>Cancel</button>
-                <button type="submit" className="btn btn-danger">
-                  <X size={16} /> Reject Document
-                </button>
-              </div>
-            </form>
-          </div>
-        </ModalOverlay>
-      )}
-
       {processingAction && (() => {
         const config = processingActionLabels[processingAction.action];
         const doc = processingAction.doc;
+        const rejecting = processingAction.action === 'document_rejected';
+        const recovery = processingAction.attempt?.state;
+        const close = () => { if (!isProcessing) setProcessingAction(null); };
+        const submitLabel = isProcessing ? (recovery === 'check' ? 'Checking…' : 'Saving…')
+          : recovery === 'check' ? 'Check save status' : recovery === 'retry' ? 'Retry save' : config.button;
         return (
-          <ModalOverlay aria-labelledby={`${formId}-action-title`} onClose={() => setProcessingAction(null)}>
+          <ModalOverlay aria-labelledby={`${formId}-action-title`} onClose={close}>
             <div className="modal reject-modal" onClick={e => e.stopPropagation()}>
               <div className="modal-header">
                 <div>
@@ -2016,12 +1958,12 @@ const DocumentList = ({
                     {doc.trackingNumber} - {doc.subject}
                   </p>
                 </div>
-                <button className="btn-icon" aria-label="Close document action" onClick={() => setProcessingAction(null)}><X size={18} /></button>
+                <button className="btn-icon" aria-label="Close document action" disabled={isProcessing} onClick={close}><X size={18} /></button>
               </div>
-              <form onSubmit={handleProcessingSubmit} noValidate>
+              <form onSubmit={handleProcessingSubmit} aria-busy={isProcessing} noValidate>
                 <div className="modal-body">
                   {processingError && (
-                    <div data-form-error tabIndex={-1} className="form-error-summary" role="alert">{processingError}</div>
+                    <div id={`${formId}-action-note-error`} data-form-error tabIndex={-1} className="form-error-summary" role="alert">{processingError}</div>
                   )}
                   <div className="reject-warning">
                     <Clock size={18} />
@@ -2031,29 +1973,26 @@ const DocumentList = ({
                     </div>
                   </div>
                   <div className="form-group">
-                    <label htmlFor={`${formId}-action-note`} className="form-label">{config?.required ? 'Action Note' : 'Remarks'}</label>
-                    <textarea required={Boolean(config?.required)} id={`${formId}-action-note`} aria-describedby={`${formId}-action-note-hint${processingError ? ` ${formId}-action-note-error` : ''}`} aria-invalid={Boolean(processingError)}
+                    <label htmlFor={`${formId}-action-note`} className="form-label">{config.field || (config.required ? 'Action Note' : 'Remarks')}</label>
+                    <textarea readOnly={isProcessing || Boolean(recovery)} required={Boolean(config?.required)} id={`${formId}-action-note`} aria-describedby={`${formId}-action-note-hint${processingError ? ` ${formId}-action-note-error` : ''}`} aria-invalid={config.required && !processingNote.trim() && Boolean(processingError)}
                       className={`form-input${processingError ? ' is-invalid' : ''}`}
                       value={processingNote}
                       onChange={e => {
                         setProcessingNote(e.target.value);
                         if (processingError) setProcessingError('');
                       }}
-                      placeholder={config?.required ? 'Enter the action taken or instruction' : 'Optional remarks for the timeline'}
+                      placeholder={rejecting ? 'Explain what needs to be corrected' : config?.required ? 'Enter the action taken or instruction' : 'Optional remarks for the timeline'}
                       rows={4}
                       autoFocus
                       style={{ resize: 'vertical' }}
                     />
-                    {processingError && (
-                      <p id={`${formId}-action-note-error`} className="form-field-error">{processingError}</p>
-                    )}
                     <p id={`${formId}-action-note-hint`} className="field-hint">Records the action on the document timeline for audit and tracking.</p>
                   </div>
                 </div>
                 <div className="modal-footer">
-                  <button type="button" className="btn btn-secondary" onClick={() => setProcessingAction(null)}>Cancel</button>
-                  <button type="submit" className="btn btn-primary">
-                    <CheckCircle2 size={16} /> {config?.button || 'Save Update'}
+                  <button type="button" className="btn btn-secondary" disabled={isProcessing} onClick={close}>{recovery ? 'Close' : 'Cancel'}</button>
+                  <button disabled={isProcessing} type="submit" className={`btn ${rejecting ? 'btn-danger' : 'btn-primary'}`}>
+                    <CheckCircle2 size={16} /> {submitLabel}
                   </button>
                 </div>
               </form>

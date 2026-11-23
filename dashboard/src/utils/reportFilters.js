@@ -1,15 +1,10 @@
-const normalizeDate = (value) => {
-  if (!value) return '';
-  const text = String(value);
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
-};
+import { manilaDate } from './philippinesDateTime.js';
+import { getWorkflowStatus } from './documentWorkflow.js';
 
 export const filterByDateRange = (items = [], dateField, dateFrom = '', dateTo = '') => (
   items.filter((item) => {
     if (!dateFrom && !dateTo) return true;
-    const date = normalizeDate(item?.[dateField]);
+    const date = manilaDate(item?.[dateField] || '');
     if (!date) return false;
     if (dateFrom && date < dateFrom) return false;
     if (dateTo && date > dateTo) return false;
@@ -72,7 +67,7 @@ export const filterDocuments = (documents = [], filters = {}) => {
   } = filters;
 
   return filterByDateRange(documents, 'dateReceived', dateFrom, dateTo).filter((document) => {
-    if (status && document.status !== status) return false;
+    if (status && getWorkflowStatus(document) !== getWorkflowStatus(status)) return false;
     if (typeId && document.documentTypeId !== typeId) return false;
     if (priority && document.priorityLevel !== priority) return false;
     if (direction && document.documentDirection !== direction) return false;

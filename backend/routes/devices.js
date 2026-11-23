@@ -1,4 +1,7 @@
+const { manilaDate } = require('../utils/municipalDate');
 const express = require('express');
+const fs = require('node:fs/promises');
+const { resolveScanPath } = require('../config/storage');
 const { validateSmsPreferences } = require('../utils/sms');
 const router = express.Router();
 const { Device, DeviceEvent, Command, Document } = require('../models');
@@ -9,6 +12,7 @@ const { toUserFacingError } = require('../utils/userFacingError');
 const { withDeviceCommandLock } = require('../utils/transactionContext');
 const {
   asyncHandler,
+  createHttpError,
   requireFields,
   createLogEntry,
   generateId,
@@ -156,43 +160,45 @@ router.put('/devices/commands/:id', deviceLimiter, requireDeviceApiKey, asyncHan
   res.json(command);
 }));
 
-router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
-  validateSmsPreferences(req.body);
-  const now = new Date().toISOString();
-  const deviceId = req.body.deviceId?.trim() || 'DEV-001';
-  const command = req.body.commandId ? await Command.findOne({ id: req.body.commandId }).lean() : null;
+const saveDeviceCapture = async (req, deviceId, now) => {
+  const command = req.body.commandId ? await Command.findOne({ id: req.body.commandId }).forUpdate().lean() : null;
+  if (req.body.commandId && (!command || command.deviceId !== deviceId || command.command !== 'SCAN'
+      || (command.payload?.documentId || '') !== (req.body.documentId?.trim() || ''))) {
+    throw createHttpError('This command does not identify this scan session.', 403);
+  }
+  if (command?.status === 'Executed' && command.resultDocumentId) {
+    const saved = await Document.findOne({ id: command.resultDocumentId }).lean();
+    if (!saved) throw createHttpError('The original scan record is unavailable.', 409);
+    return { documentId: saved.id, document: saved };
+  }
+  if (command && !['Pending', 'Executing'].includes(command.status)) {
+    throw createHttpError('This capture is no longer active.', 409);
+  }
   const device = await Device.findOne({ id: deviceId }).lean();
   const officeId = req.body.officeId?.trim() || command?.payload?.officeId || device?.assignedTo || 'OFF-001';
   const continuationDocumentId = req.body.documentId?.trim();
   let existingDocument = null;
   if (continuationDocumentId) {
-    if (
-      !command
-      || command.command !== 'SCAN'
-      || command.deviceId !== deviceId
-      || command.payload?.documentId !== continuationDocumentId
-    ) {
-      return res.status(403).json({ message: 'This scan command cannot add a page to that document.' });
-    }
-    existingDocument = await Document.findOne({ id: continuationDocumentId });
+    if (!command) throw createHttpError('A continuation page requires a scan command.', 403);
+    existingDocument = await Document.findOne({ id: continuationDocumentId }).forUpdate();
     if (!existingDocument) {
-      return res.status(404).json({ message: 'Document for this scan session was not found.' });
+      throw createHttpError('Document for this scan session was not found.', 404);
     }
     if (existingDocument.intakeStatus !== 'Pending Review') {
-      return res.status(409).json({ message: 'This document scan session is no longer open for additional pages.' });
+      throw createHttpError('This document scan session is no longer open for additional pages.', 409);
     }
   }
   const attachmentSource = req.body.attachment || req.body.scannedFile;
   if (!attachmentSource?.dataUrl && !attachmentSource?.url) {
-    return res.status(400).json({ message: 'A scanned page image is required.' });
+    throw createHttpError('A scanned page image is required.', 400);
   }
   const existingScanPages = getScannerPages(existingDocument?.scannedFiles || []);
-  if (existingDocument && existingScanPages.length >= maxAttachmentsPerDocument) {
-    return res.status(400).json({ message: `A document can have at most ${maxAttachmentsPerDocument} scanned pages.` });
+  if (existingDocument && !command.payload?.retake && existingScanPages.length >= maxAttachmentsPerDocument) {
+    throw createHttpError(`A document can have at most ${maxAttachmentsPerDocument} scanned pages.`, 400);
   }
   const newScanPages = attachmentSource
     ? await persistAttachments(req, [{
-        id: attachmentSource.id || (command?.id ? `SCANPAGE_${command.id}` : undefined),
+        id: command?.id ? `SCANPAGE_${command.id}` : attachmentSource.id,
         name: attachmentSource.name || `${deviceId}-scan.jpg`,
         type: attachmentSource.type || 'image/jpeg',
         size: attachmentSource.size,
@@ -202,6 +208,15 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
         source: 'scanner',
       }])
     : [];
+
+  if (command?.payload?.retake === true) {
+    const [page] = newScanPages;
+    if (!page?.type?.startsWith('image/')) throw createHttpError('A replacement page must be an image.', 400);
+    await Command.findOneAndUpdate({ id: command.id }, { $set: {
+      status: 'Executed', resultDocumentId: existingDocument.id, executedAt: now, payload: { ...command.payload, retakePage: page },
+    } }, updateOptions);
+    return { documentId: existingDocument.id, document: existingDocument };
+  }
 
   const trackingNumber = existingDocument?.trackingNumber || req.body.trackingNumber || generateTrackingNumber();
   const existingPageIds = new Set(existingScanPages.map((page) => page.id).filter(Boolean));
@@ -219,6 +234,7 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
   } catch (err) {
     console.warn(`Unable to build scan PDF for ${trackingNumber}:`, err.message);
   }
+  if (scanPdf && scanPdf.pages.length !== scanPages.length) scanPdf = null;
   const scannedFiles = scanPdf ? [scanPdf, ...otherFiles] : [...otherFiles, ...scanPages];
 
   const subject = req.body.extractedTitle?.trim()
@@ -244,7 +260,7 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       status: registrationStatus,
       intakeStatus: 'Pending Review',
       priorityLevel: req.body.priorityLevel || 'normal',
-      dateReceived: req.body.dateReceived || req.body.extractedDate?.trim() || now.split('T')[0],
+      dateReceived: req.body.dateReceived || req.body.extractedDate?.trim() || manilaDate(now),
       createdAt: now,
       updatedAt: now,
       documentTypeId: req.body.documentTypeId || 'DT-001',
@@ -317,7 +333,7 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
       executedAt: now,
     };
     if (req.body.aiExtractPending) {
-      commandSet['payload.aiExtractPending'] = true;
+      commandSet.payload = { ...command.payload, aiExtractPending: true };
     }
     await Command.findOneAndUpdate(
       { id: req.body.commandId },
@@ -340,17 +356,23 @@ router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(a
     await createLogEntry(req, 'document_scan_page_added', `Added a scanned page to document ${doc.subject}`, doc.id, 'hardware');
   }
 
-  const deviceSnapshot = await getDeviceSnapshot(deviceId);
-  if (req.body.commandId) {
-    const updatedCommand = await Command.findOne({ id: req.body.commandId }).lean();
-    if (updatedCommand) {
-      broadcastCommandUpdated(updatedCommand, doc.toObject?.() || doc);
-    }
-  }
-  broadcastDeviceUpdated(deviceSnapshot);
-  broadcastDataInvalidate(['documents', 'notifications', 'logs', 'device']);
+  return { documentId: doc.id, document: doc, device: await getDeviceSnapshot(deviceId) };
+};
 
-  res.status(201).json({ documentId: doc.id, document: doc, device: deviceSnapshot });
+router.post('/devices/scans', deviceLimiter, requireDeviceApiKey, asyncHandler(async (req, res) => {
+  validateSmsPreferences(req.body);
+  const now = new Date().toISOString();
+  const deviceId = req.body.deviceId?.trim() || 'DEV-001';
+  const result = await withDeviceCommandLock(deviceId, () => saveDeviceCapture(req, deviceId, now));
+  if (req.body.commandId) {
+    const updated = await Command.findOne({ id: req.body.commandId }).lean();
+    if (updated) broadcastCommandUpdated(updated, result.document);
+  }
+  if (result.device) {
+    broadcastDeviceUpdated(result.device);
+    broadcastDataInvalidate(['documents', 'notifications', 'logs', 'device']);
+  }
+  res.status(201).json(result);
 }));
 
 // Enrich an already-uploaded scan with AI-extracted fields (runs after the Pi
@@ -445,9 +467,11 @@ router.put('/device', adminOnly, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Device connection status is controlled by hardware connect and heartbeat events.' });
   }
 
-  const deviceId = req.body.id || 'DEV-001';
+  requireFields(req.body, ['id']);
+  const deviceId = req.body.id;
+  if (!(await getDeviceSnapshot(deviceId)).configured) return res.status(404).json({ message: 'Wait for the scanner to report its first heartbeat before saving settings.' });
   const updates = {
-    name: req.body.name || 'Physical Document Scanner',
+    name: req.body.name,
     model: req.body.model,
     type: req.body.type,
     ip: req.body.ip,
@@ -466,8 +490,9 @@ router.put('/device', adminOnly, asyncHandler(async (req, res) => {
   const device = await Device.findOneAndUpdate(
     { id: deviceId },
     { $set: { ...updates, id: deviceId } },
-    { ...updateOptions, upsert: true }
+    updateOptions,
   );
+  if (!device) return res.status(404).json({ message: 'Scanner not found.' });
 
   await createLogEntry(req, 'device_config_updated', `Updated scanner configuration for ${device.id}`, device.id);
   const snapshot = await getDeviceSnapshot(device.id);
@@ -771,33 +796,52 @@ router.get('/commands/:id/status', allRoles, asyncHandler(async (req, res) => {
     }).lean();
   }
 
+  // Staged pages stay outside the saved intake until registration. File references
+  // are issued only by the upload handler and are readable through this scoped command.
+  let retakePage;
+  if (command.command === 'SCAN' && command.status === 'Executed' && command.payload?.retake === true
+      && command.payload.retakePage && resultDocument?.intakeStatus === 'Pending Review') {
+    const page = command.payload.retakePage;
+    const file = resolveScanPath(page);
+    if (!file) throw createHttpError('The staged scan image is unavailable.', 409);
+    retakePage = { id: page.id, name: page.name, type: page.type, size: page.size,
+      dataUrl: `data:${page.type};base64,${await fs.readFile(file, 'base64')}` };
+  }
+
   res.json({
     ...command,
     errorMessage: command.errorMessage
       ? toUserFacingError(command.errorMessage, 'Scan could not be completed. Please try again.')
       : command.errorMessage,
     resultDocument,
+    retakePage,
   });
 }));
 
 router.post('/commands/cancel', scannerCommandRoles, asyncHandler(async (req, res) => {
-  requireFields(req.body, ['deviceId']);
-  if (typeof req.body.deviceId !== 'string') return res.status(400).json({ message: 'Invalid device ID.' });
-  const deviceId = req.body.deviceId.trim();
-  const reason = typeof req.body.reason === 'string' && req.body.reason.trim() || 'Cancelled by dashboard user.';
-  const executedAt = new Date().toISOString(), deferred = [];
-  const count = await withDeviceCommandLock(deviceId, async () => {
-    const pending = await Command.find({ deviceId, status: { $in: ['Pending', 'Executing'] } }).forUpdate().lean();
-    if (!pending.length) return 0;
-    await Command.updateMany({ id: { $in: pending.map(command => command.id) } }, { $set: { status: 'Cancelled', errorMessage: reason, executedAt } });
-    for (const command of pending) {
-      await createLogEntry(req, 'device_command_cancelled', `Cancelled ${command.command} command for ${deviceId}`, command.id);
-      deferred.push(() => broadcastCommandUpdated({ ...command, status: 'Cancelled', errorMessage: reason, executedAt }));
+  requireFields(req.body, ['deviceId', 'commandId']);
+  const { deviceId, commandId } = req.body;
+  let cancelled;
+  await withDeviceCommandLock(deviceId, async () => {
+    const command = await Command.findOne({ id: commandId, deviceId, command: 'SCAN' }).forUpdate();
+    if (!command || (req.user.role !== 'Admin' && command.requestedBy !== req.user.id)) {
+      throw createHttpError('Scan command not found for this device and account.', 404);
     }
-    return pending.length;
+    if (command.status === 'Cancelled') return;
+    if (command.status !== 'Pending') {
+      throw createHttpError(command.status === 'Executing'
+        ? 'The scanner has started this capture. Waiting for its result.'
+        : 'This scan command has already finished.', 409);
+    }
+    command.status = 'Cancelled';
+    command.errorMessage = 'Pending capture cancelled.';
+    command.executedAt = new Date().toISOString();
+    await command.save();
+    await createLogEntry(req, 'device_command_cancelled', 'Cancelled a pending scan', command.id);
+    cancelled = command.toJSON();
   });
-  for (const effect of deferred) effect();
-  res.json({ ok: true, cancelled: count });
+  if (cancelled) broadcastCommandUpdated(cancelled);
+  res.json({ commandId, status: 'Cancelled' });
 }));
 
 router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
@@ -815,6 +859,27 @@ router.post('/commands', scannerCommandRoles, asyncHandler(async (req, res) => {
       return respond(403, { message: 'Receptionists can only request scan/sort/motor test/camera light commands' });
     }
 
+    const payload = req.body.payload || {};
+    if (payload.retakePage !== undefined || (payload.retake && (commandName !== 'SCAN' || !payload.documentId))) {
+      return respond(400, { message: 'A retake must identify an existing scan session.' });
+    }
+    if (['SCAN', 'SORT'].includes(commandName) && req.body.id) {
+      const existing = await Command.findOne({ id: req.body.id }).lean();
+      if (existing) {
+        if (existing.deviceId !== req.body.deviceId || existing.command !== commandName || existing.requestedBy !== req.user.id
+            || existing.payload?.documentId !== payload.documentId || !!existing.payload?.retake !== !!payload.retake) {
+          return respond(409, { message: 'The capture identifier is already in use.' });
+        }
+        return respond(200, existing);
+      }
+    }
+    if (commandName === 'SCAN' && payload.documentId) {
+      const doc = await Document.findOne({ id: payload.documentId }).lean();
+      if (!doc || (!isGlobalRole(req) && doc.currentOfficeId !== getUserOfficeId(req))) {
+        return respond(404, { message: 'The original scan record is unavailable.' });
+      }
+      if (doc.intakeStatus !== 'Pending Review') return respond(409, { message: 'This intake is already closed.' });
+    }
     const snapshot = await getDeviceSnapshot(req.body.deviceId);
     if (!snapshot.connected) {
       return respond(409, { message: 'Physical scanner is not connected. Wait for a hardware heartbeat before sending commands.' });

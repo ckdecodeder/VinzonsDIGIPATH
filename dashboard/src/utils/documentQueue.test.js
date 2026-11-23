@@ -1,3 +1,5 @@
+import { countWorkflowStatuses } from './documentWorkflow.js';
+import { formatPhilippinesDateParts, formatPhilippinesDateTime } from './philippinesDateTime.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { matchesQueue, matchesReceptionQueue } from './documentQueue.js';
@@ -82,4 +84,24 @@ test('Office and Reception queues offer only available custody work and respect 
   assert.equal(matchesQueue(document('Received', { currentOfficeId: 'RECEPTION', intakeStatus: 'Pending Review' }), 'Needs your action', receptionist), false);
   assert.equal(matchesQueue(document('Received', { currentOfficeId: 'RECEPTION', intakeStatus: 'Rejected' }), 'Needs your action', receptionist), true);
   assert.equal(matchesQueue(document('Received'), 'Needs your action', { role: 'Unknown', officeId: 'MAYOR' }), false);
+});
+
+test('each status count matches its document-list drill-down, including historical values', () => {
+  const documents = ['Completed', 'For Signature', 'For Signing', 'Acknoweledged', 'Processing',
+    'Returned to Sender', 'Legacy review', 'constructor', '__proto__', null].map(status => ({ status }));
+  const counts = countWorkflowStatuses(documents);
+  assert.equal(Object.values(counts).reduce((sum, count) => sum + count, 0), documents.length);
+  for (const [status, count] of Object.entries(counts)) {
+    assert.equal(documents.filter(doc => matchesQueue(doc, status)).length, count, status);
+  }
+  assert.equal(counts.Completed, 1);
+  assert.equal(counts['For Signing'], 2);
+});
+
+test('historical calendar dates render without a fabricated time', () => {
+  assert.deepEqual(formatPhilippinesDateParts('2026-11-22'), { date: '2026-11-22', time: '' });
+  assert.equal(formatPhilippinesDateTime('2026-11-22'), '2026-11-22');
+  const parts = formatPhilippinesDateParts('2026-11-21T16:30:00Z');
+  assert.equal(parts.date, '2026-11-22');
+  assert.match(parts.time, /12:30/);
 });

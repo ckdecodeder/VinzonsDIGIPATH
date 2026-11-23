@@ -11,6 +11,8 @@ test('opening a record closes its preview and resets filters before focusing the
     setPreviewDocumentId: value => { state.preview = value; },
     setDocumentStatusFocus: value => { state.filter = value; },
     setDocumentFocusId: value => { state.focus = value; },
+    setFocusedDelivery: () => {},
+    notificationRequest: { current: 0 },
     setDocumentFocusKey: update => { state.key = update(state.key); },
     setCurrentPage: value => { state.page = value; },
   };

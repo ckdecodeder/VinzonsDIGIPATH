@@ -341,6 +341,11 @@ const UserList = ({
             </tr>
           </thead>
           <tbody>
+            {filteredUsers.length === 0 && (
+              <tr><td colSpan={6} className="directory-empty">
+                {search ? <>No users match your search. <button type="button" className="btn btn-secondary btn-sm" onClick={() => setSearch('')}>Clear search</button></> : 'No users registered yet.'}
+              </td></tr>
+            )}
             {paginatedUsers.map((u) => {
               const normalizedRole = u.role;
               const rc = roleColors[normalizedRole] || roleColors.Receptionist;
@@ -418,6 +423,7 @@ const UserList = ({
                       <button
                         className="btn-icon"
                         title="Edit"
+                        aria-label={`Edit ${u.fname} ${u.lname}`}
                         onClick={() => openForm(u)}
                       >
                         <Edit2 size={14} />
@@ -442,7 +448,7 @@ const UserList = ({
 
       <div className="pagination-toolbar">
         <div className="pagination-summary">
-          Showing {showFrom}-{showTo} of {filteredUsers.length} matching users
+          {filteredUsers.length > 0 && <>Showing {showFrom}-{showTo} of {filteredUsers.length} matching users</>}
         </div>
         <div className="pagination-controls">
           <label>

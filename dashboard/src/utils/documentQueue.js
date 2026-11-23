@@ -1,3 +1,5 @@
+import { manilaDate } from './philippinesDateTime.js';
+export { manilaDate } from './philippinesDateTime.js';
 import { getWorkflowStatus } from './documentWorkflow.js';
 import { canArchiveDocument, canTakeDocumentAction } from './documentActionRules.js';
 
@@ -40,15 +42,6 @@ export function matchesQueue(doc, filter, user, transmissions = [], documentType
   if (filter === 'Pending review') return Boolean(nextAction) && doc.intakeStatus === 'Pending Review';
   if (filter === 'Urgent active') return Boolean(nextAction) && doc.priorityLevel === 'urgent' && status !== 'Completed';
   return Boolean(nextAction);
-}
-
-const manilaDateFormat = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
-});
-
-export function manilaDate(value = new Date()) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : manilaDateFormat.format(date);
 }
 
 export function matchesReceptionQueue(doc, filter, { mayorsOfficeId, transmissions = [], now = new Date() } = {}) {

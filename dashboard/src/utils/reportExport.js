@@ -1,3 +1,4 @@
+import { manilaDate } from './philippinesDateTime.js';
 import { runReportWorker, reportAbortError, waitForReportTask } from './reportWorkerClient.js';
 
 const checkAbort = (signal) => { if (signal?.aborted) throw reportAbortError(); };
@@ -94,7 +95,7 @@ export async function exportReportPagesAsJpeg(file, filename, { signal, onProgre
 }
 
 export const buildReportFilename = (label, format) => {
-  const date = new Date().toISOString().split('T')[0];
+  const date = manilaDate();
   const safeLabel = String(label || 'Report').replace(/[^a-zA-Z0-9_-]+/g, '-');
   return `DigiPath-${safeLabel}-${date}.${format === 'jpeg' ? 'jpg' : format}`;
 };

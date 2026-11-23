@@ -358,14 +358,36 @@ const Layout = ({
 
   const pageContentRef = useRef(null);
   const mainContentRef = useRef(null);
+  const lastPageRef = useRef(currentPage);
 
   useEffect(() => {
     const scrollEl = mainContentRef.current || pageContentRef.current;
     scrollEl?.scrollTo({ top: 0, behavior: 'auto' });
+    if (lastPageRef.current === currentPage) return;
+    lastPageRef.current = currentPage;
+    if (!scrollEl || document.body.classList.contains('modal-open')) return;
+    let target = scrollEl;
+    const focusHeading = () => {
+      const heading = [...scrollEl.querySelectorAll('h1')].find(node => node.getClientRects().length);
+      target = heading || scrollEl;
+      target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    };
+    focusHeading();
+    // A deferred page may replace the heading after its collection arrives.
+    const observer = new MutationObserver(() => {
+      const lostHeading = !target.isConnected && document.activeElement === document.body;
+      if (lostHeading || (target === scrollEl && document.activeElement === scrollEl)) focusHeading();
+    });
+    const release = event => { if (event.target !== target) observer.disconnect(); };
+    document.addEventListener('focusin', release);
+    observer.observe(scrollEl, { childList: true, subtree: true });
+    return () => { observer.disconnect(); document.removeEventListener('focusin', release); };
   }, [currentPage]);
 
   return (
     <div className="layout">
+      <a className="skip-content" href="#main-content">Skip to main content</a>
       {isSidebarOpen && (
         <div
           className="sidebar-backdrop"
@@ -454,7 +476,7 @@ const Layout = ({
         </div>
       </aside>
 
-      <main className="main-content" ref={mainContentRef}>
+      <main id="main-content" className="main-content" ref={mainContentRef} tabIndex={-1}>
         <div className="mobile-topbar">
           <button
             type="button"
@@ -573,7 +595,10 @@ const Layout = ({
               ) : (
                 notifications.map((item) => (
                   <div key={item.id} className="notification-row">
-                    <button className={`notification-item ${item.type}`} onClick={() => onNotificationSelect ? onNotificationSelect(item) : onNavigate(item.page)}>
+                    <button className={`notification-item ${item.type}`} onClick={async () => {
+                      const opened = onNotificationSelect ? await onNotificationSelect(item) : onNavigate(item.page);
+                      if (opened !== false) setIsNotificationDockOpen(false);
+                    }}>
                       <span className="notification-status-symbol">{getNotificationIcon(item)}</span>
                       <span>{item.text}</span>
                     </button>

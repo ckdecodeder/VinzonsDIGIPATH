@@ -20,10 +20,9 @@ import {
   User,
   Wifi,
   WifiOff,
-  XCircle,
   Zap,
 } from 'lucide-react';
-import { bridgeService, commandService, deviceService } from '../api/documentService';
+import { bridgeService, deviceService } from '../api/documentService';
 import { useLiveDevice } from '../hooks/useLiveDevice';
 import { getWsUrl } from '../ws/realtimeClient';
 import { users as defaultUsers } from '../data/mockData';
@@ -110,7 +109,7 @@ const formatSignalAge = (seconds) => {
   return `${hours}h ago`;
 };
 
-const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defaultUsers, offices = [], deviceEvents = [] }) => {
+const DeviceControlPanel = ({ device: deviceProp, deviceState, onRefresh, logs, users = defaultUsers, offices = [], deviceEvents = [] }) => {
   const { device: liveDevice } = useLiveDevice(deviceProp);
   const formId = useId();
   const [clockMs, setClockMs] = useState(Date.now());
@@ -122,7 +121,6 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
   }, []);
 
   const scanner = liveDevice || {
-    id: 'DEV-001',
     name: 'No physical scanner connected',
     model: 'Not reported',
     type: 'Scanner',
@@ -181,7 +179,6 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
   });
   const [isSavingDevice, setIsSavingDevice] = useState(false);
   const [deviceSaveMessage, setDeviceSaveMessage] = useState('');
-  const [isCancellingCommand, setIsCancellingCommand] = useState(false);
   const autoBridgeUrl = getReportedBridgeUrl();
 
   useEffect(() => {
@@ -219,7 +216,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
     : (autoBridgeUrl ? 'auto' : (normalizedManualBridgeUrl ? 'manual' : 'waiting'));
 
   const getBridgePayload = () => ({
-    deviceId: scanner.id || 'DEV-001',
+    deviceId: scanner.id,
     ...(effectiveBridgeUrl ? { bridgeUrl: effectiveBridgeUrl } : {}),
   });
   const hardwareEvents = [...deviceEvents]
@@ -271,7 +268,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
     setDeviceSaveMessage('');
     try {
       await deviceService.update({
-        id: scanner.id || 'DEV-001',
+        id: scanner.id,
         name: deviceForm.name.trim() || 'Physical Document Scanner',
         location: deviceForm.location.trim(),
         assignedTo: deviceForm.assignedTo,
@@ -371,24 +368,6 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
     }
   };
 
-  const handleCancelPendingScan = async () => {
-    setIsCancellingCommand(true);
-    setBridgeActionMessage('Cancelling pending scanner commands...');
-    try {
-      const result = await commandService.cancelPending(scanner.id || 'DEV-001');
-      setBridgeActionMessage(
-        result.cancelled
-          ? `Cancelled ${result.cancelled} pending scan command(s).`
-          : 'No pending scan commands found.',
-      );
-      await onRefresh?.();
-    } catch (err) {
-      setBridgeActionMessage(`Unable to cancel pending scan. ${err.message || ''}`.trim());
-    } finally {
-      setIsCancellingCommand(false);
-    }
-  };
-
   const samplePayload = `{
   "deviceId": "DEV-001",
   "name": "Physical Document Scanner",
@@ -409,6 +388,22 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
     .slice(0, 5);
 
+  const identified = liveDevice?.id && liveDevice.configured === true;
+  if (deviceState !== 'ready' || !identified) {
+    const loading = !deviceState || ['idle', 'loading'].includes(deviceState);
+    const message = loading ? 'Loading scanner information...'
+      : deviceState === 'error' ? 'Scanner information is unavailable.'
+      : 'Waiting for the first hardware heartbeat. Connect the scanner to register it here.';
+    return (
+      <PageShell header={<div className="page-header"><h1>Device Management</h1></div>}>
+        <section className="card" aria-busy={loading}>
+          <p role="status">{message}</p>
+          {!loading && <button type="button" className="btn btn-secondary" onClick={onRefresh}><RefreshCcw size={16} /> Refresh</button>}
+        </section>
+      </PageShell>
+    );
+  }
+
   return (
     <PageShell
       header={
@@ -428,7 +423,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
       <div className="card" style={{ marginBottom: '1.25rem' }}>
         <div className="card-header">
           <h3 className="card-title">Scanner Connection</h3>
-          <span className={`status-badge ${isConnected ? 'status-online' : 'status-offline'}`} style={{ fontSize: '0.65rem' }}>
+          <span className={`status-badge ${isConnected ? 'status-online' : 'status-offline'}`} style={{ fontSize: '0.75rem' }}>
             {isConnected ? 'Online' : 'Offline'}
           </span>
         </div>
@@ -480,14 +475,6 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <button
-            className="btn btn-secondary"
-            onClick={handleCancelPendingScan}
-            disabled={isCancellingCommand}
-          >
-            {isCancellingCommand ? <RefreshCcw size={16} className="animate-spin" /> : <XCircle size={16} />}
-            Cancel Pending Scan
-          </button>
           {!isWsOnlyBridge && (
             <button
               type="button"
@@ -591,7 +578,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
           }}>
             {isConnected ? <Wifi size={48} style={{ color: statusColor }} /> : <WifiOff size={48} style={{ color: statusColor }} />}
             <span style={{
-              fontSize: '0.7rem',
+              fontSize: '0.75rem',
               fontWeight: 700,
               color: statusColor,
               textTransform: 'uppercase',
@@ -726,7 +713,7 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Connection Process</h3>
-            <span className="status-badge status-warning" style={{ fontSize: '0.65rem' }}>
+            <span className="status-badge status-warning" style={{ fontSize: '0.75rem' }}>
               <KeyRound size={10} /> API Key
             </span>
           </div>
@@ -741,9 +728,9 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.375rem' }}>
                   <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)' }}>{row.label}</span>
-                  <span className="td-mono" style={{ fontSize: '0.68rem', color: 'var(--accent)' }}>{row.method}</span>
+                  <span className="td-mono" style={{ fontSize: '0.75rem', color: 'var(--accent)' }}>{row.method}</span>
                 </div>
-                <div className="td-mono" style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
+                <div className="td-mono" style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>
                   {row.url}
                 </div>
               </div>
@@ -756,29 +743,26 @@ const DeviceControlPanel = ({ device: deviceProp, onRefresh, logs, users = defau
           </div>
         </div>
 
-        <div className="card">
-          <div className="card-header">
-            <h3 className="card-title">Heartbeat Payload</h3>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>JSON</span>
-          </div>
+        <details className="card">
+          <summary>Example heartbeat payload</summary>
           <pre style={{
             margin: 0,
             padding: '1rem',
             borderRadius: 'var(--radius-md)',
             background: 'var(--bg-elevated)',
             color: 'var(--text-secondary)',
-            fontSize: '0.72rem',
+            fontSize: '0.75rem',
             overflowX: 'auto',
             lineHeight: 1.55,
           }}>{samplePayload}</pre>
-        </div>
+        </details>
       </div>
 
       <div className="grid-2">
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Hardware Telemetry</h3>
-            <span className={`status-badge ${isConnected ? 'status-online' : 'status-offline'}`} style={{ fontSize: '0.65rem' }}>
+            <span className={`status-badge ${isConnected ? 'status-online' : 'status-offline'}`} style={{ fontSize: '0.75rem' }}>
               <Activity size={10} /> {isConnected ? 'Live' : 'Waiting'}
             </span>
           </div>

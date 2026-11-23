@@ -1,3 +1,4 @@
+import { manilaDate, formatPhilippinesDateTime as formatDateTime, formatPhilippinesDateParts } from '../utils/philippinesDateTime.js';
 import React, { useEffect, useState, useId } from "react";
 import { documentService } from '../api/documentService';
 import { focusFormError } from '../utils/formAccessibility';
@@ -23,8 +24,42 @@ import {
   users as defaultUsers,
 } from "../data/mockData";
 import {
+  downloadAttachment,
   getAttachmentSource,
 } from "../utils/attachmentDownload";
+
+function ArchiveDownload({ file }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const name = file.name || 'archived attachment';
+  const available = Boolean(getAttachmentSource(file));
+  async function download() {
+    setPending(true);
+    setError('');
+    try {
+      await downloadAttachment(file, 'original');
+    } catch (failure) {
+      const messages = {
+        401: 'Your session has expired. Sign in again to download this original.',
+        403: 'Your account does not have permission to download this original.',
+        404: 'This original file could not be found.',
+      };
+      setError(messages[failure.status] || failure.message || 'Unable to download this file.');
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <button type="button" className="attachment-download" onClick={download} disabled={pending || !available}
+        aria-label={`Download original ${name}`} title={available ? 'Download original' : 'File unavailable'}>
+        <Download size={14} />{pending && ' Downloading…'}
+      </button>
+      {!available && <span>Original file unavailable.</span>}
+      {error && <span role="alert">{error}</span>}
+    </>
+  );
+}
 
 const ArchiveList = ({
   initialDocumentId = "",
@@ -51,18 +86,18 @@ const ArchiveList = ({
     setDetailDocument(null); setDetailError('');
     if (!detailArchive) return undefined;
     const controller = new AbortController();
-    documentService.getById(detailArchive.documentId, { signal: controller.signal }).then(setDetailDocument).catch((error) => {
-      if (error.code !== 'ABORTED') setDetailError(error.message);
-    });
+    documentService.getById(detailArchive.documentId, { signal: controller.signal })
+      .then(doc => { if (!controller.signal.aborted) setDetailDocument(doc); })
+      .catch(error => { if (!controller.signal.aborted && error.code !== 'ABORTED') setDetailError(error.message); });
     return () => controller.abort();
-  }, [detailArchive?.id, detailRetry]);
+  }, [detailArchive?.id, detailArchive?.documentId, detailRetry, currentUser?.id, currentRole]);
   const [pageSize, setPageSize] = useState(20);
   const [page, setPage] = useState(1);
   const [previewFile, setPreviewFile] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
   const [formData, setFormData] = useState({
     documentId: initialDocumentId,
-    date: new Date().toISOString().split("T")[0],
+    date: manilaDate(),
   });
 
   const [reviewDoc, setReviewDoc] = useState(null);
@@ -78,7 +113,7 @@ const ArchiveList = ({
       .then(doc => { if (!controller.signal.aborted) setReviewDoc(doc); })
       .catch(error => { if (!controller.signal.aborted) setArchiveError(error.message); });
     return () => controller.abort();
-  }, [showForm, formData.documentId, retry]);
+  }, [showForm, formData.documentId, retry, currentUser?.id, currentRole]);
 
   const getUserFullName = (userId) => {
     const user = users.find((u) => u.id === userId);
@@ -97,38 +132,6 @@ const ArchiveList = ({
   const getOfficeName = (officeId) => {
     const office = offices.find((o) => o.id === officeId);
     return office ? office.name : "Unknown Office";
-  };
-
-  const formatDateTime = (value) => {
-    if (!value) return "Not recorded";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toLocaleString();
-  };
-
-  const getArchiveDateKey = (archive) => {
-    const raw = archive?.date;
-    if (!raw) return "";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(String(raw))) return String(raw);
-    const parsed = new Date(raw);
-    if (Number.isNaN(parsed.getTime())) return String(raw).slice(0, 10);
-    const year = parsed.getFullYear();
-    const month = String(parsed.getMonth() + 1).padStart(2, "0");
-    const day = String(parsed.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  };
-
-  const formatArchiveDateParts = (value) => {
-    if (!value) return { date: "Not recorded", time: "" };
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      const [rawDate = value, rawTime = ""] = String(value).split("T");
-      return { date: rawDate, time: rawTime.replace("Z", "") };
-    }
-    return {
-      date: parsed.toLocaleDateString(),
-      time: parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
   };
 
   const getDocumentFiles = (doc) => {
@@ -251,7 +254,7 @@ const ArchiveList = ({
         .toLowerCase()
         .includes(term) ||
       currentLocation.toLowerCase().includes(term);
-    const matchDate = !filterDate || getArchiveDateKey(a) === filterDate;
+    const matchDate = !filterDate || manilaDate(a.date || "") === filterDate;
     return matchSearch && matchDate;
   });
 
@@ -359,7 +362,7 @@ const ArchiveList = ({
           <tbody>
             {paginatedArchives.length > 0 ? (
               paginatedArchives.map((a) => {
-                const dateParts = formatArchiveDateParts(a.date);
+                const dateParts = formatPhilippinesDateParts(a.date);
                 return (
                 <tr
                   key={a.id}
@@ -602,14 +605,7 @@ const ArchiveList = ({
                                 <Eye size={14} />
                                 <span>{file.name}</span>
                               </button>
-                              <a
-                                href={getAttachmentSource(file)}
-                                download={file.name}
-                                className="attachment-download"
-                                title="Download scanned file"
-                              >
-                                <Download size={14} />
-                              </a>
+                              <ArchiveDownload file={file} />
                             </div>
                           ))}
                         </div>

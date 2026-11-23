@@ -1,3 +1,4 @@
+const { manilaDate } = require('./municipalDate');
 const { getDatabaseStatus } = require('../config/db');
 
 // ─── ID & Tracking ─────────────────────────────────────────────────────────────
@@ -49,7 +50,7 @@ const sanitizeFileName = (name = 'file') => {
 
 const buildReportFileName = (categoryLabel, date = new Date()) => {
   const slug = String(categoryLabel || 'Summary').replace(/\s+/g, '-');
-  const stamp = date.toISOString().slice(0, 10);
+  const stamp = manilaDate(date);
   return sanitizeFileName(`DigiPath-${slug}-${stamp}.docx`);
 };
 

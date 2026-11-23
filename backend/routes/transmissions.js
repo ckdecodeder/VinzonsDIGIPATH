@@ -73,6 +73,12 @@ router.get('/', allRoles, asyncHandler(async (req, res) => {
   res.json(trans);
 }));
 
+router.get('/:id', allRoles, asyncHandler(async (req, res) => {
+  const delivery = await Transmission.findOne({ id: req.params.id, ...getScopedTransmissionQuery(req) }).lean();
+  if (!delivery) return res.status(404).json({ message: 'This delivery is unavailable to your account.' });
+  res.json(delivery);
+}));
+
 router.post('/', allRoles, asyncHandler(async (req, res) => {
   requireFields(req.body, ['documentId', 'fromOfficeId']);
   const toOfficeIds = [...new Set(

@@ -1,3 +1,4 @@
+import { manilaDate } from './utils/philippinesDateTime.js';
 import React, { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -42,6 +43,8 @@ import DataSectionStatus from './components/DataSectionStatus';
 import PageShell from './components/PageShell';
 import { sortNewest } from './utils/sorting';
 import { receiveDocumentWithConfirmation } from './utils/receiveDocument';
+import { readDismissals, dismissalKey, resolveNotificationTarget } from './utils/notificationTarget';
+import { saveWorkflowAction } from './utils/workflowAction';
 import { RealtimeProvider } from './context/RealtimeContext';
 import { realtimeClient } from './ws/realtimeClient';
 import { useDocumentPreview } from './hooks/useDocumentPreview';
@@ -120,6 +123,8 @@ function App() {
   const transmissionUpdatesInFlight = useRef(new Set());
   // shortcut: uncertainty survives navigation only, add server idempotency before supporting reload recovery.
   const pendingSendAttempts = useRef(new Map());
+  const workflowDrafts = useRef(new Map());
+  useEffect(() => { workflowDrafts.current.clear(); }, [currentUser?.id]);
   useEffect(() => { pendingSendAttempts.current.clear(); }, [currentUser?.id]);
   const [archives, setArchives] = useState([]);
   const [device, setDevice] = useState(null);
@@ -148,6 +153,8 @@ function App() {
   const [hasLoadedData, setHasLoadedData] = useState(false);
   const [actionToast, setActionToast] = useState(null);
   const [documentFocusId, setDocumentFocusId] = useState('');
+  const [focusedDelivery, setFocusedDelivery] = useState(null);
+  const notificationRequest = useRef(0);
   const [documentFocusKey, setDocumentFocusKey] = useState(0);
   const [archiveFocus, setArchiveFocus] = useState('');
   const [documentStatusFocus, setDocumentStatusFocus] = useState('All');
@@ -155,10 +162,10 @@ function App() {
   const closeDocumentPreview = useCallback(() => setPreviewDocumentId(null), []);
   const preview = useDocumentPreview(previewDocumentId, currentUser?.id, documents,
     documentService.getById, closeDocumentPreview);
-  const [dismissedNotifications, setDismissedNotifications] = useState(() => {
-    const saved = localStorage.getItem('dp_dismissedNotifications');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [dismissalState, setDismissalState] = useState(() => ({
+    userId: currentUser?.id, ids: readDismissals(localStorage, currentUser?.id),
+  }));
+  const dismissedNotifications = dismissalState.userId === currentUser?.id ? dismissalState.ids : [];
   const pageSections = appDataService.sectionsForPage(currentPage, currentUser?.role);
   const loadData = async ({ keys = pageSections, force = false } = {}) => {
     const userId = currentUser?.id;
@@ -339,7 +346,18 @@ function App() {
     };
   }, [currentUser?.id, currentPage]);
 
-  useEffect(() => { localStorage.setItem('dp_dismissedNotifications', JSON.stringify(dismissedNotifications)); }, [dismissedNotifications]);
+  useEffect(() => {
+    const userId = currentUser?.id;
+    setDismissalState({ userId, ids: readDismissals(localStorage, userId) });
+    notificationRequest.current++;
+    setFocusedDelivery(null);
+  }, [currentUser?.id]);
+  useEffect(() => {
+    if (dismissalState.userId && dismissalState.userId === currentUser?.id) {
+      try { localStorage.setItem(dismissalKey(dismissalState.userId), JSON.stringify(dismissalState.ids)); }
+      catch { /* In-memory dismissal still works if browser storage is full. */ }
+    }
+  }, [dismissalState, currentUser?.id]);
   useEffect(() => {
     if (currentUser && currentPage) {
       localStorage.setItem(PAGE_STORAGE_KEY, currentPage);
@@ -407,6 +425,7 @@ function App() {
   };
 
   const handleNavigate = (page) => {
+    notificationRequest.current++;
     setArchiveFocus('');
     const nextPage = resolvePageForRole(page, currentRole);
     setPreviewDocumentId(null);
@@ -428,7 +447,9 @@ function App() {
     if (doc) setPreviewDocumentId(doc.id);
   }, []);
 
-  const handleOpenDocument = (documentId) => {
+  const handleOpenDocument = (documentId, delivery = null) => {
+    notificationRequest.current++;
+    setFocusedDelivery(delivery);
     setPreviewDocumentId(null);
     if (!documentId) {
       setDocumentFocusId('');
@@ -443,6 +464,7 @@ function App() {
   };
 
   const handleOpenDocumentsByStatus = (status = 'All') => {
+    notificationRequest.current++;
     setPreviewDocumentId(null);
     setDocumentFocusId('');
     setDocumentStatusFocus(status || 'All');
@@ -498,7 +520,7 @@ function App() {
   const handleAddTransmission = async (transmission) => {
     const savedTransmission = await runMutation(() => transmissionService.create({
       ...transmission,
-      transmissionDate: transmission.transmissionDate || new Date().toISOString().split('T')[0],
+      transmissionDate: transmission.transmissionDate || manilaDate(),
     }));
     upsertTransmission(savedTransmission);
     showActionToast('created', 'Transmission created successfully');
@@ -622,6 +644,29 @@ function App() {
     showActionToast('saved', getProcessActionToastMessage(action));
     refreshAfterMutation();
     return savedDoc;
+  };
+
+  const handleWorkflowAction = async attempt => {
+    const { userId, action } = attempt;
+    const assertSession = () => {
+      if (!userId || activeUserRef.current !== userId) throw new Error('Sign in again to continue.');
+    };
+    assertSession();
+    const result = await saveWorkflowAction(attempt, {
+      checkOnly: attempt.state === 'check',
+      save: ({ documentId, note, operationId }) => action === 'document_rejected'
+        ? documentService.verify(documentId, 'Rejected', note.trim(), operationId)
+        : documentService.processNote(documentId, action, note.trim(), operationId),
+      read: id => { assertSession(); return documentService.getById(id); },
+    });
+    assertSession();
+    if (result.state === 'saved') {
+      upsertDocument(result.document);
+      showActionToast('saved', action === 'document_rejected'
+        ? getVerificationToastMessage('Rejected') : getProcessActionToastMessage(action));
+      refreshAfterMutation();
+    }
+    return result;
   };
 
   const handleArchiveDocument = documentId => {
@@ -825,7 +870,8 @@ function App() {
     'document-types': [documentTypes, 'documentTypes', 'Document Types'],
   }[currentPage];
   const showCollectionPage = !primaryPageCollection || primaryPageCollection[0].length > 0
-    || sectionStates[primaryPageCollection[1]]?.status === 'ready' || sectionStates[primaryPageCollection[1]]?.hasLoaded === true;
+    || [primaryPageCollection[1], ...(currentPage === 'archives' ? ['documents'] : [])]
+      .every(key => sectionStates[key]?.status === 'ready' || sectionStates[key]?.hasLoaded === true);
 
   const getOfficeName = (officeId) => offices.find((office) => office.id === officeId)?.name || 'Unknown Office';
   const getDocument = (documentId) => visibleDocuments.find((doc) => doc.id === documentId);
@@ -898,13 +944,17 @@ function App() {
   const notificationBadgeCount = serverNotificationItems.length + rawNotificationItems.length;
 
   const handleDismissNotification = async (id) => {
+    const userId = currentUser.id;
     const persisted = serverNotifications.some((item) => item.id === id);
-    setDismissedNotifications((prev) => [...new Set([...prev, id])]);
+    setDismissalState(prev => ({
+      userId, ids: [...new Set([...(prev.userId === userId ? prev.ids : readDismissals(localStorage, userId)), id])],
+    }));
 
     if (!persisted) return;
 
     try {
       await notificationService.markRead(id);
+      if (activeUserRef.current !== userId) return;
       setServerNotifications((prev) => prev.map((item) => (
         item.id === id ? { ...item, isRead: true } : item
       )));
@@ -914,26 +964,26 @@ function App() {
   };
 
   const handleNotificationSelect = async (item) => {
-    const persisted = serverNotifications.some((notification) => notification.id === item.id);
-
-    if (persisted) {
-      setServerNotifications((prev) => prev.map((notification) => (
-        notification.id === item.id ? { ...notification, isRead: true } : notification
-      )));
-      try {
-        await notificationService.markRead(item.id);
-      } catch {
-        // ignore failure if the server can't update immediately; local state still hides it.
+    const userId = currentUser.id;
+    const request = ++notificationRequest.current;
+    const isCurrent = () => activeUserRef.current === userId && request === notificationRequest.current;
+    try {
+      const target = await resolveNotificationTarget(item, currentUser, sentDocumentIds,
+        transmissionService.getById, documentService.getById);
+      if (!isCurrent()) return false;
+      if (target) {
+        if (target.delivery) upsertTransmission(target.delivery);
+        upsertDocument(target.document);
+        handleOpenDocument(target.document.id, target.delivery);
+      } else {
+        handleNavigate(item.page || 'documents');
       }
-    } else {
-      setDismissedNotifications((prev) => [...new Set([...prev, item.id])]);
+      void handleDismissNotification(item.id);
+      return true;
+    } catch (error) {
+      if (isCurrent()) notifyUser({ type: 'warning', title: 'Unable to open alert', message: error.message });
+      return false;
     }
-
-    if (item?.referenceType === 'document' && item.referenceId) {
-      handleOpenDocument(item.referenceId);
-      return;
-    }
-    setCurrentPage(item?.page || 'documents');
   };
 
   const pendingTransmissions = visibleTransmissions.filter((item) => {
@@ -977,13 +1027,14 @@ function App() {
     }
 
     if (currentPage === 'logs') {
-      return <ActivityLogs logs={visibleLogs} users={users} />;
+      return <ActivityLogs logs={visibleLogs} users={users} scoped={currentRole === 'office' || currentRole === 'receptionist'} />;
     }
 
     if (currentPage === 'device-panel' && currentRole === 'admin') {
       return (
         <DeviceControlPanel
           device={device}
+          deviceState={sectionStates.device?.status}
           onRefresh={() => loadData({ keys: ['device', 'deviceEvents'], force: true })}
           logs={visibleLogs}
           users={users}
@@ -1016,7 +1067,6 @@ function App() {
           currentUser={currentUser}
           offices={offices}
           onUpdateProfile={handleUpdateProfile}
-          onNotify={notifyUser}
         />
       );
     }
@@ -1065,45 +1115,22 @@ function App() {
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
                 onProcessDocument={handleProcessDocument}
+                onWorkflowAction={handleWorkflowAction}
+                workflowDrafts={workflowDrafts.current}
                 onArchiveDocument={handleArchiveDocument}
                 onResendSenderNotification={handleResendSenderNotification}
                 focusDocumentId={documentFocusId}
+                focusedDelivery={focusedDelivery}
                 onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
                 autoOpenCreate={currentPage === 'add-document'}
                 onNotify={notifyUser}
               />
             );
-          case 'transmissions':
-            return (
-              <DocumentList
-                key={"documents-fallback-{documentFocusKey}"}
-                documents={visibleDocuments}
-                transmissions={[]}
-                offices={offices}
-                users={users}
-                documentTypes={documentTypes}
-                senderNotifications={senderNotifications}
-                currentUser={currentUser}
-                currentRole={currentRole}
-                onDelete={handleDeleteDocument}
-                onEdit={handleEditDocument}
-                onAdd={handleAddDocument}
-                onSendDocument={handleSendDocument}
-                onSendReconciled={handleSendReconciled}
-                pendingSendAttempts={pendingSendAttempts.current}
-                onReturnToSender={handleReturnToSender}
-                onVerifyDocument={handleVerifyDocument}
-                onResubmitDocument={handleResubmitDocument}
-                onProcessDocument={handleProcessDocument}
-                onArchiveDocument={handleArchiveDocument}
-                onResendSenderNotification={handleResendSenderNotification}
-                onNotify={notifyUser}
-              />
-            );
           case 'archives':
             return (
               <ArchiveList
+                key={currentUser.id + currentRole}
                 initialDocumentId={archiveFocus}
                 archives={visibleArchives}
                 documents={visibleDocuments}
@@ -1120,6 +1147,8 @@ function App() {
           case 'offices':
             return (
               <OfficeList
+                staffReady={sectionStates.users?.status === 'ready'}
+                transfersReady={sectionStates.transmissions?.status === 'ready'}
                 offices={offices}
                 users={users}
                 documents={visibleDocuments}
@@ -1142,6 +1171,7 @@ function App() {
           case 'document-types':
             return (
               <DocumentTypeList
+                documentsReady={sectionStates.documents?.status === 'ready'}
                 documentTypes={documentTypes}
                 documents={visibleDocuments}
                 onAddDocumentType={handleAddDocumentType}
@@ -1210,45 +1240,22 @@ function App() {
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
                 onProcessDocument={handleProcessDocument}
+                onWorkflowAction={handleWorkflowAction}
+                workflowDrafts={workflowDrafts.current}
                 onArchiveDocument={handleArchiveDocument}
                 onResendSenderNotification={handleResendSenderNotification}
                 focusDocumentId={documentFocusId}
+                focusedDelivery={focusedDelivery}
                 onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
                 autoOpenCreate={currentPage === 'add-document'}
                 onNotify={notifyUser}
               />
             );
-          case 'transmissions':
-            return (
-              <DocumentList
-                key={"documents-fallback-{documentFocusKey}"}
-                documents={visibleDocuments}
-                transmissions={[]}
-                offices={offices}
-                users={users}
-                documentTypes={documentTypes}
-                senderNotifications={senderNotifications}
-                currentUser={currentUser}
-                currentRole={currentRole}
-                onDelete={handleDeleteDocument}
-                onEdit={handleEditDocument}
-                onAdd={handleAddDocument}
-                onSendDocument={handleSendDocument}
-                onSendReconciled={handleSendReconciled}
-                pendingSendAttempts={pendingSendAttempts.current}
-                onReturnToSender={handleReturnToSender}
-                onVerifyDocument={handleVerifyDocument}
-                onResubmitDocument={handleResubmitDocument}
-                onProcessDocument={handleProcessDocument}
-                onArchiveDocument={handleArchiveDocument}
-                onResendSenderNotification={handleResendSenderNotification}
-                onNotify={notifyUser}
-              />
-            );
           case 'archives':
             return (
               <ArchiveList
+                key={currentUser.id + currentRole}
                 initialDocumentId={archiveFocus}
                 archives={visibleArchives}
                 documents={visibleDocuments}
@@ -1323,39 +1330,15 @@ function App() {
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
                 onProcessDocument={handleProcessDocument}
+                onWorkflowAction={handleWorkflowAction}
+                workflowDrafts={workflowDrafts.current}
                 onArchiveDocument={handleArchiveDocument}
                 onResendSenderNotification={handleResendSenderNotification}
                 focusDocumentId={documentFocusId}
+                focusedDelivery={focusedDelivery}
                 onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
                 autoOpenCreate={currentPage === 'add-document'}
-                onNotify={notifyUser}
-              />
-            );
-          case 'transmissions':
-            return (
-              <DocumentList
-                key={"documents-fallback-{documentFocusKey}"}
-                documents={visibleDocuments}
-                transmissions={[]}
-                offices={offices}
-                users={users}
-                documentTypes={documentTypes}
-                senderNotifications={senderNotifications}
-                currentUser={currentUser}
-                currentRole={currentRole}
-                onDelete={handleDeleteDocument}
-                onEdit={handleEditDocument}
-                onAdd={handleAddDocument}
-                onSendDocument={handleSendDocument}
-                onSendReconciled={handleSendReconciled}
-                pendingSendAttempts={pendingSendAttempts.current}
-                onReturnToSender={handleReturnToSender}
-                onVerifyDocument={handleVerifyDocument}
-                onResubmitDocument={handleResubmitDocument}
-                onProcessDocument={handleProcessDocument}
-                onArchiveDocument={handleArchiveDocument}
-                onResendSenderNotification={handleResendSenderNotification}
                 onNotify={notifyUser}
               />
             );
@@ -1420,9 +1403,12 @@ function App() {
                 onVerifyDocument={handleVerifyDocument}
                 onResubmitDocument={handleResubmitDocument}
                 onProcessDocument={handleProcessDocument}
+                onWorkflowAction={handleWorkflowAction}
+                workflowDrafts={workflowDrafts.current}
                 onArchiveDocument={handleArchiveDocument}
                 onResendSenderNotification={handleResendSenderNotification}
                 focusDocumentId={documentFocusId}
+                focusedDelivery={focusedDelivery}
                 onFocusDocumentConsumed={handleFocusDocumentConsumed}
                 initialStatusFilter={documentStatusFocus}
                 onNotify={notifyUser}
