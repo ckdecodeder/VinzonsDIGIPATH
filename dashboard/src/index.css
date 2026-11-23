@@ -1512,37 +1512,74 @@ body {
   gap: 0.75rem;
 }
 
-@media (min-width: 1441px) {
-  /* Let the side panels size a busy row. The list scrolls inside that space. */
-  .dashboard-priority-grid--busy .dashboard-attention-card {
-    align-self: stretch;
-    contain: size;
-    min-height: 34rem;
-    max-height: none;
-  }
-
-  .dashboard-priority-grid:not(.dashboard-priority-grid--busy) .dashboard-side-stack {
-    display: contents;
-  }
-
-  .dashboard-priority-grid:not(.dashboard-priority-grid--busy) .dashboard-status-card {
-    align-self: start;
-  }
-
-  .dashboard-priority-grid:not(.dashboard-priority-grid--busy) .dashboard-activity-card {
-    grid-column: 1 / -1;
-  }
-
-  .dashboard-priority-grid:not(.dashboard-priority-grid--busy) .activity-list {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: 1rem;
-  }
-
-  .dashboard-priority-grid .status-mini-row {
-    grid-template-columns: minmax(6rem, 8rem) minmax(0, 1fr) 1.5rem;
-  }
+/* Staff home is a short work list with a shared document / transfer register. */
+.staff-dashboard .page-header {
+  align-items: center;
+  min-height: 4rem;
+  padding-block: .65rem;
 }
+.staff-dashboard .page-header h1 { font-size: 1.65rem; }
+.staff-dashboard .page-body { padding-block: .85rem 1rem; }
+.staff-dashboard .stats-grid {
+  gap: 0;
+  margin: 0 0 .75rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.staff-dashboard .stat-card {
+  min-height: 3.35rem;
+  gap: .7rem;
+  padding: .45rem .9rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+.staff-dashboard .stat-card + .stat-card { border-inline-start: 1px solid var(--border); }
+.staff-dashboard .stat-icon { width: 2rem; height: 2rem; }
+.staff-dashboard .stat-icon svg { width: 1.05rem; }
+.staff-dashboard .stat-info { display: flex; align-items: baseline; gap: .55rem; flex-wrap: wrap; }
+.staff-dashboard .stat-value { font-size: 1.25rem; line-height: 1; }
+.staff-dashboard .stat-label { font-size: .8125rem; margin: 0; }
+.staff-dashboard .card { padding: .85rem 1rem; }
+.staff-dashboard .card-header { margin: 0 0 .55rem; }
+.staff-dashboard .dashboard-priority-grid { margin: 0 0 .75rem; gap: .75rem; align-items: start; }
+.staff-dashboard .dashboard-attention-card { max-height: none; }
+.staff-dashboard .attention-list { overflow: visible; padding: 0; }
+.staff-dashboard .attention-item { padding: .42rem .5rem; }
+.staff-dashboard .attention-item-sub { flex-wrap: wrap; }
+.staff-dashboard .attention-item-side { flex-shrink: 0; gap: .1rem; }
+.staff-dashboard .attention-summary-chips { margin: 0 0 .5rem; }
+.staff-dashboard .dashboard-attention-header { margin-bottom: .3rem; padding-bottom: 0 !important; }
+.staff-dashboard .status-mini-bars { padding: 0; gap: .125rem; }
+.staff-dashboard .status-mini-row { min-height: 24px; grid-template-columns: minmax(6rem, 8rem) minmax(0,1fr) 2rem; }
+.staff-dashboard .status-mini-label { white-space: normal; }
+.staff-dashboard .dashboard-records { padding: 0; }
+.dashboard-records .card-header { padding: .45rem .85rem; margin: 0; align-items: center; flex-wrap: wrap; }
+.activity-views { display: flex; gap: .5rem; flex-wrap: wrap; }
+.activity-views button {
+  background: transparent; color: var(--text-secondary); border: 0;
+  border-bottom: 2px solid transparent; padding: .5rem .25rem; cursor: pointer;
+  font: inherit; font-size: .9rem; font-weight: 600;
+}
+.activity-views button[aria-pressed="true"] { color: var(--text-main); border-bottom-color: var(--accent); }
+.dashboard-records .table-container { box-shadow: none; }
+.dashboard-records table { min-width: 0; }
+.dashboard-records :is(th, td) { padding: .4rem .85rem; line-height: 1.35; }
+.dashboard-records td { font-size: .85rem; }
+.dashboard-records td:first-child { overflow-wrap: anywhere; }
+.dashboard-records td:last-child { white-space: nowrap; }
+.dashboard-records .dashboard-transfer-list { padding: .25rem .85rem .65rem; }
+.dashboard-transfer-list .activity-item { border-top: 1px solid var(--border-light); }
+.dashboard-transfer-list .activity-item-body { min-width: 0; }
+.dashboard-transfer-list .transfer-document, .dashboard-transfer-list .activity-text { white-space: normal; overflow-wrap: anywhere; }
+.dashboard-transfer-list .activity-time { display: flex; align-items: center; gap: .3rem; }
+@media (min-width: 1025px) {
+  .staff-dashboard .stats-grid { grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .dashboard-records .dashboard-transfer-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .4rem 1rem; }
+}
+
 
 .attention-title-row {
   display: flex;

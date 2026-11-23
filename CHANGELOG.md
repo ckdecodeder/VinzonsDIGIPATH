@@ -37,6 +37,13 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-23] - Compact the staff dashboard for laptop use
+
+- FIX / LOCAL. Planned from clean main at `d945f69` to measure the existing page at laptop sizes, bring counts forward, shorten the queue and combine the lower panels.
+- **Implementation.** In `dashboard/src/pages/DashboardHome.jsx` and `dashboard/src/index.css`, the shared staff dashboard opens with a compact header and four linked counts. It previews the first four actionable records alongside status totals, with View all opening the role-scoped queue. A single lower panel switches between five priority-sorted documents and four recent transfers. The overview table shows tracking number, subject, priority, status and date. The full record provides additional fields. Removed the earlier busy-queue height rule.
+- **Validation.** On a populated synthetic dashboard at 1366 × 768, vertical page scroll fell from 1,409 to 0 CSS px and the table began at 512 px instead of 1,447 px. At 1280 × 720, scroll fell from 1,579 to 27 px. A 1536 × 864 busy case and quiet and empty cases at 1366 × 768 fit vertically. Chromium checked light and dark layouts, switching to transfers and opening previews, and longer synthetic records at actual 100% and 80% zoom. All 123 dashboard tests and the production build passed. Results and previews are local in `backend/pgdata/dashboard-laptop-20261123/`.
+- **Publication and recovery.** Local on main. No commit, push, deployment or data/configuration change. Restore the DashboardHome and dashboard stylesheet changes in this batch together to recover the prior overview. User acceptance on the physical laptop remains pending.
+
 ## [2026-11-23] - Use the space beneath the dashboard action queue
 
 - FIX / LOCAL. Planned from clean `main` at `6584934` to adapt the Dashboard Home grid to queue volume and measure populated, sparse and empty states.

@@ -1,14 +1,13 @@
 import { countWorkflowStatuses, getWorkflowStatus, workflowStatusColors } from '../utils/documentWorkflow.js';
 import { manilaDate } from '../utils/philippinesDateTime.js';
 import { getDocumentNextAction, matchesQueue } from '../utils/documentQueue';
-import React from "react";
+import React, { useState } from "react";
 import {
   FileText,
   ArrowRightLeft,
   Archive,
   ArrowRight,
   Inbox,
-  Send,
   Flag,
   CheckCircle2,
   Clock,
@@ -33,6 +32,7 @@ const AdminDashboard = ({
   onStatusSelect,
   currentUser,
 }) => {
+  const [activityView, setActivityView] = useState("documents");
   const statusCounts = countWorkflowStatuses(documents);
   const totalDocs = documents.length;
   const documentsReady = dataStates.documents?.status === 'ready';
@@ -134,9 +134,8 @@ const AdminDashboard = ({
       if (pDiff !== 0) return pDiff;
       return compareNewest(a, b, ["createdAt", "updatedAt", "dateReceived"]);
     })
-    .slice(0, 6);
+    .slice(0, 5);
 
-  const welcomeName = currentUser ? currentUser.fname : "Admin";
   const canScan =
     currentUser?.role === "Admin" || currentUser?.role === "Receptionist";
   const canCreateDocument =
@@ -145,11 +144,6 @@ const AdminDashboard = ({
   const getOfficeName = (officeId) => {
     const office = offices.find((o) => o.id === officeId);
     return office ? office.name : "Unknown Office";
-  };
-
-  const getDocTypeName = (typeId) => {
-    const docType = documentTypes.find((d) => d.id === typeId);
-    return docType ? docType.category : "Unknown";
   };
 
   const openDocumentInterface = (doc) => {
@@ -170,25 +164,12 @@ const AdminDashboard = ({
     onNavigate("documents");
   };
 
-  const handleKeyboardOpen = (event, action) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      action();
-    }
-  };
-
   return (
-    <PageShell
+    <PageShell className="staff-dashboard"
       header={
-        <div className="page-header page-header--align-bottom">
+        <div className="page-header">
           <div className="page-header-left">
             <h1>Dashboard</h1>
-            <p>
-              Welcome back, {welcomeName}.{" "}
-              {currentUser?.role === "Office"
-                ? "Send documents to reception or other offices and track their progress."
-                : "Focus on newly received documents that need action first."}
-            </p>
           </div>
           <div className="page-header-actions">
             {canScan && (
@@ -211,10 +192,20 @@ const AdminDashboard = ({
         </div>
       }
     >
-      {/* Action queue (primary) + compact status / activity */}
-      <div className={actionQueueReady && attentionDocuments.length >= 8
-        ? 'dashboard-priority-grid dashboard-priority-grid--busy'
-        : 'dashboard-priority-grid'}>
+      <div className="stats-grid" role="group" aria-label="Document totals">
+        {statCards.map(stat => (
+          <button key={stat.label} type="button" className={`stat-card ${stat.color}`}
+            title={`Open ${stat.label}`}
+            onClick={() => stat.status ? openStatusInterface(stat.status) : onNavigate(stat.page)}>
+            <span className={`stat-icon ${stat.color}`} aria-hidden="true">{stat.icon}</span>
+            <span className="stat-info">
+              <span className="stat-value">{stat.value}</span>
+              <span className="stat-label">{stat.label}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="dashboard-priority-grid">
         <div className="card dashboard-attention-card">
           <div className="card-header dashboard-attention-header">
             <div>
@@ -224,43 +215,7 @@ const AdminDashboard = ({
                   <span className="attention-count-pill">{actionQueueCount}</span>
                 )}
               </div>
-              <p className="attention-header-meta">
-                Available next steps for your role. Other records remain available for tracking.
-              </p>
-              <div className="attention-summary-chips">
-                <button
-                  type="button"
-                  className="attention-chip attention-chip--received"
-                  disabled={!actionQueueReady}
-                  onClick={() => openStatusInterface("Newly received")}
-                >
-                  <Inbox size={13} />
-                  {actionQueueReady ? newlyReceivedCount : '—'} newly received
-                </button>
-                <button
-                  type="button"
-                  className="attention-chip attention-chip--review"
-                  disabled={!actionQueueReady}
-                  onClick={() => openStatusInterface("Pending review")}
-                >
-                  <AlertTriangle size={13} />
-                  {actionQueueReady ? pendingReviewCount : '—'} pending review
-                </button>
-                <button
-                  type="button"
-                  className="attention-chip attention-chip--urgent"
-                  disabled={!actionQueueReady}
-                  onClick={() => openStatusInterface("Urgent active")}
-                >
-                  <Flag size={13} />
-                  {actionQueueReady ? urgentCount : '—'} urgent
-                </button>
-                {['Admin', 'Mayor'].includes(currentUser?.role) && (
-                  <button type="button" className="attention-chip" disabled={!actionQueueReady} onClick={() => openStatusInterface('Ready to archive')}>
-                    <Archive size={13} /> {actionQueueReady ? readyToArchiveCount : '—'} ready to archive
-                  </button>
-                )}
-              </div>
+
             </div>
             <button
               className="btn btn-ghost btn-sm"
@@ -271,6 +226,40 @@ const AdminDashboard = ({
             </button>
           </div>
 
+          <div className="attention-summary-chips">
+            <button
+              type="button"
+              className="attention-chip attention-chip--received"
+              disabled={!actionQueueReady}
+              onClick={() => openStatusInterface("Newly received")}
+            >
+              <Inbox size={13} />
+              {actionQueueReady ? newlyReceivedCount : '—'} newly received
+            </button>
+            <button
+              type="button"
+              className="attention-chip attention-chip--review"
+              disabled={!actionQueueReady}
+              onClick={() => openStatusInterface("Pending review")}
+            >
+              <AlertTriangle size={13} />
+              {actionQueueReady ? pendingReviewCount : '—'} pending review
+            </button>
+            <button
+              type="button"
+              className="attention-chip attention-chip--urgent"
+              disabled={!actionQueueReady}
+              onClick={() => openStatusInterface("Urgent active")}
+            >
+              <Flag size={13} />
+              {actionQueueReady ? urgentCount : '—'} urgent
+            </button>
+            {['Admin', 'Mayor'].includes(currentUser?.role) && (
+              <button type="button" className="attention-chip" disabled={!actionQueueReady} onClick={() => openStatusInterface('Ready to archive')}>
+                <Archive size={13} /> {actionQueueReady ? readyToArchiveCount : '—'} ready to archive
+              </button>
+            )}
+          </div>
           <div className="attention-list">
             {!actionQueueReady ? (
               <div className="attention-empty" role="status">
@@ -285,7 +274,7 @@ const AdminDashboard = ({
                 <span>Documents awaiting another office remain available in All Documents.</span>
               </div>
             ) : (
-              attentionDocuments.slice(0, 12).map((doc) => {
+              attentionDocuments.slice(0, 4).map((doc) => {
                 const status = getWorkflowStatus(doc);
                 const pInfo = getPriorityInfo(doc.priorityLevel);
                 const isNewReceived =
@@ -324,7 +313,7 @@ const AdminDashboard = ({
                       </p>
                     </div>
                     <div className="attention-item-side">
-                      <span
+                      {doc.priorityLevel && doc.priorityLevel !== "normal" && <span
                         style={{
                           display: "inline-flex",
                           alignItems: "center",
@@ -339,7 +328,7 @@ const AdminDashboard = ({
                       >
                         <Flag size={9} />
                         {pInfo.label}
-                      </span>
+                      </span>}
                       <span
                         className={`status-badge status-${status.toLowerCase().replace(/\s+/g, "-")}`}
                       >
@@ -356,209 +345,147 @@ const AdminDashboard = ({
           </div>
         </div>
 
-        <div className="dashboard-side-stack">
-          <div className="card dashboard-status-card dashboard-status-card--mini">
-            <div className="card-header">
-              <h2 className="card-title">Status overview</h2>
-              <span className="status-mini-total">{documentsReady ? totalDocs : '—'} docs</span>
-            </div>
-            <div className="status-mini-bars">
-              {!documentsReady && <p className="attention-empty-inline" role="status">{dataStates.documents?.status === 'error' ? 'Document totals unavailable.' : 'Loading document totals…'}</p>}
-              {Object.entries(statusCounts)
-                .filter(([, count]) => count > 0)
-                .map(([label, count]) => {
-                  const pct = (count / totalDocs) * 100;
-                  return (
-                    <button
-                      key={label}
-                      type="button"
-                      className="status-mini-row"
-                      onClick={() => openStatusInterface(label)}
-                      title={`Show ${label} documents`}
-                    >
-                      <span className="status-mini-label">{label}</span>
-                      <span className="status-mini-track">
-                        <span
-                          className="status-mini-fill"
-                          style={{ width: `${pct}%`, background: Object.hasOwn(workflowStatusColors, label) ? workflowStatusColors[label] : 'var(--text-muted)' }}
-                        />
-                      </span>
-                      <span className="status-mini-count">{count}</span>
-                    </button>
-                  );
-                })}
-              {documentsReady && totalDocs === 0 && (
-                <p className="attention-empty-inline">No documents yet.</p>
-              )}
-            </div>
+        <div className="card dashboard-status-card dashboard-status-card--mini">
+          <div className="card-header">
+            <h2 className="card-title">Status overview</h2>
+            <span className="status-mini-total">{documentsReady ? totalDocs : '—'} docs</span>
           </div>
-
-          <div className="card dashboard-activity-card">
-            <div className="card-header">
-              <h2 className="card-title">Recent transfers</h2>
-              <button
-                className="btn btn-ghost btn-sm"
-                onClick={() => onNavigate("logs")}
-              >
-                Activity log <ArrowRight size={14} />
-              </button>
-            </div>
-            <div className="activity-list">
-              {recentTransmissions.length === 0 ? (
-                <p className="attention-empty-inline" role="status">
-                  {dataStates.transmissions?.status === 'ready' ? 'No recent transfers.'
-                    : dataStates.transmissions?.status === 'error' ? 'Recent transfers unavailable.' : 'Loading recent transfers…'}
-                </p>
-              ) : (
-                recentTransmissions.map(t => {
-                  const doc = documents.find(item => item.id === t.documentId);
-                  return (
-                    <div key={t.id} className="activity-item">
-                      <div className="activity-item-body">
-                        {doc ? (
-                          <button className="row-open-control transfer-document" type="button" onClick={() => openDocumentInterface(doc)}>
-                            {doc.trackingNumber || doc.id} · {doc.subject || 'Open document'}
-                          </button>
-                        ) : <strong>{t.documentId || 'Document'}</strong>}
-                        <p className="activity-text">{getOfficeName(t.fromOfficeId)} → <strong>{getOfficeName(t.toOfficeId)}</strong></p>
-                        <p className="activity-time">
-                          <Clock size={12} /> {manilaDate(t.transmissionDate || '') || 'Date unrecorded'} · {t.receivedBy ? 'Received' : 'Awaiting receipt'}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="stats-grid">
-        {statCards.map((stat, i) => {
-          const openStat = () =>
-            stat.status
-              ? openStatusInterface(stat.status)
-              : onNavigate(stat.page);
-          return (
-            <div
-              key={i}
-              className={`stat-card ${stat.color} clickable-row`}
-              role="button"
-              tabIndex={0}
-              onClick={openStat}
-              onKeyDown={(event) => handleKeyboardOpen(event, openStat)}
-              title={`Open ${stat.label}`}
-            >
-              <div className={`stat-icon ${stat.color}`}>{stat.icon}</div>
-              <div className="stat-info">
-                <p className="stat-label">{stat.label}</p>
-                <p className="stat-value">{stat.value}</p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Recent Documents Table */}
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h2 className="card-title">Recent Documents</h2>
-            <p className="card-subtitle">
-              Latest documents — sorted by priority
-            </p>
-          </div>
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => onNavigate("documents")}
-          >
-            View All <ArrowRight size={14} />
-          </button>
-        </div>
-        <div
-          className="table-container"
-          style={{ border: "none", borderRadius: 0 }}
-        >
-          <table>
-            <thead>
-              <tr>
-                <th>Tracking #</th>
-                <th>Subject</th>
-                <th>Priority</th>
-                <th>Type</th>
-                <th>Sender</th>
-                <th>Direction</th>
-                <th>Status</th>
-                <th>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentDocs.map((doc) => {
-                const pInfo = getPriorityInfo(doc.priorityLevel);
+          <div className="status-mini-bars">
+            {!documentsReady && <p className="attention-empty-inline" role="status">{dataStates.documents?.status === 'error' ? 'Document totals unavailable.' : 'Loading document totals…'}</p>}
+            {Object.entries(statusCounts)
+              .filter(([, count]) => count > 0)
+              .map(([label, count]) => {
+                const pct = (count / totalDocs) * 100;
                 return (
-                  <tr
-                    key={doc.id}
-                    className="clickable-row"
-                    onClick={() => openDocumentInterface(doc)}
-                    title="Open document details"
+                  <button
+                    key={label}
+                    type="button"
+                    className="status-mini-row"
+                    onClick={() => openStatusInterface(label)}
+                    title={`Show ${label} documents`}
                   >
-                    <td>
-                      <button type="button" className="row-open-control td-mono" aria-label={`Open document ${doc.subject}`} onClick={event => { event.stopPropagation(); openDocumentInterface(doc); }}>{doc.trackingNumber}</button>
-                    </td>
-                    <td className="td-primary">{doc.subject}</td>
-                    <td>
+                    <span className="status-mini-label">{label}</span>
+                    <span className="status-mini-track">
                       <span
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "0.25rem",
-                          padding: "0.15rem 0.5rem",
-                          borderRadius: "9999px",
-                          fontSize: "0.75rem",
-                          fontWeight: 600,
-                          background: pInfo.bg,
-                          color: pInfo.color,
-                        }}
-                      >
-                        <Flag size={10} />
-                        {pInfo.label}
-                      </span>
-                    </td>
-                    <td>{getDocTypeName(doc.documentTypeId)}</td>
-                    <td style={{ fontSize: "0.8rem" }}>
-                      {doc.senderName || "—"}
-                    </td>
-                    <td>
-                      <span
-                        className={`direction-badge direction-${doc.documentDirection.toLowerCase()}`}
-                      >
-                        {doc.documentDirection === "Incoming" ? (
-                          <Inbox size={12} />
-                        ) : (
-                          <Send size={12} />
-                        )}{" "}
-                        {doc.documentDirection}
-                      </span>
-                    </td>
-                    <td>
-                      <span
-                        className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, "-")}`}
-                      >
-                        {getWorkflowStatus(doc)}
-                      </span>
-                    </td>
-                    <td style={{ color: "var(--text-muted)" }}>
-                      {manilaDate(doc.dateReceived || "") || "—"}
-                    </td>
-                  </tr>
+                        className="status-mini-fill"
+                        style={{ width: `${pct}%`, background: Object.hasOwn(workflowStatusColors, label) ? workflowStatusColors[label] : 'var(--text-muted)' }}
+                      />
+                    </span>
+                    <span className="status-mini-count">{count}</span>
+                  </button>
                 );
               })}
-            </tbody>
-          </table>
+            {documentsReady && totalDocs === 0 && (
+              <p className="attention-empty-inline">No documents yet.</p>
+            )}
+          </div>
         </div>
       </div>
+
+      <section className="card dashboard-records" aria-label="Recent activity">
+        <div className="card-header">
+          <div className="activity-views" role="group" aria-label="Dashboard activity views">
+            <button type="button" aria-pressed={activityView === "documents"} onClick={() => setActivityView("documents")}>Documents by priority</button>
+            <button type="button" aria-pressed={activityView === "transfers"} onClick={() => setActivityView("transfers")}>Recent transfers</button>
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => onNavigate(activityView === "documents" ? "documents" : "logs")}>
+            {activityView === "documents" ? "View documents" : "Activity log"} <ArrowRight size={14} />
+          </button>
+        </div>
+        {activityView === "transfers" ? (
+          <div className="activity-list dashboard-transfer-list">
+            {recentTransmissions.length === 0 ? (
+              <p className="attention-empty-inline" role="status">
+                {dataStates.transmissions?.status === 'ready' ? 'No recent transfers.'
+                  : dataStates.transmissions?.status === 'error' ? 'Recent transfers unavailable.' : 'Loading recent transfers…'}
+              </p>
+            ) : (
+              recentTransmissions.map(t => {
+                const doc = documents.find(item => item.id === t.documentId);
+                return (
+                  <div key={t.id} className="activity-item">
+                    <div className="activity-item-body">
+                      {doc ? (
+                        <button className="row-open-control transfer-document" type="button" onClick={() => openDocumentInterface(doc)}>
+                          {doc.trackingNumber || doc.id} · {doc.subject || 'Open document'}
+                        </button>
+                      ) : <strong>{t.documentId || 'Document'}</strong>}
+                      <p className="activity-text">{getOfficeName(t.fromOfficeId)} → <strong>{getOfficeName(t.toOfficeId)}</strong></p>
+                      <p className="activity-time">
+                        <Clock size={12} /> {manilaDate(t.transmissionDate || '') || 'Date unrecorded'} · {t.receivedBy ? 'Received' : 'Awaiting receipt'}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        ) : (
+          <div
+            className="table-container"
+            style={{ border: "none", borderRadius: 0 }}
+          >
+            <table aria-label="Documents sorted by priority, then newest first">
+              <thead>
+                <tr>
+                  <th>Tracking #</th>
+                  <th>Subject</th>
+                  <th>Priority</th>
+                  <th>Status</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentDocs.length === 0 && <tr><td colSpan={5}>{documentsReady ? "No documents yet." : dataStates.documents?.status === "error" ? "Recent documents unavailable." : "Loading recent documents…"}</td></tr>}
+                {recentDocs.map((doc) => {
+                  const pInfo = getPriorityInfo(doc.priorityLevel);
+                  return (
+                    <tr
+                      key={doc.id}
+                      className="clickable-row"
+                      onClick={() => openDocumentInterface(doc)}
+                      title="Open document details"
+                    >
+                      <td>
+                        <button type="button" className="row-open-control td-mono" aria-label={`Open document ${doc.subject}`} onClick={event => { event.stopPropagation(); openDocumentInterface(doc); }}>{doc.trackingNumber}</button>
+                      </td>
+                      <td className="td-primary">{doc.subject}</td>
+                      <td>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "0.25rem",
+                            padding: "0.15rem 0.5rem",
+                            borderRadius: "9999px",
+                            fontSize: "0.75rem",
+                            fontWeight: 600,
+                            background: pInfo.bg,
+                            color: pInfo.color,
+                          }}
+                        >
+                          <Flag size={10} />
+                          {pInfo.label}
+                        </span>
+                      </td>
+                      <td>
+                        <span
+                          className={`status-badge status-${getWorkflowStatus(doc).toLowerCase().replace(/\s+/g, "-")}`}
+                        >
+                          {getWorkflowStatus(doc)}
+                        </span>
+                      </td>
+                      <td style={{ color: "var(--text-muted)" }}>
+                        {manilaDate(doc.dateReceived || "") || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </PageShell>
   );
 };
