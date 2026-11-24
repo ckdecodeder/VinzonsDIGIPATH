@@ -37,6 +37,18 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-24] - Extend skeleton feedback across pages and roles
+
+- FIX / LOCAL. Planned on main at d33ae36 on top of the existing loading changes. LoadingSkeleton now serves the shared staff section indicator, lazy page fallback, blocked collection views, report results, initial activity results and public tracking lookup. Background collection refreshes use the small update indicator once data has loaded. Existing retry actions and report generation gates remain in effect.
+- Validation passed for 123 dashboard tests, production build, 12 synthetic Chrome combinations (Dashboard, Documents and Reports across all four staff roles), public lookup and three report readiness states. Local evidence is in backend/pgdata/shared-loading-20261124. No production configuration, data change or publication. Revert the shared skeleton integration as a unit with its CSS to recover the previous Reports-only version. Live staff acceptance pending.
+
+## [2026-11-24] - Simplify section loading feedback
+
+- Design-hook follow-up. Reviewed the pre-existing Arial stack in the standalone printable claim slip. Recorded a file-scoped overused-font exception for Arial in .impeccable/config.json. The hook CLI confirmed the scope. Remove that entry to restore the warning. Local configuration only.
+
+- FIX / LOCAL. Planned on clean main at d33ae36 to consolidate pending section notices and show a report placeholder. DataSectionStatus now announces one short update while any section loads. Each failed section retains its error and targeted Retry. ReportsPage shows a static, decorative skeleton while required data loads. The existing report readiness checks still govern generation. Styling is in dashboard/src/index.css.
+- Passed 123 dashboard tests, the production build, and three synthetic Chrome states (all pending, mixed failure and loading, all ready). Verified indicator count, skeleton visibility, retry visibility and Preview availability. Evidence is local in backend/pgdata/report-loading-20261124. No data, configuration, commit, push or deployment changes. Revert the three dashboard files for rollback. Live staff acceptance pending.
+
 ## [2026-11-24] - Repair Reception dashboard clipping
 
 - FIX / LOCAL. Planned on clean main at 442ce88 to repair tabs and clipped record details when a correction adds a fifth section. Updated the Reception-only CSS so sections and list rows size to their contents and the page scrolls when needed. Chrome checks at 1366 and 1920 px with and without a correction found 24 px below the tab buttons, all row sublines inside their records, and all three views selectable. Production build passed. Synthetic screenshots are in the ignored backend/pgdata/reception-layout-20261124 directory. No data changes or publication. Revert the Reception layout CSS diff to roll back. Live-account acceptance remains pending.

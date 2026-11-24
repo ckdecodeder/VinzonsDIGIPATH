@@ -1,4 +1,5 @@
 import { countWorkflowStatuses, getWorkflowStatus, workflowStatusColors } from '../utils/documentWorkflow.js';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useId } from 'react';
 import PageShell from '../components/PageShell';
 import ModalOverlay from '../components/ModalOverlay';
@@ -676,9 +677,9 @@ const ReportsPage = ({
       </div>
 
       {/* ==================== SUMMARY ==================== */}
-      {!reportDataReady && <div className="alert" role="status">
-        {reportDataFailed ? 'Report data is unavailable. Retry the failed sections above before generating a report.' : 'Loading report data. Results and report actions will be available when the required sections finish loading.'}
-      </div>}
+      {!reportDataReady && (reportDataFailed
+        ? <p className="alert">Report data is unavailable. Retry the failed sections above.</p>
+        : <LoadingSkeleton />)}
       {reportAvailable && <>
       {activeCategory === 'summary' && (
         <div>

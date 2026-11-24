@@ -1,4 +1,5 @@
 import { formatPhilippinesDateTime as formatTimestamp } from '../utils/philippinesDateTime.js';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 import React, { useEffect, useState } from "react";
 import PageShell from "../components/PageShell";
 import {
@@ -335,6 +336,7 @@ const ActivityLogs = ({ logs = [], users = defaultUsers, scoped = false }) => {
       }
     >
       {invalidDateRange && <p id="log-date-error" role="alert" className="field-error">Choose an end date on or after the start date.</p>}
+      {!invalidDateRange && loading && !result.items.length && <LoadingSkeleton />}
       {!invalidDateRange && (loading || error) && <div role="status" className="page-content-alert">
         {loading ? 'Loading activity logs…' : error}
         {error && <button className="btn btn-secondary btn-sm" onClick={() => setRevision((value) => value + 1)}>Retry</button>}

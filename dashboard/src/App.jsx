@@ -39,6 +39,7 @@ import {
 } from './api/documentService';
 import { toDocumentSummary } from './api/pagination.mjs';
 import { bootstrapApiBase } from './api/apiBase';
+import LoadingSkeleton from './components/LoadingSkeleton';
 import DataSectionStatus from './components/DataSectionStatus';
 import PageShell from './components/PageShell';
 import { sortNewest } from './utils/sorting';
@@ -1462,10 +1463,12 @@ function App() {
             try { await bootstrapApiBase({ force: true }); } catch { /* Section retry reports connection failure. */ }
             loadData({ keys: [key], force: true });
           }} />
-          <Suspense fallback={<div role="status" className="page-content-loading">Loading page…</div>}>
+          <Suspense fallback={<div role="status" className="page-content-loading"><LoadingSkeleton compact /> Loading page…</div>}>
             {showCollectionPage ? renderPage() : (
               <PageShell header={<div className="page-header"><div className="page-header-left"><h1>{primaryPageCollection[2]}</h1></div></div>}>
-                <p role="status">Results will appear when this section is available.</p>
+                {sectionStates[primaryPageCollection[1]]?.status === 'error' || (currentPage === 'archives' && sectionStates.documents?.status === 'error')
+                  ? <p role="status">Results unavailable. Retry the failed section above.</p>
+                  : <LoadingSkeleton />}
               </PageShell>
             )}
           </Suspense>

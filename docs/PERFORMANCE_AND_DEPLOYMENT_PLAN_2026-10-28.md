@@ -301,6 +301,10 @@ Begin after the local acceptance criteria pass.
 
 ## Checkpoint tracker
 
+24 November shared skeleton follow-up. First-load indicators now cover the signed-in shell for all roles and public tracking. Local build, dashboard suite and synthetic browser role checks passed. Publication pending.
+
+24 November loading feedback follow-up. A single status line and inline report skeleton passed local pending, failure and ready browser checks. See CHANGELOG.md for validation and recovery. Publication pending.
+
 Reception dashboard follow-up, 24 November. The local CSS repair for clipped tabs and rows passed the production build and four desktop browser cases. Publication is pending.
 
 | Checkpoint | Status |

@@ -1,16 +1,19 @@
+import LoadingSkeleton from './LoadingSkeleton';
 import React from 'react';
 
 const names = { documentTypes: 'Document types', deviceEvents: 'Device events', senderNotifications: 'Sender notifications' };
 export default function DataSectionStatus({ keysToShow, states, onRetry }) {
   const pending = keysToShow.filter((key) => states[key]?.status !== 'ready');
   if (!pending.length) return null;
-  return <div className="data-section-status" aria-live="polite" style={{ marginBottom: '1rem' }}>
-    {pending.map((key) => {
-      const failed = states[key]?.status === 'error';
-      return <div key={key} role={failed ? 'alert' : 'status'} style={{ padding: '0.4rem 0', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-        <span><strong>{names[key] || key.charAt(0).toUpperCase() + key.slice(1)}:</strong>{' '}
-          {failed ? states[key].error : 'Loading…'} Results for this section are not current until loaded; previously loaded records may remain visible.</span>
-        {failed && <button className="btn btn-secondary btn-sm" onClick={() => onRetry(key)}>Retry</button>}
+  const failures = pending.filter(key => states[key]?.status === 'error');
+  const firstLoad = pending.some(key => key !== 'notifications' && !states[key]?.hasLoaded && states[key]?.status !== 'error');
+  return <div className="data-section-status">
+    {pending.length > failures.length && <span className="section-loading" role="status">{firstLoad ? <><LoadingSkeleton compact />Loading data…</> : 'Updating data…'}</span>}
+    {failures.map(key => {
+      const label = names[key] || key.charAt(0).toUpperCase() + key.slice(1);
+      return <div key={key} className="section-load-error">
+        <span role="alert"><strong>{label}</strong> · {states[key].error || 'Could not load data.'} Displayed records may be out of date.</span>
+        <button type="button" className="btn btn-secondary btn-sm" aria-label={`Retry ${label}`} onClick={() => onRetry(key)}>Retry</button>
       </div>;
     })}
   </div>;

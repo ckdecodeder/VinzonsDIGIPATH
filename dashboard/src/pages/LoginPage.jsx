@@ -4,6 +4,7 @@ import { AlertCircle, ArrowRight, CheckCircle2, Clock, Eye, EyeOff, FileText, Fl
 import { authService, trackingService } from '../api/documentService';
 import { watchTrackingNumber } from '../utils/publicTracking';
 import { formatPhilippinesDateTime, formatPhilippinesDateParts } from '../utils/philippinesDateTime';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 import ModalOverlay from '../components/ModalOverlay';
 import ThemeToggle from '../components/ThemeToggle';
 
@@ -232,6 +233,7 @@ const LoginPage = ({ onLogin, systemMessage = '' }) => {
               </button>
             </div>
             <div className="modal-body">
+              {isTracking && !trackingResult && <LoadingSkeleton />}
               {isTracking && <p role="status">{trackingResult ? 'Refreshing status…' : 'Looking up document…'}</p>}
               {trackingError && (
                 <div className="login-tracking-message danger" role="alert">
