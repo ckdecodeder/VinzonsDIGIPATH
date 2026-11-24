@@ -37,6 +37,10 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-24] - Repair Reception dashboard clipping
+
+- FIX / LOCAL. Planned on clean main at 442ce88 to repair tabs and clipped record details when a correction adds a fifth section. Updated the Reception-only CSS so sections and list rows size to their contents and the page scrolls when needed. Chrome checks at 1366 and 1920 px with and without a correction found 24 px below the tab buttons, all row sublines inside their records, and all three views selectable. Production build passed. Synthetic screenshots are in the ignored backend/pgdata/reception-layout-20261124 directory. No data changes or publication. Revert the Reception layout CSS diff to roll back. Live-account acceptance remains pending.
+
 ## [2026-11-23] - Restore the dashboard header and ease row density
 
 - FIX / LOCAL. Planned from clean main at `ebf0dda` to restore the earlier staff dashboard header and ease row density while preserving the current arrangement.

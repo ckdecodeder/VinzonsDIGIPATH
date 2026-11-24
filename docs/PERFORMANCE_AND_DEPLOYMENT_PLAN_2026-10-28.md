@@ -301,6 +301,8 @@ Begin after the local acceptance criteria pass.
 
 ## Checkpoint tracker
 
+Reception dashboard follow-up, 24 November. The local CSS repair for clipped tabs and rows passed the production build and four desktop browser cases. Publication is pending.
+
 | Checkpoint | Status |
 | --- | --- |
 | Audit and source evidence available | Complete |
