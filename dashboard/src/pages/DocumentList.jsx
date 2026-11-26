@@ -1232,10 +1232,10 @@ const DocumentList = ({
                   >
                     <td data-label="Document">
                       <div className="document-row-heading">
+                        {doc.priorityLevel === 'urgent' && <span className="document-row-priority" role="img" aria-label="Urgent" title="Urgent">!</span>}
                         <strong>{doc.subject}</strong>
-                        {doc.priorityLevel === 'urgent' && <span className="document-row-priority">Urgent</span>}
+                        <small className="doc-reference">{doc.trackingNumber}</small>
                       </div>
-                      <small className="doc-reference">{doc.trackingNumber}</small>
                     </td>
                     <td data-label="Holding office">{doc.currentOfficeId ? getOfficeName(doc.currentOfficeId) : 'Unrecorded'}</td>
                     <td data-label="Status"><span className={`status-badge ${tableStatus.className}`}>{tableStatus.label}</span></td>

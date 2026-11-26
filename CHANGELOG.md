@@ -37,6 +37,10 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-27] - Mark urgent documents beside the subject
+
+- FIX / LOCAL on main at 508d4cb. DocumentList.jsx and index.css place a red exclamation mark labeled Urgent before the subject, with the same space reserved on ordinary rows. Tracking numbers align under subjects. All 123 dashboard tests and the production build passed. Browser verification pending. No deployment or data change. Revert the document cell markup and corresponding grid styles together for rollback.
+
 ## [2026-11-27] - Align urgent tags across document rows
 
 - FIX / LOCAL on main at d9a28e9. Changed the shared document heading to a two-column grid. Subjects wrap in the first column and Urgent tags align to the right edge in the second. Dashboard production build passed. Browser verification pending. No deployment or data changes. Restore the previous flex heading rule to roll back.

@@ -9681,30 +9681,18 @@ body.modal-open .notification-dock {
 .doc-reference { display: block; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .document-row-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-columns: .7rem minmax(0, 1fr);
   align-items: baseline;
-  gap: .2rem .5rem;
-  margin-bottom: .2rem;
+  gap: .2rem .35rem;
 }
+.document-row-heading > strong,
+.document-row-heading > .doc-reference { grid-column: 2; }
 .document-row-heading strong { min-width: 0; overflow-wrap: anywhere; }
 .document-row-priority {
-  display: inline-flex;
-  align-items: center;
-  gap: .3rem;
-  padding: .1rem .4rem;
-  border-radius: .25rem;
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-  color: var(--text-main);
-  font-size: .75rem;
-  font-weight: 600;
-  line-height: 1.35;
-}
-.document-row-priority::before {
-  content: "";
-  width: .35rem;
-  height: .35rem;
-  border-radius: 50%;
-  background: var(--danger);
+  grid-area: 1 / 1;
+  justify-self: center;
+  color: var(--danger);
+  font-weight: 800;
 }
 .list-sort { background: transparent; color: inherit; border: 0; font: inherit; cursor: pointer; }
 .archive-review { display: grid; gap: .65rem; padding: 1rem; margin-bottom: 1rem; background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius-md); }
