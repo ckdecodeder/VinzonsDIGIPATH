@@ -37,6 +37,17 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-27] - Align dashboard header actions
+
+- FIX / LOCAL on main at 2365ba9. Centered header actions in ReceptionistDashboard and the shared DashboardHome. Removed the Receptionist offset and preserved narrow-screen stacking. Logged item 3 in the manual audit note.
+- All 123 dashboard tests and the production build passed. Browser retest pending for each account role. No data or configuration impact. No commit, push or deployment. Revert the two header class changes and their CSS rules together for recovery.
+
+## [2026-11-27] - Start the manual audit fix log
+
+- DOCS / LOCAL on main. Logged the screenshot-reported dashboard preview duplication across account roles, with direct record opening and role-specific retests as acceptance criteria. Implementation pending.
+
+- DOCS / LOCAL on main. Added the [manual audit fix log](docs/MANUAL_AUDIT_FIX_LOG.md) with the Engineering-to-Mayor requested-action gap and a proposed retest. Source finding recorded; manual reproduction and implementation pending. Documentation only. Remove the note and this entry to revert.
+
 ## [2026-11-27] - Enforce the registered receiving office
 
 - FIX / LOCAL on main at 3a84862. Planned and implemented the first Figure 5 receipt check. New registrations retain the receiving office across handoffs. Primary receipt and promotion of an already received copy record fulfillment. Resubmission resets fulfillment. Completion and new archive creation check it; Documents, archive selection and the action queue reflect the restriction. Historical multi-stop plans without a saved destination require review.

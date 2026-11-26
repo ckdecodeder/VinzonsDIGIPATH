@@ -240,7 +240,7 @@ const ReceptionistDashboard = ({
 
   return (
     <div className="receptionist-dashboard">
-      <div className="page-header page-header--align-bottom">
+      <div className="page-header">
         <div className="page-header-left">
           <h1>Receptionist Dashboard</h1>
           <p>Scan, receive, and track external documents for Mayor's Office</p>

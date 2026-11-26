@@ -8288,8 +8288,9 @@ body.modal-open .notification-dock {
   margin-right: calc(var(--notification-dock-offset) - 2rem);
 }
 
-.receptionist-dashboard .page-header.page-header--align-bottom .page-header-actions {
-  top: 1.15rem;
+.staff-dashboard .page-header,
+.receptionist-dashboard .page-header {
+  align-items: center;
 }
 
 .receptionist-dashboard .page-header-left h1 {
@@ -8693,13 +8694,13 @@ body.modal-open .notification-dock {
     overflow-y: hidden;
   }
 
+  .staff-dashboard .page-header,
   .receptionist-dashboard .page-header {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .receptionist-dashboard .page-header.page-header--align-bottom .page-header-actions {
-    top: 0;
+  .receptionist-dashboard .page-header .page-header-actions {
     margin-right: 0;
     width: 100%;
   }

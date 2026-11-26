@@ -167,7 +167,7 @@ const AdminDashboard = ({
   return (
     <PageShell className="staff-dashboard"
       header={
-        <div className="page-header page-header--align-bottom">
+        <div className="page-header">
           <div className="page-header-left">
             <h1>Dashboard</h1>
             <p>
