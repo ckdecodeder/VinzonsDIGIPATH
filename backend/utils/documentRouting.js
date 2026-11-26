@@ -14,6 +14,16 @@ const canSendDocument = ({ requiresMayorApproval, mayorApprovalCleared }) => (
   !requiresMayorApproval || Boolean(mayorApprovalCleared)
 );
 
+const destinationReceiptProblem = (doc) => {
+  if (doc.requiredDestinationOfficeId == null && doc.routePlan?.length > 1) {
+    return 'Review the registered destination for this historical route before closing it.';
+  }
+  if (doc.requiredDestinationOfficeId && !doc.destinationReceiptConfirmed) {
+    return 'The registered receiving office must confirm primary receipt before closing this document.';
+  }
+  return '';
+};
+
 const canArchiveDocument = ({ status, completedAt, scannedFiles, scannedImageUrl, hasPendingTransmission, sendQueue }) => (
   status === 'Completed' && Boolean(completedAt)
   && Boolean(scannedImageUrl || scannedFiles?.some(file => file?.url || file?.dataUrl))
@@ -44,7 +54,7 @@ const buildInitialOfficeRoute = ({
     : (hasDestination ? destinationOfficeId : '');
   const routeDestinations = [];
   if (firstDestination && firstDestination !== originOfficeId) routeDestinations.push(firstDestination);
-  if (hasDestination && destinationOfficeId !== routeDestinations.at(-1)) routeDestinations.push(destinationOfficeId);
+  if (destinationOfficeId && firstDestination && destinationOfficeId !== firstDestination) routeDestinations.push(destinationOfficeId);
   const routePlan = [originOfficeId, ...routeDestinations];
 
   return {
@@ -168,6 +178,7 @@ const buildReceiveTransition = ({
 
   return {
     status: document.preTransitStatus || 'Received',
+    ...(toOfficeId === document.requiredDestinationOfficeId ? { destinationReceiptConfirmed: true } : {}),
     preTransitStatus: '',
     currentOfficeId: toOfficeId,
     destinationOfficeId: toOfficeId,
@@ -178,6 +189,7 @@ const buildReceiveTransition = ({
 };
 
 module.exports = {
+  destinationReceiptProblem,
   buildInitialOfficeRoute,
   normalizePriorityLevel,
   getStatusAfterSend,

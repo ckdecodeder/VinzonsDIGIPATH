@@ -37,6 +37,21 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-27] - Enforce the registered receiving office
+
+- FIX / LOCAL on main at 3a84862. Planned and implemented the first Figure 5 receipt check. New registrations retain the receiving office across handoffs. Primary receipt and promotion of an already received copy record fulfillment. Resubmission resets fulfillment. Completion and new archive creation check it; Documents, archive selection and the action queue reflect the restriction. Historical multi-stop plans without a saved destination require review.
+- Validation: 111 backend tests passed with isolated PostgreSQL/HTTP and zero skips, including early completion refusal and onward receipt for Office, Receptionist and scanner registration. The subsequently added copy-versus-primary regression passed in a separate 18-test routing run. All 123 dashboard tests and the production build passed. Disposable database stopped. No production data, service or configuration touched; additive model migration exists locally only. No commit, push, deployment or live browser/staff acceptance. Roll back the local first-batch code and tests together; after any future rollout preserve receipt evidence and restrict closure while reconciling. Outstanding: legacy review procedure and remaining Mayor, forwarding, revision and final-copy batches.
+
+## [2026-11-27] - Plan Figure 5 workflow repairs
+
+- DOCS / LOCAL. Added [the repair plan](docs/FIGURE_5_WORKFLOW_REPAIR_PLAN.md) against main at 3a84862. Mapped seven findings to five implementation batches, policy decisions, acceptance cases, legacy handling and recovery. Implementation is PLANNED. Reviewed coverage against the audit. No application, data, service or configuration changes, tests, commit, push or deployment. To reverse, remove the plan and this entry. Next: confirm Mayor decision types, forwarding authority and copy policy, then implement the mandatory-receipt checks with disposable fixtures.
+
+## [2026-11-27] - Audit of Figure 5 document sending and receiving
+
+- AUDIT / LOCAL. Reviewed the proposed flow against registration, Mayor review and revision, office handoffs, completion, and archiving on main at 3a84862. Staff can follow the proposed route. Completion can precede the planned final receipt, acknowledgement or generic signing can strand a required signature, and signed forwarding rules differ between entry points. Type edits can change the requirement on open records. Resubmission side-effect failures can misreport a committed handoff.
+- Validation: 123 dashboard tests and 22 targeted backend routing, scope and storage tests passed. Inspected PostgreSQL/HTTP test scenarios without running them. Source review only for the reported deviations. No live records, services, hardware, configuration or application code changed. This entry is local, uncommitted and undeployed. To reverse the documentation change, remove this entry.
+- Next: agree which planned stops are mandatory and who may forward signed records, then test early completion, approval-only decisions, signed onward routing, and return/resubmission in a disposable database.
+
 ## [2026-11-24] - Extend skeleton feedback across pages and roles
 
 - FIX / LOCAL. Planned on main at d33ae36 on top of the existing loading changes. LoadingSkeleton now serves the shared staff section indicator, lazy page fallback, blocked collection views, report results, initial activity results and public tracking lookup. Background collection refreshes use the small update indicator once data has loaded. Existing retry actions and report generation gates remain in effect.

@@ -398,9 +398,12 @@ integration('Audit follow-up: registration visits Mayor before the requested fin
     assert.equal((await request(`/transmissions/${deliveries[0].id}`, 'PUT', { confirmReceipt: true }, 'Mayor', 'MAYOR')).status, 200);
     assert.equal((await request(`/documents/${doc.id}/send`, 'POST', { toOfficeIds: ['OTHER'] }, 'Mayor', 'MAYOR')).status, 400);
     assert.equal((await request(`/documents/${doc.id}/process-note`, 'POST', { action: 'sign_document' }, 'Mayor', 'MAYOR')).status, 200);
+    assert.equal((await request(`/documents/${doc.id}/process-note`, 'POST', { action: 'complete_document' }, 'Mayor', 'MAYOR')).status, 409);
     assert.equal((await request(`/documents/${doc.id}/send`, 'POST', { toOfficeIds: ['OTHER'] }, 'Mayor', 'MAYOR')).status, 200);
     deliveries = await raw.TransmissionModel.findAll({ where: { documentId: doc.id, toOfficeId: 'OTHER' } });
     assert.equal(deliveries.length, 1);
+    assert.equal((await request(`/transmissions/${deliveries[0].id}`, 'PUT', { confirmReceipt: true }, 'Office', 'OTHER')).status, 200);
+    assert.equal((await request(`/documents/${doc.id}/process-note`, 'POST', { action: 'complete_document' }, 'Office', 'OTHER')).status, 200);
   }
 });
 

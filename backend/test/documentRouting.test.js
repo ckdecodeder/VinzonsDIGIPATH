@@ -9,7 +9,19 @@ const {
   buildSendTransition,
   buildReceiveTransition,
   canArchiveDocument,
+  destinationReceiptProblem,
 } = require('../utils/documentRouting');
+
+test('a copy receipt does not satisfy the registered primary destination', () => {
+  const document = { requiredDestinationOfficeId: 'B', routePlan: ['A', 'MAYOR', 'B'], sendHistory: [
+    { id: 'copy', deliveryGroupId: 'group', primary: false },
+    { id: 'primary', deliveryGroupId: 'next', primary: true },
+  ] };
+  const receive = transmissionId => buildReceiveTransition({ document, toOfficeId: 'B', transmissionId, receivedBy: 'staff' });
+  assert.ok(destinationReceiptProblem({ ...document, ...receive('copy') }));
+  assert.equal(destinationReceiptProblem({ ...document, ...receive('primary') }), '');
+  assert.ok(destinationReceiptProblem({ routePlan: ['A', 'MAYOR', 'B'] }));
+});
 
 test('an approval document keeps source custody while planning a Mayor review route', () => {
   const route = buildInitialOfficeRoute({

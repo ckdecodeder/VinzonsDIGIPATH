@@ -92,6 +92,7 @@ const createHandoffService = ({ DocumentModel, TransmissionModel }) => {
         if (!cancelled?.deliveryGroupId || cancelled.primary) {
           const successor = cancelled?.deliveryGroupId && sendHistory.find((event) => event.deliveryGroupId === cancelled.deliveryGroupId && !event.cancelledAt);
           if (successor) successor.primary = true;
+          if (successor?.receivedBy && successor.toOfficeId === doc.requiredDestinationOfficeId) updates.destinationReceiptConfirmed = true;
           Object.assign(updates, {
             status: successor && !successor.receivedBy ? 'In Transit' : (doc.preTransitStatus || 'Received'),
             preTransitStatus: successor && !successor.receivedBy ? doc.preTransitStatus : '',

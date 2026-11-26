@@ -89,6 +89,8 @@ model documents {
   documentTypeId             String?
   documentTypeOther          String?
   originOfficeId             String?
+  requiredDestinationOfficeId String?
+  destinationReceiptConfirmed Boolean? @default(false)
   intakeOfficeId             String?
   originOfficeOther          String?
   currentOfficeId            String?

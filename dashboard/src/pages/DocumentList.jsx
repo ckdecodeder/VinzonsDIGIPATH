@@ -29,6 +29,7 @@ import { compareOldest } from '../utils/sorting';
 import { validateRequiredFields, clearFieldError } from '../utils/formValidation';
 import {
   canAcknowledgeDocument as canAcknowledgeByWorkflow,
+  destinationReceiptPending,
   canArchiveDocument as canArchiveByWorkflow,
   canRejectDocument as canRejectByWorkflow,
   canSignDocument as canSignByWorkflow,
@@ -1022,7 +1023,7 @@ const DocumentList = ({
   const canResubmitDocument = doc => canCreate && ['Rejected', 'Returned to Sender'].includes(doc.intakeStatus)
     && (currentRole === 'admin' || doc.currentOfficeId === currentUser?.officeId);
   const canCompleteDocument = doc => currentUser?.officeId && currentUser.officeId === doc.currentOfficeId
-    && isApprovedForWorkflow(doc) && transmittableStatuses.includes(getWorkflowStatus(doc))
+    && !destinationReceiptPending(doc) && isApprovedForWorkflow(doc) && transmittableStatuses.includes(getWorkflowStatus(doc))
     && !getPendingTransmission(doc.id) && !(doc.sendHistory || []).some(event => event.active)
     && !(doc.sendQueue || []).some(Boolean)
     && (!documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval || doc.mayorApprovalCleared);
@@ -1071,6 +1072,9 @@ const DocumentList = ({
         )}
         {canResubmitDocument(doc) && (
           <button className="btn btn-sm btn-primary" onClick={() => onResubmitDocument(doc.id)}>Resubmit corrected document</button>
+        )}
+        {currentUser?.officeId === doc.currentOfficeId && ['Signed', 'Received', 'For Filing', 'Acknowledged', 'Completed'].includes(getWorkflowStatus(doc)) && destinationReceiptPending(doc) && (
+          <small>{doc.requiredDestinationOfficeId ? `Awaiting primary receipt from ${getOfficeName(doc.requiredDestinationOfficeId)}.` : 'Historical route needs destination review before closure.'}</small>
         )}
         {canCompleteDocument(doc) && (
           <button className="btn btn-sm btn-success" onClick={() => onProcessDocument(doc.id, 'complete_document')}>Complete processing</button>

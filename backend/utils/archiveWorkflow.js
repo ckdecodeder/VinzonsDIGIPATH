@@ -22,7 +22,7 @@ async function hasReadableCopy(doc) {
 }
 
 const { createHttpError, generateId } = require('./helpers');
-const { canArchiveDocument } = require('./documentRouting');
+const { canArchiveDocument, destinationReceiptProblem } = require('./documentRouting');
 const { withModelTransaction } = require('./transactionContext');
 
 const createArchiveService = ({ DocumentModel, TransmissionModel, ArchiveModel }) => {
@@ -34,6 +34,8 @@ const createArchiveService = ({ DocumentModel, TransmissionModel, ArchiveModel }
   const create = ({ documentId, userId, date, eventFor }) => withModelTransaction(DocumentModel, async tx => {
     const row = await lockDocument(documentId, tx);
     const doc = row.get({ plain: true });
+    const receiptProblem = destinationReceiptProblem(doc);
+    if (receiptProblem) throw createHttpError(receiptProblem, 409);
     const pending = await TransmissionModel.findAll({ where: { documentId }, transaction: tx });
     if ((doc.intakeStatus || 'Approved') !== 'Approved' || !canArchiveDocument({ ...doc, hasPendingTransmission: pending.some(t => !t.get({ plain: true }).receivedBy) })
       || (doc.sendHistory || []).some(e => e.active)) throw createHttpError('Complete processing and attach the final document copy before archiving.', 409);

@@ -1,7 +1,7 @@
 import { manilaDate } from './philippinesDateTime.js';
 export { manilaDate } from './philippinesDateTime.js';
 import { getWorkflowStatus } from './documentWorkflow.js';
-import { canArchiveDocument, canTakeDocumentAction } from './documentActionRules.js';
+import { canArchiveDocument, canTakeDocumentAction, destinationReceiptPending } from './documentActionRules.js';
 
 export const queueFilters = ['Needs your action', 'Newly received', 'Pending review', 'Urgent active', 'Pending receipt', 'Ready to archive'];
 
@@ -28,7 +28,7 @@ export function getDocumentNextAction(doc, user, transmissions = [], documentTyp
   if (doc.currentOfficeId !== user.officeId) return '';
   if (user.role === 'Office' && !['Signed', 'Acknowledged'].includes(status)) return 'Send document';
   const requiresApproval = documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval;
-  return !(doc.sendQueue || []).some(Boolean) && (!requiresApproval || doc.mayorApprovalCleared) ? 'Complete processing' : '';
+  return !destinationReceiptPending(doc) && !(doc.sendQueue || []).some(Boolean) && (!requiresApproval || doc.mayorApprovalCleared) ? 'Complete processing' : '';
 }
 
 export function matchesQueue(doc, filter, user, transmissions = [], documentTypes = []) {

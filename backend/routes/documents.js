@@ -26,6 +26,7 @@ const { validateSmsPreferences } = require('../utils/sms');
 const { parsePagination, contains, andFilters, documentSummaryAttributes } = require('../utils/listing');
 const {
   buildInitialOfficeRoute,
+  destinationReceiptProblem,
   normalizePriorityLevel,
   canSendDocument,
   buildResubmissionUpdates,
@@ -302,6 +303,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     destinationOfficeId = body.destinationOfficeId || '';
   }
 
+  const registeredDestination = destinationOfficeId;
   const now = new Date().toISOString();
   const sourceFiles = body.scannedFiles?.length ? body.scannedFiles : body.scannedImageUrl ? [{ name: 'scan', dataUrl: body.scannedImageUrl }] : [];
   const scannedFiles = await persistAttachments(req, sourceFiles);
@@ -375,6 +377,8 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
   return {
     ...body,
     id: generateId('DOC'),
+    requiredDestinationOfficeId: registeredDestination === originOfficeId && !initialRoute.firstDestinationOfficeId ? '' : registeredDestination,
+    destinationReceiptConfirmed: false,
     trackingNumber: body.trackingNumber || generateTrackingNumber(),
     documentDirection,
     status: finalStatus,
@@ -536,7 +540,7 @@ router.post('/:id/register-scan', scannerRoles, asyncHandler(async (req, res) =>
     const otherFiles = (doc.scannedFiles || []).filter(file => !getScannerPages([file]).length);
     for (const field of ['subject', 'senderName', 'senderContact', 'senderEmail', 'documentTypeId', 'documentTypeOther',
       'documentDirection', 'originOfficeOther', 'destinationOfficeId', 'status', 'priorityLevel', 'dateReceived',
-      'notifySender', 'senderNotificationConsent', 'senderNotificationChannels', 'remarks', 'scannedText', 'routePlan', 'routeStep']) {
+      'notifySender', 'senderNotificationConsent', 'senderNotificationChannels', 'remarks', 'scannedText', 'routePlan', 'routeStep', 'requiredDestinationOfficeId', 'destinationReceiptConfirmed']) {
       if (registration[field] !== undefined) doc[field] = registration[field];
     }
     doc.scannedFiles = [pdf, ...otherFiles];
@@ -719,7 +723,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   delete updates._id;
   delete updates.__v;
   delete updates.timeline;
-  for (const field of ['sendHistory', 'sendQueue', 'routePlan', 'routeStep', 'preTransitStatus', 'lastRoutedAt']) delete updates[field];
+  for (const field of ['requiredDestinationOfficeId', 'destinationReceiptConfirmed', 'sendHistory', 'sendQueue', 'routePlan', 'routeStep', 'preTransitStatus', 'lastRoutedAt']) delete updates[field];
   // Current office still moves via route/receive/RFID only.
   delete updates.currentOfficeId;
   // While still in intake, allow From/To from the scanner form so the destined
@@ -940,6 +944,7 @@ router.post('/:id/resubmit', documentCreateRoles, asyncHandler(async (req, res) 
       ),
       {
         ...buildResubmissionUpdates(),
+        destinationReceiptConfirmed: false,
         status: currentStatus === 'Returned to Sender' ? 'Received' : currentStatus,
         completedAt: '',
       },
@@ -986,6 +991,8 @@ router.post('/:id/process-note', allRoles, asyncHandler(async (req, res) => {
   if (action === 'complete_document') {
     const doc = await assertCanAccessDocument(req, req.params.id);
     assertCurrentCustody(req, doc);
+    const receiptProblem = destinationReceiptProblem(doc);
+    if (receiptProblem) throw createHttpError(receiptProblem, 409);
     if (!transmittableStatuses.includes(normalizeWorkflowStatus(doc.status)) || (doc.intakeStatus || 'Approved') !== 'Approved'
       || (doc.sendQueue || []).some(Boolean) || (doc.sendHistory || []).some(event => event.active)
       || (await requiresMayorApprovalFor(doc) && !doc.mayorApprovalCleared)) {

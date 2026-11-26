@@ -44,9 +44,14 @@ export const canRejectDocument = (doc, user) => (
   && !completedStatuses.includes(statusOf(doc))
 );
 
+export const destinationReceiptPending = doc => doc.requiredDestinationOfficeId == null
+  ? doc.routePlan?.length > 1
+  : Boolean(doc.requiredDestinationOfficeId && !doc.destinationReceiptConfirmed);
+
 export const canArchiveDocument = (doc, user) => (
   approvalRoles.includes(user?.role)
   && (doc?.intakeStatus || 'Approved') === 'Approved'
+  && !destinationReceiptPending(doc)
   && doc.status === 'Completed' && Boolean(doc.completedAt) && Boolean(doc.attachmentCount || doc.scannedImageUrl || doc.scannedFiles?.some(file => file?.url || file?.dataUrl))
   && !(doc?.sendHistory || []).some((event) => event.active)
   && !(doc?.sendQueue || []).some(Boolean)

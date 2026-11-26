@@ -1,6 +1,7 @@
 import { manilaDate, formatPhilippinesDateTime as formatDateTime, formatPhilippinesDateParts } from '../utils/philippinesDateTime.js';
 import React, { useEffect, useState, useId } from "react";
 import { documentService } from '../api/documentService';
+import { canArchiveDocument } from '../utils/documentActionRules.js';
 import { focusFormError } from '../utils/formAccessibility';
 import PageShell from "../components/PageShell";
 import ModalOverlay from "../components/ModalOverlay";
@@ -297,7 +298,7 @@ const ArchiveList = ({
   };
   const archivableDocs = documents.filter(
     (d) =>
-      d.status === 'Completed' && Boolean(d.completedAt) && Boolean(d.attachmentCount || d.scannedImageUrl || d.scannedFiles?.some(file => file?.url || file?.dataUrl)) &&
+      canArchiveDocument(d, currentUser) &&
       !archives.some((a) => a.documentId === d.id),
   );
 
