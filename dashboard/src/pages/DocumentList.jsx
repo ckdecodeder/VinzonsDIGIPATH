@@ -1230,8 +1230,13 @@ const DocumentList = ({
                     aria-label="Open document details"
                     onClick={() => setDetailDoc(doc)}
                   >
-                    <td data-label="Document"><strong>{doc.subject}</strong><small className="doc-reference">{doc.trackingNumber}</small>
-                      {doc.priorityLevel === 'urgent' && <span className="status-badge handoff-revision-badge">Urgent</span>}</td>
+                    <td data-label="Document">
+                      <div className="document-row-heading">
+                        <strong>{doc.subject}</strong>
+                        {doc.priorityLevel === 'urgent' && <span className="document-row-priority">Urgent</span>}
+                      </div>
+                      <small className="doc-reference">{doc.trackingNumber}</small>
+                    </td>
                     <td data-label="Holding office">{doc.currentOfficeId ? getOfficeName(doc.currentOfficeId) : 'Unrecorded'}</td>
                     <td data-label="Status"><span className={`status-badge ${tableStatus.className}`}>{tableStatus.label}</span></td>
                     <td data-label="Last updated">{formatDateTime(doc.updatedAt || doc.createdAt || doc.dateReceived)}</td>

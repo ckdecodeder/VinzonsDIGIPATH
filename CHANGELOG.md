@@ -37,6 +37,10 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-27] - Refine document row priority layout
+
+- FIX / LOCAL on main at 50f541c. Updated DocumentList.jsx and index.css so urgent priority sits beside the subject, with tracking beneath. The shared component covers all four staff roles. All 123 dashboard tests and the production build passed. Local only. Browser retest pending. Reverse the row markup and document-row styles together to roll back.
+
 ## [2026-11-27] - Implement manual audit repairs
 
 - FIX / LOCAL on main at 8551223. Implemented the five manual audit repairs. Office sends to the Mayor record information or signature intent. Both routing endpoints and completion enforce a requested signature. Staff dashboards open the full record directly. Reapplied centered header styling from HEAD, removed the Mayor’s standalone archive shortcut, retained record-based filing, and aligned the Office receipt controls.

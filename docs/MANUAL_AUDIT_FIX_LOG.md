@@ -67,3 +67,7 @@ Reviewed the five open findings against the working tree on main at 8551223 and 
 **Acceptance** — Implement each item as a separately reviewable change. Use synthetic records for workflow tests, run the dashboard suite and production build, then repeat the manual retests above on the target build. Record the tested role, result and build before closing each item. This audit changed only the note.
 
 **Implementation update, 2026-11-27** — Items 1–5 are implemented locally on main at base 8551223. The disposable database suite passed the Engineering-equivalent Office and Mayor scenarios for information and signature requests. All 113 backend tests, 123 dashboard tests and the production build passed. The five items remain open for the role-specific manual retests above. Approval without a signature remains a policy question.
+
+## 6. Urgent priority adds an oversized third line to document rows
+
+**Implemented locally.** The shared document table places a compact Urgent label beside the subject and the tracking number below. Retest urgent and ordinary rows across staff accounts, including long subjects, narrow widths and dark mode.
