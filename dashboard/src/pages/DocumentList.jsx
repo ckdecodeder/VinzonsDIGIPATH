@@ -1640,7 +1640,7 @@ const DocumentList = ({
 
       {showForm && (
         <ModalOverlay aria-labelledby={`${formId}-form-title`} onClose={() => { if (!isSavingDocument) setShowForm(false); }}>
-          <div className="modal document-form-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal document-form-modal document-entry-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h2 id={`${formId}-form-title`}>
                 {editDoc
@@ -1748,8 +1748,11 @@ const DocumentList = ({
                     />
                     <p id={`${formId}-date-hint`} className="field-hint">Locked to the registration date. Processing follows FIFO (oldest first).</p>
                   </div>
+                </div>
+                {(isOfficeUser || currentRole === 'receptionist') && (
+                  <div className="form-grid document-registration-routing">
                   {isOfficeUser ? (
-                    <div className="form-group document-registration-destination">
+                    <div className="form-group">
                       <label htmlFor={`${formId}-destination`} className="form-label">Send To Office <span className="required-mark">*</span></label>
                       <select id={`${formId}-destination`} aria-describedby={`${formId}-destination-hint${documentFormErrors.destinationOfficeId ? ` ${formId}-destination-error` : ''}`} aria-invalid={Boolean(documentFormErrors.destinationOfficeId)} required
                         className={`form-select${documentFormErrors.destinationOfficeId ? ' is-invalid' : ''}`}
@@ -1768,19 +1771,6 @@ const DocumentList = ({
                       </select>
                       {documentFormErrors.destinationOfficeId && (
                         <p id={`${formId}-destination-error`} className="form-field-error">{documentFormErrors.destinationOfficeId}</p>
-                      )}
-                      {!editDoc && formData.destinationOfficeId === mayorsOfficeId && (
-                        <div className="form-group">
-                          <label className="form-label" htmlFor={`${formId}-mayor-action`}>Requested Mayor action</label>
-                          <select id={`${formId}-mayor-action`} name="requestedMayorAction" className="form-select" required
-                            value={formData.requestedMayorAction || ''} aria-invalid={Boolean(documentFormErrors.requestedMayorAction)}
-                            onChange={e => { setFormData({ ...formData, requestedMayorAction: e.target.value }); setDocumentFormErrors(prev => clearFieldError(prev, 'requestedMayorAction')); }}>
-                            <option value="">Select an action</option>
-                            <option value="information">For information</option>
-                            <option value="signature">Signature required</option>
-                          </select>
-                          {documentFormErrors.requestedMayorAction && <p className="form-field-error">{documentFormErrors.requestedMayorAction}</p>}
-                        </div>
                       )}
                       <p id={`${formId}-destination-hint`} className="field-hint">Document is registered from your office, then sent to this destination.</p>
                     </div>
@@ -1804,7 +1794,21 @@ const DocumentList = ({
                       <p id={`${formId}-destination-hint`} className="field-hint">If this document type requires Mayor approval, it will go there first. The selected office remains its destination after approval.</p>
                     </div>
                   ) : null}
-                </div>
+                      {isOfficeUser && !editDoc && formData.destinationOfficeId === mayorsOfficeId && (
+                        <div className="form-group">
+                          <label className="form-label" htmlFor={`${formId}-mayor-action`}>Requested Mayor action <span className="required-mark">*</span></label>
+                          <select id={`${formId}-mayor-action`} aria-describedby={documentFormErrors.requestedMayorAction ? `${formId}-mayor-action-error` : undefined} name="requestedMayorAction" className="form-select" required
+                            value={formData.requestedMayorAction || ''} aria-invalid={Boolean(documentFormErrors.requestedMayorAction)}
+                            onChange={e => { setFormData({ ...formData, requestedMayorAction: e.target.value }); setDocumentFormErrors(prev => clearFieldError(prev, 'requestedMayorAction')); }}>
+                            <option value="">Select an action</option>
+                            <option value="information">For information</option>
+                            <option value="signature">Signature required</option>
+                          </select>
+                          {documentFormErrors.requestedMayorAction && <p id={`${formId}-mayor-action-error`} className="form-field-error">{documentFormErrors.requestedMayorAction}</p>}
+                        </div>
+                      )}
+                  </div>
+                )}
                 {isOfficeUser && (
                   <div className="form-group">
                     <label htmlFor={`${formId}-office`} className="form-label">From Office</label>

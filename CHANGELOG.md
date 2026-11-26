@@ -37,6 +37,10 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-27] - Adjust document registration spacing
+
+- FIX / LOCAL on main at d776fa6. Updated DocumentList.jsx and index.css to give routing its own row, place the destination hint and validation next to their controls, and remove stacked field margins from the shared registration grid. The Office variant uses three metadata columns on desktop and the narrow layout uses one column. All 123 dashboard tests and the production build passed. Headless Edge returned no layout measurement; visual acceptance remains pending. No commit, deployment or data change. Reverse the scoped registration markup and styles together to roll back.
+
 ## [2026-11-27] - Refine document row priority layout
 
 - FIX / LOCAL on main at 50f541c. Updated DocumentList.jsx and index.css so urgent priority sits beside the subject, with tracking beneath. The shared component covers all four staff roles. All 123 dashboard tests and the production build passed. Local only. Browser retest pending. Reverse the row markup and document-row styles together to roll back.

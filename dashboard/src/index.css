@@ -9780,7 +9780,9 @@ textarea:focus-visible, [role="button"]:focus-visible, [data-form-error]:focus {
   .archives-date-stack span:last-child, .office-stat, .report-cover span,
   .receptionist-dashboard .receptionist-overview .activity-tracking,
   .attention-count-pill, .status-mini-total { font-size: .75rem; }
-  .document-form-modal .document-registration-destination { grid-column: span 2; }
+  .document-entry-modal .document-registration-metadata:has(> :last-child:nth-child(3)) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 
   .page-layout .page-header,
   .receptionist-dashboard .page-header {
@@ -9841,3 +9843,27 @@ textarea:focus-visible, [role="button"]:focus-visible, [data-form-error]:focus {
   background: transparent; border: 0; vertical-align: middle;
 }
 .loading-skeleton--compact span { height: 3px; background: var(--text-muted); }
+
+/* Let grid gaps provide the spacing between registration fields. */
+.document-entry-modal .modal-body > .form-group,
+.document-entry-modal .form-grid > .form-group {
+  margin-bottom: 0;
+}
+
+.document-entry-modal .document-registration-metadata,
+.document-entry-modal .document-registration-routing,
+.document-entry-modal .form-error-summary {
+  grid-column: 1 / -1;
+  align-items: start;
+}
+
+.document-registration-routing > :only-child { grid-column: 1 / -1; }
+
+@media (max-width: 700px) {
+  .document-entry-modal .modal-body,
+  .document-entry-modal .form-grid { grid-template-columns: minmax(0, 1fr); }
+
+  .document-entry-modal .modal-body > *,
+  .document-entry-modal .modal-body > .form-group,
+  .document-entry-modal .modal-body > div[style] { grid-column: 1 / -1; }
+}
