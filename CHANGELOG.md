@@ -37,6 +37,10 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-27] - Align urgent tags across document rows
+
+- FIX / LOCAL on main at d9a28e9. Changed the shared document heading to a two-column grid. Subjects wrap in the first column and Urgent tags align to the right edge in the second. Dashboard production build passed. Browser verification pending. No deployment or data changes. Restore the previous flex heading rule to roll back.
+
 ## [2026-11-27] - Adjust document registration spacing
 
 - FIX / LOCAL on main at d776fa6. Updated DocumentList.jsx and index.css to give routing its own row, place the destination hint and validation next to their controls, and remove stacked field margins from the shared registration grid. The Office variant uses three metadata columns on desktop and the narrow layout uses one column. All 123 dashboard tests and the production build passed. Headless Edge returned no layout measurement; visual acceptance remains pending. No commit, deployment or data change. Reverse the scoped registration markup and styles together to roll back.

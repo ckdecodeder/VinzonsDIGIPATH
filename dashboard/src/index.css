@@ -9680,9 +9680,9 @@ body.modal-open .notification-dock {
 .compact-documents .documents-actions-wrap { flex-wrap: wrap; }
 .doc-reference { display: block; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .document-row-heading {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: baseline;
-  flex-wrap: wrap;
   gap: .2rem .5rem;
   margin-bottom: .2rem;
 }

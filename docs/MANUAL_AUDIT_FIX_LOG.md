@@ -71,3 +71,11 @@ Reviewed the five open findings against the working tree on main at 8551223 and 
 ## 6. Urgent priority adds an oversized third line to document rows
 
 **Implemented locally.** The shared document table places a compact Urgent label beside the subject and the tracking number below. Retest urgent and ordinary rows across staff accounts, including long subjects, narrow widths and dark mode.
+
+## 7. Archives fails to open when a JavaScript module receives HTML
+
+**Status** — Open. The screenshots show Archives failing to load and the browser rejecting the ScannedPreviewModal module because the response was text/html.
+
+**Possible cause** — An open tab may reference an asset from an earlier deployment. The catch-all rewrite in dashboard/vercel.json could then serve the application HTML for a missing asset. The response body, deployment version and cache state have not been verified.
+
+**Retest** — Compare an existing tab with a freshly loaded tab. Inspect the failing asset requests, HTTP status, content type and response body. Verify that all modules referenced by the current build return JavaScript, missing asset URLs return a genuine missing-file response, and navigation from an older tab can recover after a reload.
