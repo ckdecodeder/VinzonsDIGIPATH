@@ -22,7 +22,6 @@ import DocumentTypeList from './pages/DocumentTypeList';
 import ReceptionistDashboard from './pages/ReceptionistDashboard';
 import ActivityLogs from './pages/ActivityLogs';
 import ProfileSettings from './pages/ProfileSettings';
-import DocumentPreviewModal from './components/DocumentPreviewModal';
 import {
   appDataService,
   archiveService,
@@ -48,7 +47,6 @@ import { readDismissals, dismissalKey, resolveNotificationTarget } from './utils
 import { saveWorkflowAction } from './utils/workflowAction';
 import { RealtimeProvider } from './context/RealtimeContext';
 import { realtimeClient } from './ws/realtimeClient';
-import { useDocumentPreview } from './hooks/useDocumentPreview';
 
 const DocumentList = lazy(() => import('./pages/DocumentList'));
 const ArchiveList = lazy(() => import('./pages/ArchiveList'));
@@ -159,10 +157,6 @@ function App() {
   const [documentFocusKey, setDocumentFocusKey] = useState(0);
   const [archiveFocus, setArchiveFocus] = useState('');
   const [documentStatusFocus, setDocumentStatusFocus] = useState('All');
-  const [previewDocumentId, setPreviewDocumentId] = useState(null);
-  const closeDocumentPreview = useCallback(() => setPreviewDocumentId(null), []);
-  const preview = useDocumentPreview(previewDocumentId, currentUser?.id, documents,
-    documentService.getById, closeDocumentPreview);
   const [dismissalState, setDismissalState] = useState(() => ({
     userId: currentUser?.id, ids: readDismissals(localStorage, currentUser?.id),
   }));
@@ -249,7 +243,6 @@ function App() {
 
   const clearActionToast = useCallback(() => setActionToast(null), []);
   const refreshAfterMutation = (keys = ['documents', 'transmissions', 'archives', 'logs', 'notifications', 'senderNotifications']) => {
-    if (keys.includes('documents')) preview.retry();
     appDataService.invalidate(keys);
     keys.forEach((key) => refreshKeysRef.current.add(key));
     clearTimeout(refreshTimerRef.current);
@@ -317,7 +310,7 @@ function App() {
     setSectionStates({});
     setDocuments([]); setTransmissions([]); setArchives([]); setDevice(null); setLogs([]);
     setUsers([]); setOffices([]); setDocumentTypes([]); setDeviceEvents([]);
-    setServerNotifications([]); setSenderNotifications([]); setPreviewDocumentId(null);
+    setServerNotifications([]); setSenderNotifications([]);
     return () => { clearTimeout(refreshTimerRef.current); refreshKeysRef.current.clear(); };
   }, [currentUser?.id]);
   useEffect(() => {
@@ -429,7 +422,7 @@ function App() {
     notificationRequest.current++;
     setArchiveFocus('');
     const nextPage = resolvePageForRole(page, currentRole);
-    setPreviewDocumentId(null);
+
     if (nextPage !== 'documents') {
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
@@ -444,14 +437,11 @@ function App() {
   const handleFocusDocumentConsumed = useCallback(() => {
     setDocumentFocusId('');
   }, []);
-  const handlePreviewDocument = useCallback((doc) => {
-    if (doc) setPreviewDocumentId(doc.id);
-  }, []);
 
   const handleOpenDocument = (documentId, delivery = null) => {
     notificationRequest.current++;
     setFocusedDelivery(delivery);
-    setPreviewDocumentId(null);
+
     if (!documentId) {
       setDocumentFocusId('');
       setDocumentStatusFocus('All');
@@ -466,7 +456,7 @@ function App() {
 
   const handleOpenDocumentsByStatus = (status = 'All') => {
     notificationRequest.current++;
-    setPreviewDocumentId(null);
+
     setDocumentFocusId('');
     setDocumentStatusFocus(status || 'All');
     setCurrentPage('documents');
@@ -1086,7 +1076,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onPreviewDocument={handlePreviewDocument}
+                onOpenDocument={handleOpenDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1191,7 +1181,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onPreviewDocument={handlePreviewDocument}
+                onOpenDocument={handleOpenDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1211,7 +1201,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onPreviewDocument={handlePreviewDocument}
+                onOpenDocument={handleOpenDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1281,7 +1271,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onPreviewDocument={handlePreviewDocument}
+                onOpenDocument={handleOpenDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1301,7 +1291,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onPreviewDocument={handlePreviewDocument}
+                onOpenDocument={handleOpenDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1354,7 +1344,7 @@ function App() {
                 users={users}
                 documentTypes={documentTypes}
                 onNavigate={handleNavigate}
-                onPreviewDocument={handlePreviewDocument}
+                onOpenDocument={handleOpenDocument}
                 onStatusSelect={handleOpenDocumentsByStatus}
                 currentUser={currentUser}
               />
@@ -1474,21 +1464,6 @@ function App() {
           </Suspense>
         </ErrorBoundary>
       </Layout>
-      {previewDocumentId && (
-        <DocumentPreviewModal
-          doc={preview.document}
-          loading={preview.loading}
-          refreshError={preview.error}
-          onRetry={preview.retry}
-          offices={offices}
-          users={users}
-          documentTypes={documentTypes}
-          transmissions={visibleTransmissions}
-          currentUser={currentUser}
-          onClose={closeDocumentPreview}
-          onOpenRecord={handleOpenDocument}
-        />
-      )}
       <AppModal
         open={appDialog.open}
         type={appDialog.type}

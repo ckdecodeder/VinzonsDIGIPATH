@@ -97,7 +97,7 @@ router.post('/', allRoles, asyncHandler(async (req, res) => {
   const docType = doc.documentTypeId
     ? await DocumentType.findOne({ id: doc.documentTypeId }).lean()
     : null;
-  const requiresMayorApproval = Boolean(docType?.requiresMayorApproval);
+  const requiresMayorApproval = Boolean(docType?.requiresMayorApproval) || doc.requestedMayorAction === 'signature';
   const mayorsOfficeId = requiresMayorApproval ? await findMayorsOfficeId() : '';
   const isMayorApprovalHandoff = requiresMayorApproval
     && !doc.mayorApprovalCleared

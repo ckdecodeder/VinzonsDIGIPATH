@@ -37,6 +37,11 @@ Copy this template into the dated entries section. Fill in only verified informa
 - **Outstanding / next action:** What remains and the next step
 ```
 
+## [2026-11-27] - Implement manual audit repairs
+
+- FIX / LOCAL on main at 8551223. Implemented the five manual audit repairs. Office sends to the Mayor record information or signature intent. Both routing endpoints and completion enforce a requested signature. Staff dashboards open the full record directly. Reapplied centered header styling from HEAD, removed the Mayor’s standalone archive shortcut, retained record-based filing, and aligned the Office receipt controls.
+- Validation: 113 backend tests passed on a disposable PostgreSQL cluster, including information and signature journeys; cluster stopped. All 123 dashboard tests and the production build passed. Local additive schema change only. No live data migration, commit, push or deployment. For rollback, revert the feature changes together and preserve any recorded intent if already in use. Outstanding: role-by-role browser and staff acceptance before release.
+
 ## [2026-11-27] - Align dashboard header actions
 
 - FIX / LOCAL on main at 2365ba9. Centered header actions in ReceptionistDashboard and the shared DashboardHome. Removed the Receptionist offset and preserved narrow-screen stacking. Logged item 3 in the manual audit note.

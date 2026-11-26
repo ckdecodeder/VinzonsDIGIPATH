@@ -313,9 +313,9 @@ const ArchiveList = ({
               <p>Documents that are filed, archived, and stored for records</p>
             </div>
             <div className="page-header-actions page-header-actions--inline">
-              <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+              {currentRole !== "mayor" && <button className="btn btn-primary" onClick={() => setShowForm(true)}>
                 <Plus size={16} /> Archive Document
-              </button>
+              </button>}
             </div>
           </div>
         }

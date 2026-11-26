@@ -384,6 +384,27 @@ integration('Audit repair: deletion and archiving preserve cross-record integrit
 });
 
 
+integration('Internal Mayor requests enforce the selected action after primary receipt', async () => {
+  const payload = { subject: 'Synthetic Mayor request', senderName: 'Synthetic', destinationOfficeId: 'MAYOR',
+    scannedFiles: [{ name: 'test.png', dataUrl: png }] };
+  assert.equal((await request('/documents', 'POST', payload, 'Office')).status, 400);
+  for (const requestedMayorAction of ['information', 'signature']) {
+    const registration = await request('/documents', 'POST', { ...payload, requestedMayorAction }, 'Office');
+    assert.equal(registration.status, 201, registration.text);
+    const doc = registration.body;
+    assert.equal(doc.requestedMayorAction, requestedMayorAction);
+    const delivery = await raw.TransmissionModel.findOne({ where: { documentId: doc.id } });
+    assert.equal((await request(`/transmissions/${delivery.id}`, 'PUT', { confirmReceipt: true }, 'Mayor', 'MAYOR')).status, 200);
+    const act = action => request(`/documents/${doc.id}/process-note`, 'POST', { action }, 'Mayor', 'MAYOR');
+    if (requestedMayorAction === 'signature') {
+      assert.equal((await act('complete_document')).status, 409);
+      assert.equal((await act('acknowledge_document')).status, 409);
+      assert.equal((await act('sign_document')).status, 200);
+    }
+    assert.equal((await act('complete_document')).status, 200);
+  }
+});
+
 integration('Audit follow-up: registration visits Mayor before the requested final office', async () => {
   await raw.DocumentTypeModel.create({ id: 'REQUIRES-APPROVAL', category: 'Synthetic approval', requiresMayorApproval: true, requiresMayorReception: true });
   for (const [role, endpoint] of [['Office', '/documents'], ['Receptionist', '/documents'], ['Receptionist', '/documents/scanner']]) {

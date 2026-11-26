@@ -89,6 +89,7 @@ model documents {
   documentTypeId             String?
   documentTypeOther          String?
   originOfficeId             String?
+  requestedMayorAction String?
   requiredDestinationOfficeId String?
   destinationReceiptConfirmed Boolean? @default(false)
   intakeOfficeId             String?

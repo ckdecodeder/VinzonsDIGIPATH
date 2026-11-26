@@ -5,10 +5,9 @@ import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../App.jsx', import.meta.url), 'utf8');
 
-test('opening a record closes its preview and resets filters before focusing the record', () => {
-  const state = { preview: 'PREVIEW', filter: 'Urgent active', focus: '', key: 2, page: 'dashboard' };
+test('opening a dashboard record resets filters and focuses the requested document directly', () => {
+  const state = { filter: 'Urgent active', focus: '', key: 2, page: 'dashboard' };
   const context = {
-    setPreviewDocumentId: value => { state.preview = value; },
     setDocumentStatusFocus: value => { state.filter = value; },
     setDocumentFocusId: value => { state.focus = value; },
     setFocusedDelivery: () => {},
@@ -17,7 +16,7 @@ test('opening a record closes its preview and resets filters before focusing the
     setCurrentPage: value => { state.page = value; },
   };
   vm.runInNewContext(source.slice(source.indexOf('  const handleOpenDocument ='), source.indexOf('  const handleOpenDocumentsByStatus =')) + '\nhandleOpenDocument("DOC-1");', context);
-  assert.deepEqual(state, { preview: null, filter: 'All', focus: 'DOC-1', key: 3, page: 'documents' });
+  assert.deepEqual(state, { filter: 'All', focus: 'DOC-1', key: 3, page: 'documents' });
 });
 
 function sendHarness(send) {

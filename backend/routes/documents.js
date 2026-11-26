@@ -76,6 +76,7 @@ const getOfficeLabel = async (officeId) => {
 };
 
 const requiresMayorApprovalFor = async (doc) => {
+  if (doc.requestedMayorAction === 'signature') return true;
   if (!doc.documentTypeId) return false;
   const docType = await DocumentType.findOne({ id: doc.documentTypeId }).lean();
   return Boolean(docType?.requiresMayorApproval);
@@ -303,6 +304,11 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     destinationOfficeId = body.destinationOfficeId || '';
   }
 
+  const requestsMayorAction = isOfficeUser && destinationOfficeId === mayorsOfficeId;
+  const requestedMayorAction = requestsMayorAction ? body.requestedMayorAction : null;
+  if (requestsMayorAction && !['information', 'signature'].includes(requestedMayorAction)) {
+    throw createHttpError('Choose the requested Mayor action before sending.', 400);
+  }
   const registeredDestination = destinationOfficeId;
   const now = new Date().toISOString();
   const sourceFiles = body.scannedFiles?.length ? body.scannedFiles : body.scannedImageUrl ? [{ name: 'scan', dataUrl: body.scannedImageUrl }] : [];
@@ -329,7 +335,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
   if (documentTypeId) {
     docType = await DocumentType.findOne({ id: documentTypeId }).lean();
   }
-  const requiresMayorApproval = docType?.requiresMayorApproval || false;
+  const requiresMayorApproval = docType?.requiresMayorApproval || requestedMayorAction === 'signature';
   const requiresMayorReception = docType?.requiresMayorReception || false;
 
   let finalStatus = registrationStatus;
@@ -379,6 +385,7 @@ const normalizeDocumentPayload = async (req, body, { scanner = false } = {}) => 
     id: generateId('DOC'),
     requiredDestinationOfficeId: registeredDestination === originOfficeId && !initialRoute.firstDestinationOfficeId ? '' : registeredDestination,
     destinationReceiptConfirmed: false,
+    requestedMayorAction,
     trackingNumber: body.trackingNumber || generateTrackingNumber(),
     documentDirection,
     status: finalStatus,
@@ -723,7 +730,7 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
   delete updates._id;
   delete updates.__v;
   delete updates.timeline;
-  for (const field of ['requiredDestinationOfficeId', 'destinationReceiptConfirmed', 'sendHistory', 'sendQueue', 'routePlan', 'routeStep', 'preTransitStatus', 'lastRoutedAt']) delete updates[field];
+  for (const field of ['requestedMayorAction', 'requiredDestinationOfficeId', 'destinationReceiptConfirmed', 'sendHistory', 'sendQueue', 'routePlan', 'routeStep', 'preTransitStatus', 'lastRoutedAt']) delete updates[field];
   // Current office still moves via route/receive/RFID only.
   delete updates.currentOfficeId;
   // While still in intake, allow From/To from the scanner form so the destined
@@ -747,6 +754,10 @@ router.put('/:id', allRoles, asyncHandler(async (req, res) => {
       || '';
   }
 
+  if (updates.status === 'Signed' && existingDoc.status !== 'Signed' && await requiresMayorApprovalFor(existingDoc)) {
+    if (existingDoc.currentOfficeId !== await findMayorsOfficeId()) throw createHttpError('Mayor office custody is required for signing.', 409);
+    updates.mayorApprovalCleared = true;
+  }
   const timelineEvents = [];
   if (updates.status && updates.status !== existingDoc.status) {
     const labels = {
@@ -1041,12 +1052,13 @@ router.post('/:id/process-note', allRoles, asyncHandler(async (req, res) => {
     const docType = doc.documentTypeId
       ? await DocumentType.findOne({ id: doc.documentTypeId }).lean()
       : null;
-    if (docType?.requiresMayorApproval) {
+    if (docType?.requiresMayorApproval || doc.requestedMayorAction === 'signature') {
       const mayorsOfficeId = await findMayorsOfficeId();
       if (doc.currentOfficeId === mayorsOfficeId) updates.mayorApprovalCleared = true;
     }
   }
   if (action === 'acknowledge_document') {
+    if (await requiresMayorApprovalFor(doc) && !doc.mayorApprovalCleared) throw createHttpError('Record the required Mayor signature first.', 409);
     if (!['Received', 'For Filing', 'For Signing', 'Signed'].includes(currentStatus)) {
       return res.status(400).json({ message: 'Only Received, For Filing, For Signing, or Signed documents can be acknowledged' });
     }
@@ -1107,7 +1119,7 @@ router.post('/:id/send', sendRoles, asyncHandler(async (req, res) => {
   const docType = doc.documentTypeId
     ? await DocumentType.findOne({ id: doc.documentTypeId }).lean()
     : null;
-  const requiresMayorApproval = Boolean(docType?.requiresMayorApproval);
+  const requiresMayorApproval = Boolean(docType?.requiresMayorApproval) || doc.requestedMayorAction === 'signature';
   const mayorsOfficeId = requiresMayorApproval ? await findMayorsOfficeId() : '';
   const isMayorApprovalHandoff = requiresMayorApproval
     && !doc.mayorApprovalCleared

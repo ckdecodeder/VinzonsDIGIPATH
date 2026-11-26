@@ -81,13 +81,14 @@ const DocumentList = ({
     return null;
   });
 
+  const mayorsOfficeId = offices.find(o => o.name?.toLowerCase().includes('mayor'))?.id || 'OFF-001';
   const getInitialForm = () => {
     const myOfficeId = currentUser?.officeId || offices[0]?.id || 'OFF-001';
     const defaultDestination = offices.find(o => o.id !== myOfficeId)?.id || '';
     const isOffice = currentRole === 'office' || currentUser?.role === 'Office';
     const isReceptionist = currentRole === 'receptionist' || currentUser?.role === 'Receptionist';
-    const mayorsOfficeId = offices.find(o => o.name?.toLowerCase().includes('mayor'))?.id || 'OFF-001';
     return {
+      requestedMayorAction: '',
       subject: '',
       documentDirection: isOffice ? 'Outgoing' : 'Incoming',
       status: 'Received',
@@ -553,6 +554,7 @@ const DocumentList = ({
       const hasExistingAttachment = Boolean(formScannedFiles.length || editDoc?.scannedImageUrl);
       const isOfficeStaff = currentUser?.role === 'Office';
       const requiredFields = [
+        { key: 'requestedMayorAction', label: 'Requested Mayor action', value: formData.requestedMayorAction, when: isOfficeStaff && !editDoc && formData.destinationOfficeId === mayorsOfficeId },
         { key: 'subject', label: 'Document subject', value: formData.subject },
         {
           key: 'documentTypeOther',
@@ -1026,7 +1028,7 @@ const DocumentList = ({
     && !destinationReceiptPending(doc) && isApprovedForWorkflow(doc) && transmittableStatuses.includes(getWorkflowStatus(doc))
     && !getPendingTransmission(doc.id) && !(doc.sendHistory || []).some(event => event.active)
     && !(doc.sendQueue || []).some(Boolean)
-    && (!documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval || doc.mayorApprovalCleared);
+    && (!(doc.requestedMayorAction === 'signature' || documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval) || doc.mayorApprovalCleared);
   const canRouteDocument = (doc) => {
     const status = getWorkflowStatus(doc);
     const finalStatus = finalWorkflowStatuses.includes(status);
@@ -1042,7 +1044,7 @@ const DocumentList = ({
   };
   const canTakeDocumentAction = (doc) => canActByWorkflow(doc, approvalActor);
   const canSignDocument = (doc) => canSignByWorkflow(doc, approvalActor);
-  const canAcknowledgeDocument = (doc) => canAcknowledgeByWorkflow(doc, approvalActor);
+  const canAcknowledgeDocument = (doc) => canAcknowledgeByWorkflow(doc, approvalActor) && (doc.mayorApprovalCleared || !(doc.requestedMayorAction === 'signature' || documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval));
   const canArchiveDocument = (doc) => canArchiveByWorkflow(doc, approvalActor);
   const canRejectDocument = (doc) => canVerify && canRejectByWorkflow(doc, approvalActor);
   const pageTitle = isOfficeUser ? 'My Documents' : 'Documents';
@@ -1123,6 +1125,7 @@ const DocumentList = ({
       trackingOnly={isOfficeReadOnlyTracking(doc, currentUser, transmissions.some(item =>
         item.documentId === doc.id && item.fromOfficeId === currentUser?.officeId))}
     >
+      {doc.requestedMayorAction && <p>Requested Mayor action - {doc.requestedMayorAction === 'signature' ? 'Signature required' : 'For information'}</p>}
       {renderDocumentActions(doc)}
     </DocumentHandoffSummary>
   );
@@ -1233,7 +1236,7 @@ const DocumentList = ({
                     <td data-label="Status"><span className={`status-badge ${tableStatus.className}`}>{tableStatus.label}</span></td>
                     <td data-label="Last updated">{formatDateTime(doc.updatedAt || doc.createdAt || doc.dateReceived)}</td>
                     <td className="documents-col-actions">
-                      <div className="documents-actions-wrap">
+                      <div className={isOfficeUser ? "documents-actions-wrap office-receipt-actions" : "documents-actions-wrap"}>
                         <button className="btn-icon" title="Open details" aria-label={`Open details for ${doc.subject} (${doc.trackingNumber || doc.id})`} onClick={(e) => { e.stopPropagation(); setDetailDoc(doc); }}>
                           <Eye size={14} />
                         </button>
@@ -1241,6 +1244,9 @@ const DocumentList = ({
                           <button className="btn btn-sm btn-success" disabled={Boolean(receivingDocumentId)} onClick={(e) => { e.stopPropagation(); handleReceive(doc); }}>
                             <CheckCircle2 size={14} /> {receivingDocumentId === doc.id ? 'Receiving…' : 'Receive'}
                           </button>
+                        )}
+                        {isOfficeUser && !canReceiveTransmission(doc) && (doc.sendHistory || []).filter(event => event.toOfficeId === currentUser?.officeId && !event.cancelledAt).at(-1)?.receivedBy && (
+                          <span className="receipt-confirmed" role="status">Received</span>
                         )}
                         {(canEdit || canResubmitDocument(doc)) && (
                           <button className="btn-icon" title="Edit" aria-label={`Edit ${doc.subject} (${doc.trackingNumber || doc.id})`} onClick={(e) => { e.stopPropagation(); handleOpenForm(doc); }}>
@@ -1757,6 +1763,19 @@ const DocumentList = ({
                       </select>
                       {documentFormErrors.destinationOfficeId && (
                         <p id={`${formId}-destination-error`} className="form-field-error">{documentFormErrors.destinationOfficeId}</p>
+                      )}
+                      {!editDoc && formData.destinationOfficeId === mayorsOfficeId && (
+                        <div className="form-group">
+                          <label className="form-label" htmlFor={`${formId}-mayor-action`}>Requested Mayor action</label>
+                          <select id={`${formId}-mayor-action`} name="requestedMayorAction" className="form-select" required
+                            value={formData.requestedMayorAction || ''} aria-invalid={Boolean(documentFormErrors.requestedMayorAction)}
+                            onChange={e => { setFormData({ ...formData, requestedMayorAction: e.target.value }); setDocumentFormErrors(prev => clearFieldError(prev, 'requestedMayorAction')); }}>
+                            <option value="">Select an action</option>
+                            <option value="information">For information</option>
+                            <option value="signature">Signature required</option>
+                          </select>
+                          {documentFormErrors.requestedMayorAction && <p className="form-field-error">{documentFormErrors.requestedMayorAction}</p>}
+                        </div>
                       )}
                       <p id={`${formId}-destination-hint`} className="field-hint">Document is registered from your office, then sent to this destination.</p>
                     </div>

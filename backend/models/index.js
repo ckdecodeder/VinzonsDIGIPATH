@@ -96,6 +96,7 @@ const DocumentModel = sequelize
       sendQueue:                    { type: DataTypes.JSONB, defaultValue: [] },
       timeline:                     { type: DataTypes.JSONB, defaultValue: [] },
       // Phase 1 — Workflow routing fields
+      requestedMayorAction: { type: DataTypes.TEXT },
       requiredDestinationOfficeId: { type: DataTypes.TEXT },
       destinationReceiptConfirmed: { type: DataTypes.BOOLEAN, defaultValue: false },
       routePlan:                    { type: DataTypes.JSONB, defaultValue: [] },
@@ -302,6 +303,7 @@ const migrateDocumentRoutingFields = async () => {
   await sequelize.query(`UPDATE documents SET "intakeOfficeId" = "originOfficeId" WHERE "intakeOfficeId" IS NULL AND "documentDirection" = 'Incoming';`);
   await sequelize.query(`
     ALTER TABLE documents
+    ADD COLUMN IF NOT EXISTS "requestedMayorAction" TEXT,
     ADD COLUMN IF NOT EXISTS "requiredDestinationOfficeId" TEXT,
     ADD COLUMN IF NOT EXISTS "destinationReceiptConfirmed" BOOLEAN DEFAULT false,
     ADD COLUMN IF NOT EXISTS "routePlan" JSONB DEFAULT '[]'::jsonb;

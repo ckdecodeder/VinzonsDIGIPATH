@@ -27,7 +27,7 @@ export function getDocumentNextAction(doc, user, transmissions = [], documentTyp
   if (['Admin', 'Mayor'].includes(user.role)) return 'Send document';
   if (doc.currentOfficeId !== user.officeId) return '';
   if (user.role === 'Office' && !['Signed', 'Acknowledged'].includes(status)) return 'Send document';
-  const requiresApproval = documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval;
+  const requiresApproval = doc.requestedMayorAction === 'signature' || documentTypes.find(type => type.id === doc.documentTypeId)?.requiresMayorApproval;
   return !destinationReceiptPending(doc) && !(doc.sendQueue || []).some(Boolean) && (!requiresApproval || doc.mayorApprovalCleared) ? 'Complete processing' : '';
 }
 

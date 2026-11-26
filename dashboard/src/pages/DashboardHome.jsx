@@ -28,7 +28,7 @@ const AdminDashboard = ({
   offices,
   documentTypes = defaultDocumentTypes,
   onNavigate,
-  onPreviewDocument,
+  onOpenDocument,
   onStatusSelect,
   currentUser,
 }) => {
@@ -148,11 +148,7 @@ const AdminDashboard = ({
 
   const openDocumentInterface = (doc) => {
     if (!doc) return;
-    // Preview popup on the dashboard — do NOT navigate to All Documents
-    if (onPreviewDocument) {
-      onPreviewDocument(doc);
-      return;
-    }
+    onOpenDocument?.(doc.id);
   };
 
   const openStatusInterface = (status) => {

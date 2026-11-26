@@ -2667,6 +2667,16 @@ tbody tr:hover {
   gap: 0.35rem;
 }
 
+.receipt-confirmed {
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-muted, var(--border-light));
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.documents-actions-wrap.office-receipt-actions { justify-content: flex-start; }
+
 .documents-actions-wrap > button {
   flex-shrink: 0;
   white-space: nowrap;
